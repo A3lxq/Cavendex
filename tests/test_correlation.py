@@ -158,6 +158,61 @@ def test_subnet_prefix_bits_is_configurable(monkeypatch, tmp_path):
     assert match["match_type"] == "subnet"
 
 
+def test_subnet_prefix_bits_supports_a_wider_real_world_range(monkeypatch, tmp_path):
+    """Real businesses don't all subnet on /24 boundaries -- confirm a
+    /20 (a common mid-size office allocation) and a /27 (a small branch)
+    both work, not just the default."""
+    monkeypatch.setenv("SENTINELOS_DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("SENTINELOS_CORRELATION_SUBNET_PREFIX_BITS", "20")
+    _seed("inc-1", iocs=["10.4.0.5"])
+
+    match = find_correlated_incident("t1", _alert(iocs=["10.4.15.200"]))  # same /20, different /24
+    assert match["thread_id"] == "inc-1"
+    assert match["match_type"] == "subnet"
+
+
+def test_narrow_subnet_prefix_correctly_excludes_a_wider_neighbor(monkeypatch, tmp_path):
+    monkeypatch.setenv("SENTINELOS_DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("SENTINELOS_CORRELATION_SUBNET_PREFIX_BITS", "27")
+    _seed("inc-1", iocs=["10.4.0.5"])
+
+    match = find_correlated_incident("t1", _alert(iocs=["10.4.0.40"]))  # same /24, different /27
+    assert match is None
+
+
+def test_ipv6_addresses_in_the_same_default_64_correlate(monkeypatch, tmp_path):
+    monkeypatch.setenv("SENTINELOS_DATA_DIR", str(tmp_path))
+    _seed("inc-1", iocs=["2001:db8:1234:5678::1"])
+
+    match = find_correlated_incident("t1", _alert(iocs=["2001:db8:1234:5678::dead:beef"]))
+    assert match["thread_id"] == "inc-1"
+    assert match["match_type"] == "subnet"
+
+
+def test_ipv6_addresses_outside_the_default_64_do_not_correlate(monkeypatch, tmp_path):
+    monkeypatch.setenv("SENTINELOS_DATA_DIR", str(tmp_path))
+    _seed("inc-1", iocs=["2001:db8:1234:5678::1"])
+
+    match = find_correlated_incident("t1", _alert(iocs=["2001:db8:1234:9999::1"]))
+    assert match is None
+
+
+def test_ipv6_subnet_prefix_bits_is_independently_configurable(monkeypatch, tmp_path):
+    """Was hardcoded to /64 with no way to change it -- now matches
+    IPv4's flexibility, and the two settings are independent of each
+    other (setting the v4 one must not affect v6 grouping)."""
+    monkeypatch.setenv("SENTINELOS_DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("SENTINELOS_CORRELATION_SUBNET_PREFIX_BITS", "8")  # a v4-only change
+    monkeypatch.setenv("SENTINELOS_CORRELATION_SUBNET_PREFIX_BITS_V6", "48")
+    _seed("inc-1", iocs=["2001:db8:1234:5678::1"])
+
+    # Same /48 (2001:db8:1234::/48) but a different /64 than the seed --
+    # would NOT correlate at the default /64, but does at the wider /48.
+    match = find_correlated_incident("t1", _alert(iocs=["2001:db8:1234:9999::1"]))
+    assert match["thread_id"] == "inc-1"
+    assert match["match_type"] == "subnet"
+
+
 # ---------- Fuzzy tier: domain family grouping ----------
 
 

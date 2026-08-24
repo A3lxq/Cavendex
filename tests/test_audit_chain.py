@@ -119,6 +119,39 @@ def test_verify_detects_a_deleted_entry(monkeypatch, tmp_path):
     assert result["status"] == "MISMATCH"
 
 
+def test_latest_recorded_entry_survives_ledger_rotation(monkeypatch, tmp_path):
+    """The ledger rotates like any other log (utils/log_rotation.py) --
+    confirm a thread's true latest entry is still found even after it's
+    been pushed into a rotated-out backup file, not just the active one.
+    """
+    monkeypatch.setenv("SENTINELOS_DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("SENTINELOS_LOG_MAX_BYTES", "1")  # force rotation on every write
+    monkeypatch.setenv("SENTINELOS_LOG_BACKUP_COUNT", "5")
+
+    record_chain("acme", "inc-1", ["first entry"])
+    record_chain("acme", "inc-2", ["unrelated incident, written after inc-1"])
+    record_chain("acme", "inc-1", ["first entry", "second entry"])  # inc-1's true latest
+
+    latest = latest_recorded_entry("acme", "inc-1")
+
+    assert latest["audit_log_length"] == 2
+    assert latest["chain_hash"] == compute_chain_hash(["first entry", "second entry"])
+
+
+def test_verify_still_works_correctly_after_rotation(monkeypatch, tmp_path):
+    monkeypatch.setenv("SENTINELOS_DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("SENTINELOS_LOG_MAX_BYTES", "1")
+    monkeypatch.setenv("SENTINELOS_LOG_BACKUP_COUNT", "5")
+
+    audit_log = ["a", "b", "c"]
+    record_chain("acme", "inc-1", ["a"])
+    record_chain("acme", "inc-1", ["a", "b"])
+    record_chain("acme", "inc-1", audit_log)
+
+    assert verify_incident_audit_log("acme", "inc-1", audit_log)["status"] == "verified"
+    assert verify_incident_audit_log("acme", "inc-1", ["a", "b"])["status"] == "MISMATCH"
+
+
 def test_record_chain_never_raises_when_data_dir_is_unwritable(monkeypatch, tmp_path):
     blocker = tmp_path / "blocks-the-directory"
     blocker.write_text("x")

@@ -31,6 +31,8 @@ import os
 from datetime import datetime, timezone
 from typing import List, Optional
 
+from utils.log_rotation import append_line
+
 _GENESIS = "sentinelos-audit-chain-v1"
 
 
@@ -49,11 +51,34 @@ def _ledger_path(tenant_id: str) -> str:
     return os.path.join(os.getenv("SENTINELOS_DATA_DIR", "data"), tenant_id, "audit_chain_ledger.jsonl")
 
 
+def _ledger_paths_oldest_first(tenant_id: str) -> List[str]:
+    """The active ledger file plus any rotated backups (see
+    utils/log_rotation.py), oldest first. Rotation renames the active
+    file to `.1`, a prior `.1` to `.2`, and so on — so `.N` is always
+    older than `.(N-1)`, which is older than the active file. Tamper-
+    evidence has to see the true latest entry for an incident even if it
+    happens to have fallen into a rotated-out backup, or a long-lived
+    incident could be falsely reported as "never recorded."
+    """
+    base = _ledger_path(tenant_id)
+    backups = []
+    n = 1
+    while os.path.exists(f"{base}.{n}"):
+        backups.append(f"{base}.{n}")
+        n += 1
+    ordered = list(reversed(backups))
+    if os.path.exists(base):
+        ordered.append(base)
+    return ordered
+
+
 def record_chain(tenant_id: str, thread_id: str, audit_log: List[str]) -> None:
     """Append the current chain hash for this incident's audit_log to the
-    ledger. Never raises — a ledger write failure must never block real
-    incident processing, the same contract every other side-effect in
-    this project follows (utils/incident_index.py, vault writes).
+    ledger (rotating it first if it's grown past
+    SENTINELOS_LOG_MAX_BYTES — see utils/log_rotation.py). Never raises —
+    a ledger write failure must never block real incident processing,
+    the same contract every other side-effect in this project follows
+    (utils/incident_index.py, vault writes).
     """
     entry = {
         "timestamp": datetime.now(timezone.utc).isoformat(),
@@ -61,35 +86,26 @@ def record_chain(tenant_id: str, thread_id: str, audit_log: List[str]) -> None:
         "audit_log_length": len(audit_log),
         "chain_hash": compute_chain_hash(audit_log),
     }
-    try:
-        path = _ledger_path(tenant_id)
-        os.makedirs(os.path.dirname(path), exist_ok=True)
-        with open(path, "a", encoding="utf-8") as f:
-            f.write(json.dumps(entry) + "\n")
-    except OSError:
-        pass
+    append_line(_ledger_path(tenant_id), json.dumps(entry))
 
 
 def latest_recorded_entry(tenant_id: str, thread_id: str) -> Optional[dict]:
-    """The most recent ledger entry for this incident, or None if it was
-    never recorded (e.g. the ledger predates this feature, or a past
-    write failed)."""
-    path = _ledger_path(tenant_id)
-    if not os.path.exists(path):
-        return None
-
+    """The most recent ledger entry for this incident across the active
+    ledger and any rotated backups, or None if it was never recorded
+    (e.g. the ledger predates this feature, or a past write failed)."""
     latest = None
-    with open(path, "r", encoding="utf-8") as f:
-        for line in f:
-            line = line.strip()
-            if not line:
-                continue
-            try:
-                entry = json.loads(line)
-            except json.JSONDecodeError:
-                continue
-            if entry.get("thread_id") == thread_id:
-                latest = entry
+    for path in _ledger_paths_oldest_first(tenant_id):
+        with open(path, "r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    entry = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if entry.get("thread_id") == thread_id:
+                    latest = entry
     return latest
 
 

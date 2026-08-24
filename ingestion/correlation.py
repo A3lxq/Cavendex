@@ -15,9 +15,13 @@ mail.evil-c2.com got flagged. This module handles both:
 - **Fuzzy tier** — only checked if nothing matched exactly. Two signals,
   each grounded in a real attacker behavior pattern rather than generic
   string similarity:
-  - *Subnet*: two IPs in the same /24 (IPv4) or /64 (IPv6) — rotating
+  - *Subnet*: two IPs in the same network — /24 for IPv4, /64 for IPv6 by
+    default, but both independently configurable
+    (SENTINELOS_CORRELATION_SUBNET_PREFIX_BITS /
+    SENTINELOS_CORRELATION_SUBNET_PREFIX_BITS_V6), since real networks
+    aren't all sized the same way a /24 default assumes — rotating
     source IPs from one attacker-controlled range is a textbook evasion
-    of exact-IP dedup/correlation.
+    of exact-IP dedup/correlation regardless of how that range is sized.
   - *Domain family*: two domains sharing a registered (apex) domain, per
     the real Mozilla Public Suffix List (so 'foo.co.uk' and 'bar.co.uk'
     are correctly treated as unrelated, not grouped by a naive
@@ -65,8 +69,6 @@ from ingestion.schemas import NormalizedAlert
 from utils.incident_index import list_open_incidents
 from utils.tenancy import DEFAULT_TENANT
 
-_IPV6_GROUPING_PREFIX = 64
-
 # suffix_list_urls=() disables any live fetch of the Mozilla Public
 # Suffix List — this tool has to work in an air-gapped/network-restricted
 # deployment (see the dashboard's no-CDN design for the same reasoning),
@@ -96,6 +98,10 @@ def _fuzzy_enabled() -> bool:
 
 
 def _subnet_prefix_bits() -> int:
+    """IPv4 grouping prefix. Real networks aren't all /24 — a large flat
+    corporate network might want /16, a small branch office /27 — so this
+    accepts any valid CIDR length (1-32), not just the /24 default.
+    """
     try:
         bits = int(os.getenv("SENTINELOS_CORRELATION_SUBNET_PREFIX_BITS", "24"))
     except ValueError:
@@ -103,12 +109,27 @@ def _subnet_prefix_bits() -> int:
     return min(max(bits, 1), 32)
 
 
-def _network_for(ip_str: str, prefix_bits: int):
+def _subnet_prefix_bits_v6() -> int:
+    """IPv6 grouping prefix — independently configurable from the IPv4
+    one, since the two address families aren't sized on the same scale
+    (a /64 is the standard single-subnet allocation for IPv6, the rough
+    equivalent of an IPv4 /24 or larger, not a like-for-like number).
+    Previously hardcoded to /64 with no way to change it; now matches the
+    IPv4 setting's flexibility (1-128 instead of 1-32).
+    """
+    try:
+        bits = int(os.getenv("SENTINELOS_CORRELATION_SUBNET_PREFIX_BITS_V6", "64"))
+    except ValueError:
+        return 64
+    return min(max(bits, 1), 128)
+
+
+def _network_for(ip_str: str, prefix_bits_v4: int, prefix_bits_v6: int):
     try:
         addr = ipaddress.ip_address(ip_str)
     except ValueError:
         return None
-    prefix = prefix_bits if addr.version == 4 else _IPV6_GROUPING_PREFIX
+    prefix = prefix_bits_v4 if addr.version == 4 else prefix_bits_v6
     return ipaddress.ip_network(f"{addr}/{prefix}", strict=False)
 
 
@@ -178,7 +199,8 @@ def _first_exact_match(alert_iocs: List[str], alert_assets: List[str], candidate
 
 
 def _first_fuzzy_match(alert_iocs: List[str], candidates: List[dict]) -> Optional[dict]:
-    prefix_bits = _subnet_prefix_bits()
+    prefix_bits_v4 = _subnet_prefix_bits()
+    prefix_bits_v6 = _subnet_prefix_bits_v6()
     alert_ips = [v for v in alert_iocs if classify_ioc(v) == "ip"]
     alert_domains = [v for v in alert_iocs if classify_ioc(v) == "domain"]
     if not alert_ips and not alert_domains:
@@ -190,11 +212,11 @@ def _first_fuzzy_match(alert_iocs: List[str], candidates: List[dict]) -> Optiona
         candidate_domains = [v for v in candidate_iocs if classify_ioc(v) == "domain"]
 
         for a_ip in alert_ips:
-            a_net = _network_for(a_ip, prefix_bits)
+            a_net = _network_for(a_ip, prefix_bits_v4, prefix_bits_v6)
             if a_net is None:
                 continue
             for c_ip in candidate_ips:
-                if _network_for(c_ip, prefix_bits) == a_net:
+                if _network_for(c_ip, prefix_bits_v4, prefix_bits_v6) == a_net:
                     return {
                         "thread_id": candidate["thread_id"],
                         "match_type": "subnet",

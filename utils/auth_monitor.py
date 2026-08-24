@@ -22,6 +22,8 @@ from collections import deque
 from datetime import datetime, timezone
 from typing import Optional
 
+from utils.log_rotation import append_line
+
 _lock = threading.Lock()
 _failures: dict = {}
 _alerted_until: dict = {}
@@ -54,13 +56,7 @@ def _log_failure(source_ip: str, path: str, tenant_id: Optional[str]) -> None:
         "path": path,
         "tenant_id": tenant_id,
     }
-    try:
-        log_path = _log_path()
-        os.makedirs(os.path.dirname(log_path) or ".", exist_ok=True)
-        with open(log_path, "a", encoding="utf-8") as f:
-            f.write(json.dumps(entry) + "\n")
-    except OSError:
-        pass
+    append_line(_log_path(), json.dumps(entry))
 
 
 def _send_alert(source_ip: str, count: int, window: int) -> None:

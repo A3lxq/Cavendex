@@ -51,6 +51,7 @@ from ingestion.schemas import NormalizedAlert
 from ingestion.semantic_correlation import find_semantic_correlation
 from state import SEVERITY_RANK
 from utils.dedup import is_duplicate
+from utils.log_rotation import append_line
 from utils.rate_limit import check_rate_limit
 from utils.tenancy import DEFAULT_TENANT, sanitize_tenant_id
 
@@ -69,7 +70,6 @@ def _ingest_rate_limit_per_minute() -> int:
 
 def _log_raw_event(tenant_id: str, alert: NormalizedAlert, outcome: str, **extra) -> None:
     tenant_dir = tenant_data_dir(tenant_id)
-    os.makedirs(tenant_dir, exist_ok=True)
     log_path = os.path.join(tenant_dir, "ingestion_log.jsonl")
     record = {
         "timestamp": datetime.now(timezone.utc).isoformat(),
@@ -80,8 +80,7 @@ def _log_raw_event(tenant_id: str, alert: NormalizedAlert, outcome: str, **extra
         "dedup_key": alert.dedup_key,
         **extra,
     }
-    with open(log_path, "a", encoding="utf-8") as f:
-        f.write(json.dumps(record) + "\n")
+    append_line(log_path, json.dumps(record))
 
 
 def ingest_alert(source: str, payload: dict, tenant_id: str = DEFAULT_TENANT) -> dict:

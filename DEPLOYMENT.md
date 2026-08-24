@@ -81,7 +81,11 @@ Edit `.env`:
   threat-intel lookups, and tune `SENTINELOS_INGEST_MIN_SEVERITY`,
   `SENTINELOS_DEDUP_WINDOW_SECONDS`, `SENTINELOS_CORRELATION_*` to your
   actual alert volume — the shipped defaults are reasonable starting
-  points, not tuned to any specific environment.
+  points, not tuned to any specific environment. **In particular, set
+  `SENTINELOS_CORRELATION_SUBNET_PREFIX_BITS`/`_V6` to match how your
+  network is actually subnetted** — the `/24`/`/64` defaults assume a
+  size most real businesses don't use; see README's "IP Ranges and
+  Subnet Support" for a sizing guide.
 
 Lock down the file once it has real secrets in it:
 
@@ -495,7 +499,7 @@ vault report are meant to stay in sync:
 
 | Path (via env var)     | What's in it                                                          |
 |-------------------------|------------------------------------------------------------------------|
-| `SENTINELOS_DATA_DIR`   | Per-tenant SQLite: incident checkpoints (`sentinelos.db`), the dashboard/correlation index (`incident_index.db`), `ingestion_log.jsonl`, polling-connector cursor state (`poller_state/`) |
+| `SENTINELOS_DATA_DIR`   | Per-tenant SQLite: incident checkpoints (`sentinelos.db`), the dashboard/correlation index (`incident_index.db`), `ingestion_log.jsonl`, `audit_chain_ledger.jsonl`, polling-connector cursor state (`poller_state/`); tenant-independent `auth_failures.jsonl` at the root |
 | `CHROMA_PERSIST_DIR`    | Per-tenant ChromaDB collections — long-term incident memory used for recall |
 | `OBSIDIAN_VAULT_PATH`   | Markdown incident/hunt reports with wikilinks — the durable, human-readable audit trail |
 
@@ -505,6 +509,13 @@ snapshot) covers all of it. SQLite files are safe to copy while idle;
 for a live system, prefer a backup window during low alert volume, or
 use `sqlite3 <file> ".backup <dest>"` per database if you need a
 guaranteed-consistent copy while the service is running.
+
+The three JSONL logs above (`ingestion_log.jsonl`, `audit_chain_ledger.jsonl`,
+`auth_failures.jsonl`) rotate automatically once they cross
+`SENTINELOS_LOG_MAX_BYTES` (default 10MB), keeping up to
+`SENTINELOS_LOG_BACKUP_COUNT` (default 3) old copies as `.1`, `.2`, etc.
+— back those up too if you rely on historical ingestion/audit data
+beyond what's in the active file.
 
 Treat this data as sensitive: it contains real IOCs, real incident
 descriptions, and real affected-asset names from your environment.
