@@ -152,20 +152,49 @@ function statusBadge(status) {
   return `<span class="badge-status ${escapeHtml(status)}">${escapeHtml(status)}</span>`;
 }
 
+let currentRows = [];
+let keyboardFocusIndex = -1;
+
+function activeFilters() {
+  return {
+    search: document.getElementById("filter-search").value.trim(),
+    severity: document.getElementById("filter-severity").value,
+    status: document.getElementById("filter-status").value,
+  };
+}
+
+function buildIncidentsQuery() {
+  const { search, severity, status } = activeFilters();
+  const params = new URLSearchParams({ limit: "100" });
+  if (search) params.set("search", search);
+  if (severity) params.set("severity", severity);
+  if (status) params.set("status", status);
+  return params.toString();
+}
+
 async function loadIncidents() {
   const tbody = document.getElementById("incident-list-body");
   try {
-    const rows = await apiGet(`${tenantPrefix()}/incidents?limit=100`);
+    const rows = await apiGet(`${tenantPrefix()}/incidents?${buildIncidentsQuery()}`);
+    currentRows = rows;
     if (!rows.length) {
-      tbody.innerHTML = `<tr><td colspan="4" class="empty-row">No incidents yet for tenant "${escapeHtml(settings.tenant)}".</td></tr>`;
+      const { search, severity, status } = activeFilters();
+      const filtered = search || severity || status;
+      tbody.innerHTML = `<tr><td colspan="4" class="empty-row">${
+        filtered
+          ? "No incidents match the current filters."
+          : `No incidents yet for tenant "${escapeHtml(settings.tenant)}".` +
+            `<span class="empty-hint">Submit one from the "New Incident" tab, or point an ingestion source at this tenant — see GETTING_STARTED.md.</span>`
+      }</td></tr>`;
       return;
     }
     tbody.innerHTML = rows
-      .map((r) => {
+      .map((r, idx) => {
         const selected = r.thread_id === selectedThreadId ? "row-selected" : "";
+        const kbdFocus = idx === keyboardFocusIndex ? "row-keyboard-focus" : "";
         const pendingMark = r.has_pending_actions ? " ⏳" : "";
         return `
-          <tr class="row-clickable ${selected}" data-thread-id="${escapeHtml(r.thread_id)}">
+          <tr class="row-clickable ${selected} ${kbdFocus}" data-thread-id="${escapeHtml(r.thread_id)}" data-idx="${idx}">
             <td>${severityBadge(r.severity)}</td>
             <td>${statusBadge(r.status)}${pendingMark}</td>
             <td class="desc-cell" title="${escapeHtml(r.description)}">${escapeHtml(r.description)}</td>
@@ -174,11 +203,103 @@ async function loadIncidents() {
       })
       .join("");
     tbody.querySelectorAll("tr[data-thread-id]").forEach((tr) => {
-      tr.addEventListener("click", () => openIncident(tr.dataset.threadId));
+      tr.addEventListener("click", () => {
+        keyboardFocusIndex = Number(tr.dataset.idx);
+        openIncident(tr.dataset.threadId);
+      });
     });
   } catch (err) {
     tbody.innerHTML = `<tr><td colspan="4" class="empty-row">Failed to load: ${escapeHtml(err.message)}</td></tr>`;
   }
+}
+
+/* ---------- Summary stats bar ---------- */
+
+async function loadStats() {
+  try {
+    const stats = await apiGet(`${tenantPrefix()}/incidents/stats`);
+    document.getElementById("stat-total").textContent = stats.total;
+    document.getElementById("stat-open").textContent = stats.open;
+    document.getElementById("stat-pending").textContent = stats.pending_approval;
+    document.getElementById("stat-low").textContent = stats.by_severity.low;
+    document.getElementById("stat-medium").textContent = stats.by_severity.medium;
+    document.getElementById("stat-high").textContent = stats.by_severity.high;
+  } catch (err) {
+    // Stats are a summary convenience, not core functionality -- a
+    // failure here shouldn't block the incident list from working.
+    console.error("Failed to load incident stats", err);
+  }
+}
+
+/* ---------- Search/filter wiring ---------- */
+
+let searchDebounceTimer = null;
+
+function initFilters() {
+  const search = document.getElementById("filter-search");
+  search.addEventListener("input", () => {
+    clearTimeout(searchDebounceTimer);
+    searchDebounceTimer = setTimeout(() => {
+      keyboardFocusIndex = -1;
+      loadIncidents();
+    }, 250);
+  });
+  ["filter-severity", "filter-status"].forEach((id) => {
+    document.getElementById(id).addEventListener("change", () => {
+      keyboardFocusIndex = -1;
+      loadIncidents();
+    });
+  });
+}
+
+/* ---------- Keyboard shortcuts ---------- */
+
+function isTypingInField() {
+  const tag = document.activeElement && document.activeElement.tagName;
+  return tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT";
+}
+
+function moveKeyboardFocus(delta) {
+  if (!currentRows.length) return;
+  keyboardFocusIndex = Math.max(0, Math.min(currentRows.length - 1, keyboardFocusIndex + delta));
+  document.querySelectorAll(".incident-table tr[data-idx]").forEach((tr) => {
+    tr.classList.toggle("row-keyboard-focus", Number(tr.dataset.idx) === keyboardFocusIndex);
+  });
+  const focused = document.querySelector(`.incident-table tr[data-idx="${keyboardFocusIndex}"]`);
+  if (focused) focused.scrollIntoView({ block: "nearest" });
+}
+
+function initKeyboardShortcuts() {
+  document.addEventListener("keydown", (evt) => {
+    if (isTypingInField()) {
+      if (evt.key === "Escape") document.activeElement.blur();
+      return;
+    }
+    // Only active on the Incidents tab.
+    if (!document.getElementById("tab-incidents").classList.contains("active")) return;
+
+    if (evt.key === "/") {
+      evt.preventDefault();
+      document.getElementById("filter-search").focus();
+    } else if (evt.key === "j" || evt.key === "ArrowDown") {
+      evt.preventDefault();
+      moveKeyboardFocus(1);
+    } else if (evt.key === "k" || evt.key === "ArrowUp") {
+      evt.preventDefault();
+      moveKeyboardFocus(-1);
+    } else if (evt.key === "Enter") {
+      const row = currentRows[keyboardFocusIndex];
+      if (row) openIncident(row.thread_id);
+    } else if (evt.key === "a" || evt.key === "d") {
+      const row = currentRows[keyboardFocusIndex];
+      if (row && row.thread_id === selectedThreadId) {
+        const btn = document.querySelector(
+          evt.key === "a" ? "button.btn-approve" : "button.btn-deny"
+        );
+        if (btn) btn.click();
+      }
+    }
+  });
 }
 
 /* ---------- Incident detail ---------- */
@@ -312,6 +433,7 @@ async function decideAction(threadId, approve) {
     });
     await renderIncidentDetail(threadId);
     await loadIncidents();
+    await loadStats();
   } catch (err) {
     alert(`Failed to ${verb} actions: ${err.message}`);
   }
@@ -356,6 +478,7 @@ async function submitNewIncident(evt) {
   try {
     await streamPost(`${tenantPrefix()}/incidents/stream`, payload, (event) => appendLiveEvent(output, event));
     await loadIncidents();
+    await loadStats();
   } catch (err) {
     const div = document.createElement("div");
     div.className = "live-event";
@@ -402,17 +525,23 @@ function initSettingsForm() {
     settings.analystName = document.getElementById("analyst-name-input").value.trim();
     saveSettings();
     selectedThreadId = null;
+    keyboardFocusIndex = -1;
     document.getElementById("detail-pane").innerHTML = '<div class="empty-state">Select an incident to view details.</div>';
     loadIncidents();
+    loadStats();
     checkConnection();
   });
 }
 
 function initAutoRefresh() {
-  document.getElementById("refresh-btn").addEventListener("click", loadIncidents);
+  document.getElementById("refresh-btn").addEventListener("click", () => {
+    loadIncidents();
+    loadStats();
+  });
   setInterval(() => {
     if (document.getElementById("auto-refresh-toggle").checked) {
       loadIncidents();
+      loadStats();
       if (selectedThreadId) renderIncidentDetail(selectedThreadId);
     }
   }, 15000);
@@ -422,8 +551,11 @@ document.addEventListener("DOMContentLoaded", () => {
   initTabs();
   initSettingsForm();
   initAutoRefresh();
+  initFilters();
+  initKeyboardShortcuts();
   document.getElementById("new-incident-form").addEventListener("submit", submitNewIncident);
   document.getElementById("hunt-form").addEventListener("submit", submitHunt);
   checkConnection();
   loadIncidents();
+  loadStats();
 });

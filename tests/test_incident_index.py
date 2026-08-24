@@ -1,5 +1,6 @@
 from state import Incident
 from utils.incident_index import (
+    get_incident_stats,
     list_incidents,
     list_open_incidents,
     reset_for_tests,
@@ -163,3 +164,112 @@ def test_no_attack_technique_cited_stores_none(monkeypatch, tmp_path):
     rows = list_open_incidents("t1")
     assert rows[0]["attack_technique_id"] is None
     assert rows[0]["attack_technique_name"] is None
+
+
+# ---------- list_incidents filtering (search/severity/status) ----------
+
+
+def _seed_mixed(tenant="t1"):
+    upsert_incident_summary(tenant, _state("inc-1", "Brute force from 1.2.3.4", severity="high", status="open"))
+    upsert_incident_summary(tenant, _state("inc-2", "Malware on DC-01", severity="critical", status="pending_approval"))
+    upsert_incident_summary(tenant, _state("inc-3", "Suspicious login", severity="low", status="closed"))
+
+
+def test_filter_by_severity(monkeypatch, tmp_path):
+    monkeypatch.setenv("SENTINELOS_DATA_DIR", str(tmp_path))
+    _seed_mixed()
+
+    rows = list_incidents("t1", severity="critical")
+
+    assert [r["thread_id"] for r in rows] == ["inc-2"]
+
+
+def test_filter_by_status(monkeypatch, tmp_path):
+    monkeypatch.setenv("SENTINELOS_DATA_DIR", str(tmp_path))
+    _seed_mixed()
+
+    rows = list_incidents("t1", status="closed")
+
+    assert [r["thread_id"] for r in rows] == ["inc-3"]
+
+
+def test_filter_by_search_is_case_insensitive_substring(monkeypatch, tmp_path):
+    monkeypatch.setenv("SENTINELOS_DATA_DIR", str(tmp_path))
+    _seed_mixed()
+
+    rows = list_incidents("t1", search="malware")
+
+    assert [r["thread_id"] for r in rows] == ["inc-2"]
+
+
+def test_filters_combine_with_and_semantics(monkeypatch, tmp_path):
+    monkeypatch.setenv("SENTINELOS_DATA_DIR", str(tmp_path))
+    _seed_mixed()
+
+    rows = list_incidents("t1", severity="high", search="brute")
+    assert [r["thread_id"] for r in rows] == ["inc-1"]
+
+    rows2 = list_incidents("t1", severity="high", search="malware")
+    assert rows2 == []
+
+
+def test_search_special_characters_are_escaped_not_treated_as_wildcards(monkeypatch, tmp_path):
+    """A literal '%' or '_' in the search text must be matched literally,
+    not treated as a SQL LIKE wildcard — otherwise searching for "100%"
+    would match every description."""
+    monkeypatch.setenv("SENTINELOS_DATA_DIR", str(tmp_path))
+    upsert_incident_summary("t1", _state("inc-1", "CPU at 100% utilization"))
+    upsert_incident_summary("t1", _state("inc-2", "CPU at 100X utilization"))
+
+    rows = list_incidents("t1", search="100%")
+
+    assert [r["thread_id"] for r in rows] == ["inc-1"]
+
+
+def test_no_filters_returns_everything(monkeypatch, tmp_path):
+    monkeypatch.setenv("SENTINELOS_DATA_DIR", str(tmp_path))
+    _seed_mixed()
+
+    rows = list_incidents("t1")
+
+    assert len(rows) == 3
+
+
+# ---------- get_incident_stats ----------
+
+
+def test_stats_on_empty_tenant(monkeypatch, tmp_path):
+    monkeypatch.setenv("SENTINELOS_DATA_DIR", str(tmp_path))
+
+    stats = get_incident_stats("t1")
+
+    assert stats == {
+        "total": 0,
+        "open": 0,
+        "pending_approval": 0,
+        "by_severity": {"low": 0, "medium": 0, "high": 0, "critical": 0},
+    }
+
+
+def test_stats_reflect_seeded_incidents(monkeypatch, tmp_path):
+    monkeypatch.setenv("SENTINELOS_DATA_DIR", str(tmp_path))
+    _seed_mixed()
+
+    stats = get_incident_stats("t1")
+
+    assert stats["total"] == 3
+    assert stats["pending_approval"] == 1  # inc-2
+    assert stats["open"] == 2  # inc-1 (open), inc-2 (pending_approval) -- inc-3 is closed
+    assert stats["by_severity"] == {"low": 1, "medium": 0, "high": 1, "critical": 1}
+
+
+def test_stats_scoped_per_tenant(monkeypatch, tmp_path):
+    monkeypatch.setenv("SENTINELOS_DATA_DIR", str(tmp_path))
+    _seed_mixed(tenant="t1")
+    upsert_incident_summary("t2", _state("inc-x", "unrelated tenant's incident", severity="critical"))
+
+    stats_t1 = get_incident_stats("t1")
+    stats_t2 = get_incident_stats("t2")
+
+    assert stats_t1["total"] == 3
+    assert stats_t2["total"] == 1

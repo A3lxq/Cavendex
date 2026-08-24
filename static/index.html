@@ -35,6 +35,14 @@
 
   <!-- Incidents tab -->
   <section id="tab-incidents" class="tab-panel active">
+    <div class="stats-bar" id="stats-bar" aria-live="polite">
+      <div class="stat-tile stat-total"><div class="stat-n" id="stat-total">–</div><div class="stat-l">Total</div></div>
+      <div class="stat-tile stat-open"><div class="stat-n" id="stat-open">–</div><div class="stat-l">Open</div></div>
+      <div class="stat-tile stat-pending"><div class="stat-n" id="stat-pending">–</div><div class="stat-l">Pending Approval</div></div>
+      <div class="stat-tile stat-low"><div class="stat-n" id="stat-low">–</div><div class="stat-l">Low</div></div>
+      <div class="stat-tile stat-medium"><div class="stat-n" id="stat-medium">–</div><div class="stat-l">Medium</div></div>
+      <div class="stat-tile stat-high"><div class="stat-n" id="stat-high">–</div><div class="stat-l">High</div></div>
+    </div>
     <div class="split-view">
       <div class="list-pane">
         <div class="list-pane-header">
@@ -42,6 +50,24 @@
           <label class="auto-refresh-label">
             <input type="checkbox" id="auto-refresh-toggle" checked> Auto-refresh
           </label>
+        </div>
+        <div class="filter-bar">
+          <input type="search" id="filter-search" placeholder="Search descriptions… ( / )" spellcheck="false">
+          <select id="filter-severity">
+            <option value="">All severities</option>
+            <option value="low">Low</option>
+            <option value="medium">Medium</option>
+            <option value="high">High</option>
+            <option value="critical">Critical</option>
+          </select>
+          <select id="filter-status">
+            <option value="">All statuses</option>
+            <option value="open">Open</option>
+            <option value="investigating">Investigating</option>
+            <option value="pending_approval">Pending Approval</option>
+            <option value="contained">Contained</option>
+            <option value="closed">Closed</option>
+          </select>
         </div>
         <table class="incident-table">
           <thead>
@@ -56,6 +82,7 @@
             <tr><td colspan="4" class="empty-row">Loading…</td></tr>
           </tbody>
         </table>
+        <div class="kbd-hint"><kbd>j</kbd>/<kbd>k</kbd> navigate · <kbd>Enter</kbd> open · <kbd>a</kbd>/<kbd>d</kbd> approve/deny · <kbd>/</kbd> search</div>
       </div>
       <div class="detail-pane" id="detail-pane">
         <div class="empty-state">Select an incident to view details.</div>

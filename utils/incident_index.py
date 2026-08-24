@@ -13,7 +13,7 @@ import os
 import sqlite3
 import threading
 from datetime import datetime, timezone
-from typing import List
+from typing import List, Optional
 
 from graph import tenant_data_dir
 from state import OPEN_STATUSES
@@ -129,17 +129,68 @@ def upsert_incident_summary(tenant_id: str, state: dict, report_type: str = "inc
         conn.commit()
 
 
-def list_incidents(tenant_id: str = DEFAULT_TENANT, limit: int = 100) -> List[dict]:
+def list_incidents(
+    tenant_id: str = DEFAULT_TENANT,
+    limit: int = 100,
+    severity: Optional[str] = None,
+    status: Optional[str] = None,
+    search: Optional[str] = None,
+) -> List[dict]:
+    """Lists incidents, most recently updated first, optionally filtered
+    by exact severity/status and/or a case-insensitive substring match on
+    description. Filtering happens in SQL against the index rather than
+    over just the page already fetched, so it stays correct regardless
+    of how many incidents exist beyond `limit` — the same reasoning
+    every other query in this file already applies.
+    """
     conn = _get_connection(tenant_id)
+    clauses = []
+    params: List = []
+    if severity:
+        clauses.append("severity = ?")
+        params.append(severity)
+    if status:
+        clauses.append("status = ?")
+        params.append(status)
+    if search:
+        clauses.append("description LIKE ? ESCAPE '\\'")
+        escaped = search.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+        params.append(f"%{escaped}%")
+    where_sql = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+    params.append(max(1, min(limit, 500)))
+
     cursor = conn.execute(
-        """
+        f"""
         SELECT thread_id, report_type, description, severity, status, source, has_pending_actions, updated_at
-        FROM incidents ORDER BY updated_at DESC LIMIT ?
+        FROM incidents {where_sql} ORDER BY updated_at DESC LIMIT ?
         """,
-        (max(1, min(limit, 500)),),
+        params,
     )
     columns = [d[0] for d in cursor.description]
     return [dict(zip(columns, row)) for row in cursor.fetchall()]
+
+
+def get_incident_stats(tenant_id: str = DEFAULT_TENANT) -> dict:
+    """Aggregate counts for the dashboard's summary bar — real SQL
+    COUNT()s against the whole index, not just whatever page of rows
+    list_incidents() happens to return, so this stays correct regardless
+    of how many incidents exist beyond any UI page size.
+    """
+    conn = _get_connection(tenant_id)
+    total = conn.execute("SELECT COUNT(*) FROM incidents").fetchone()[0]
+    pending_approval = conn.execute("SELECT COUNT(*) FROM incidents WHERE has_pending_actions = 1").fetchone()[0]
+    open_placeholders = ",".join("?" for _ in OPEN_STATUSES)
+    open_count = conn.execute(
+        f"SELECT COUNT(*) FROM incidents WHERE status IN ({open_placeholders})", OPEN_STATUSES
+    ).fetchone()[0]
+    severity_rows = conn.execute("SELECT severity, COUNT(*) FROM incidents GROUP BY severity").fetchall()
+    by_severity_counts = dict(severity_rows)
+    return {
+        "total": total,
+        "open": open_count,
+        "pending_approval": pending_approval,
+        "by_severity": {sev: by_severity_counts.get(sev, 0) for sev in ("low", "medium", "high", "critical")},
+    }
 
 
 def list_open_incidents(tenant_id: str = DEFAULT_TENANT) -> List[dict]:

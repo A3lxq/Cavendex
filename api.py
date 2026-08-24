@@ -52,7 +52,7 @@ from pydantic import BaseModel, Field
 from ingestion.pipeline import ingest_alert
 from state import Severity, ShortStr
 from utils.auth_monitor import record_auth_failure
-from utils.incident_index import list_incidents
+from utils.incident_index import get_incident_stats, list_incidents
 from utils.rate_limit import check_rate_limit
 from utils.tenancy import DEFAULT_TENANT
 from workflows.incident_pipeline import (
@@ -390,8 +390,15 @@ def _stream_incident(payload: NewIncidentRequest, tenant_id: str) -> StreamingRe
 
 
 @router.get("/incidents")
-def list_incidents_default(limit: int = 100):
-    return list_incidents(DEFAULT_TENANT, limit=limit)
+def list_incidents_default(
+    limit: int = 100, severity: Optional[str] = None, status: Optional[str] = None, search: Optional[str] = None
+):
+    return list_incidents(DEFAULT_TENANT, limit=limit, severity=severity, status=status, search=search)
+
+
+@router.get("/incidents/stats")
+def incident_stats_default():
+    return get_incident_stats(DEFAULT_TENANT)
 
 
 @router.post("/incidents", dependencies=[Depends(rate_limit_default)])
@@ -447,8 +454,19 @@ def ingest(source: str, payload: dict):
 
 
 @tenant_router.get("/tenants/{tenant_id}/incidents")
-def list_incidents_for_tenant(tenant_id: str, limit: int = 100):
-    return list_incidents(tenant_id, limit=limit)
+def list_incidents_for_tenant(
+    tenant_id: str,
+    limit: int = 100,
+    severity: Optional[str] = None,
+    status: Optional[str] = None,
+    search: Optional[str] = None,
+):
+    return list_incidents(tenant_id, limit=limit, severity=severity, status=status, search=search)
+
+
+@tenant_router.get("/tenants/{tenant_id}/incidents/stats")
+def incident_stats_for_tenant(tenant_id: str):
+    return get_incident_stats(tenant_id)
 
 
 @tenant_router.post("/tenants/{tenant_id}/incidents", dependencies=[Depends(rate_limit_for_tenant)])

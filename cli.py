@@ -34,6 +34,46 @@ load_dotenv(override=True)
 
 _PROVIDER_KEYS = ["GROQ_API_KEY", "OPENAI_API_KEY", "ANTHROPIC_API_KEY", "GOOGLE_API_KEY", "OLLAMA_MODEL"]
 
+# Colorized output, but only when it's actually safe: a real terminal, and
+# the caller hasn't opted out via the standard NO_COLOR convention
+# (https://no-color.org/). Piped/redirected output (a log file, a script
+# parsing our stdout) must never get raw escape codes mixed into it.
+_COLOR_ENABLED = sys.stdout.isatty() and not os.getenv("NO_COLOR")
+
+_ANSI = {
+    "reset": "\033[0m", "bold": "\033[1m",
+    "red": "\033[31m", "green": "\033[32m", "yellow": "\033[33m",
+    "cyan": "\033[36m", "gray": "\033[90m", "bright_red": "\033[91m",
+}
+
+_SEVERITY_STYLE = {"low": ("gray",), "medium": ("yellow",), "high": ("red",), "critical": ("bright_red", "bold")}
+_STATUS_STYLE = {
+    "pending_approval": ("yellow",), "contained": ("green",), "closed": ("green",),
+    "investigating": ("cyan",), "open": ("cyan",),
+}
+
+
+def _c(text, *styles):
+    if not _COLOR_ENABLED or not styles:
+        return text
+    return "".join(_ANSI[s] for s in styles) + text + _ANSI["reset"]
+
+
+def _severity_text(severity):
+    return _c(severity.upper(), *_SEVERITY_STYLE.get(severity, ()))
+
+
+def _status_text(status):
+    return _c(status, *_STATUS_STYLE.get(status, ()))
+
+
+def _error_text(message):
+    return _c(message, "bright_red", "bold")
+
+
+def _section(title):
+    return _c(title, "cyan", "bold")
+
 
 def _require_provider():
     if not any(os.getenv(k) for k in _PROVIDER_KEYS):
@@ -58,44 +98,49 @@ def _print_state(state):
     incident = state.get("incident")
     if incident:
         print(f"Incident {incident.id}")
-        print(f"  Severity: {incident.severity}")
-        print(f"  Status:   {incident.status}")
+        print(f"  Severity: {_severity_text(incident.severity)}")
+        print(f"  Status:   {_status_text(incident.status)}")
         print(f"  Source:   {incident.source}")
         print(f"  Assets:   {', '.join(incident.affected_assets) or 'none'}")
         print(f"  IOCs:     {', '.join(incident.iocs) or 'none'}")
 
-    print("\nAgent Findings:")
+    print(f"\n{_section('Agent Findings:')}")
     for msg in state.get("messages", []) or []:
         name, content = _msg_name_content(msg)
         print(f"\n[{name}]\n{content}")
 
     proposed = state.get("proposed_actions", []) or []
     if proposed:
-        print("\nProposed Actions:")
+        print(f"\n{_section('Proposed Actions:')}")
         for a in proposed:
-            status = "approved" if a.approved is True else "denied" if a.approved is False else "PENDING APPROVAL"
+            if a.approved is True:
+                status = _c("approved", "green", "bold")
+            elif a.approved is False:
+                status = _c("denied", "red", "bold")
+            else:
+                status = _c("PENDING APPROVAL", "yellow", "bold")
             print(f"  - {a.action} → {a.target} ({a.rationale}) [{status}]")
 
     threat_intel = state.get("threat_intel") or []
     if threat_intel:
-        print("\nThreat Intelligence:")
+        print(f"\n{_section('Threat Intelligence:')}")
         for r in threat_intel:
             print(f"  - {r['indicator']} ({r['indicator_type']}) — {r['source']}: {r['verdict']} — {r['detail']}")
 
     attack_technique = state.get("attack_technique")
     if attack_technique:
-        tag = "verified" if attack_technique.get("verified") else "UNVERIFIED"
+        tag = _c("verified", "green") if attack_technique.get("verified") else _c("UNVERIFIED", "bright_red", "bold")
         name = attack_technique.get("name") or "not found in local dataset"
-        print(f"\nATT&CK Technique: {attack_technique['id']} — {name} [{tag}]")
+        print(f"\n{_section('ATT&CK Technique:')} {attack_technique['id']} — {name} [{tag}]")
 
     usage = state.get("token_usage") or {}
     if usage:
-        print(f"\nToken Usage: {usage.get('total_tokens', 0)} total "
+        print(f"\n{_section('Token Usage:')} {usage.get('total_tokens', 0)} total "
               f"({usage.get('input_tokens', 0)} in / {usage.get('output_tokens', 0)} out)")
         for agent_name, agent_usage in (usage.get("by_agent") or {}).items():
             print(f"  - {agent_name}: {agent_usage.get('total_tokens', 0)} tokens")
 
-    print("\nAudit Log:")
+    print(f"\n{_section('Audit Log:')}")
     for entry in state.get("audit_log", []) or []:
         print(f"  • {entry}")
 
@@ -183,7 +228,7 @@ def cmd_approve(args):
     try:
         state = resolve_proposed_actions(args.thread_id, approve=True, tenant_id=args.tenant, approved_by=approved_by)
     except ValueError as exc:
-        print(f"Error: {exc}")
+        print(_error_text(f"Error: {exc}"))
         sys.exit(1)
     print("Actions approved.\n")
     _print_state(state)
@@ -196,7 +241,7 @@ def cmd_deny(args):
     try:
         state = resolve_proposed_actions(args.thread_id, approve=False, tenant_id=args.tenant, approved_by=approved_by)
     except ValueError as exc:
-        print(f"Error: {exc}")
+        print(_error_text(f"Error: {exc}"))
         sys.exit(1)
     print("Actions denied.\n")
     _print_state(state)
@@ -212,7 +257,13 @@ def cmd_verify_audit(args):
         sys.exit(1)
 
     result = verify_incident_audit_log(args.tenant, args.thread_id, state.get("audit_log", []))
-    print(f"{result['status']}: {result['detail']}")
+    if result["status"] == "verified":
+        status_text = _c("verified", "green", "bold")
+    elif result["status"] == "MISMATCH":
+        status_text = _c("MISMATCH", "bright_red", "bold")
+    else:
+        status_text = _c(result["status"], "yellow")
+    print(f"{status_text}: {result['detail']}")
     if result["status"] == "MISMATCH":
         sys.exit(1)
 

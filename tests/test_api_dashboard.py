@@ -61,3 +61,73 @@ def test_list_incidents_empty_for_unknown_tenant(monkeypatch, tmp_path):
     response = client.get("/tenants/never-used-tenant/incidents")
     assert response.status_code == 200
     assert response.json() == []
+
+
+def _seed_two(tenant, tmp_path, monkeypatch):
+    monkeypatch.delenv("SENTINELOS_API_KEY", raising=False)
+    monkeypatch.setenv("SENTINELOS_DATA_DIR", str(tmp_path))
+    upsert_incident_summary(
+        tenant,
+        {"incident": Incident(id="inc-1", description="Brute force from 1.2.3.4", severity="high", status="open"),
+         "tenant_id": tenant},
+    )
+    upsert_incident_summary(
+        tenant,
+        {"incident": Incident(id="inc-2", description="Malware on DC-01", severity="critical", status="pending_approval"),
+         "tenant_id": tenant},
+    )
+
+
+def test_list_incidents_filters_by_severity_via_query_param(monkeypatch, tmp_path):
+    _seed_two("dash-test", tmp_path, monkeypatch)
+    response = client.get("/tenants/dash-test/incidents", params={"severity": "critical"})
+    assert response.status_code == 200
+    rows = response.json()
+    assert [r["thread_id"] for r in rows] == ["inc-2"]
+
+
+def test_list_incidents_filters_by_search_via_query_param(monkeypatch, tmp_path):
+    _seed_two("dash-test", tmp_path, monkeypatch)
+    response = client.get("/tenants/dash-test/incidents", params={"search": "brute"})
+    assert response.status_code == 200
+    rows = response.json()
+    assert [r["thread_id"] for r in rows] == ["inc-1"]
+
+
+def test_default_tenant_list_route_also_accepts_filters(monkeypatch, tmp_path):
+    from utils.tenancy import DEFAULT_TENANT
+
+    _seed_two(DEFAULT_TENANT, tmp_path, monkeypatch)
+    response = client.get("/incidents", params={"status": "pending_approval"})
+    assert response.status_code == 200
+    rows = response.json()
+    assert [r["thread_id"] for r in rows] == ["inc-2"]
+
+
+def test_incident_stats_route_returns_aggregate_counts(monkeypatch, tmp_path):
+    _seed_two("dash-test", tmp_path, monkeypatch)
+    response = client.get("/tenants/dash-test/incidents/stats")
+    assert response.status_code == 200
+    stats = response.json()
+    assert stats["total"] == 2
+    assert stats["pending_approval"] == 1
+    assert stats["by_severity"]["critical"] == 1
+    assert stats["by_severity"]["high"] == 1
+
+
+def test_incident_stats_route_does_not_collide_with_thread_id_route(monkeypatch, tmp_path):
+    """/incidents/stats must resolve to the stats route, not be swallowed
+    by GET /incidents/{thread_id} treating "stats" as a thread_id."""
+    _seed_two("dash-test", tmp_path, monkeypatch)
+    response = client.get("/tenants/dash-test/incidents/stats")
+    assert response.status_code == 200
+    assert "total" in response.json()  # stats shape, not a 404 "incident not found"
+
+
+def test_default_tenant_stats_route(monkeypatch, tmp_path):
+    from utils.tenancy import DEFAULT_TENANT
+
+    _seed_two(DEFAULT_TENANT, tmp_path, monkeypatch)
+    response = client.get("/incidents/stats")
+    assert response.status_code == 200
+    assert response.json()["total"] == 2
