@@ -1,0 +1,119 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SentinelOS</title>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+
+<header class="topbar">
+  <div class="brand">🛡️ SentinelOS</div>
+  <div class="topbar-controls">
+    <label>Tenant
+      <input id="tenant-input" type="text" value="default" spellcheck="false">
+    </label>
+    <label>API Key
+      <input id="apikey-input" type="password" placeholder="only if SENTINELOS_API_KEY is set" spellcheck="false">
+    </label>
+    <label title="Recorded on every approve/deny decision you make — not an authenticated login, just an audit-trail label.">Analyst name
+      <input id="analyst-name-input" type="text" placeholder="e.g. j.smith" spellcheck="false">
+    </label>
+    <button id="apply-settings-btn">Apply</button>
+    <span id="connection-status" class="status-pill status-unknown">checking…</span>
+  </div>
+</header>
+
+<nav class="tabs">
+  <button class="tab-btn active" data-tab="incidents">Incidents</button>
+  <button class="tab-btn" data-tab="new-incident">New Incident</button>
+  <button class="tab-btn" data-tab="hunt">Threat Hunt</button>
+</nav>
+
+<main>
+
+  <!-- Incidents tab -->
+  <section id="tab-incidents" class="tab-panel active">
+    <div class="split-view">
+      <div class="list-pane">
+        <div class="list-pane-header">
+          <button id="refresh-btn">↻ Refresh</button>
+          <label class="auto-refresh-label">
+            <input type="checkbox" id="auto-refresh-toggle" checked> Auto-refresh
+          </label>
+        </div>
+        <table class="incident-table">
+          <thead>
+            <tr>
+              <th>Severity</th>
+              <th>Status</th>
+              <th>Description</th>
+              <th>Updated</th>
+            </tr>
+          </thead>
+          <tbody id="incident-list-body">
+            <tr><td colspan="4" class="empty-row">Loading…</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="detail-pane" id="detail-pane">
+        <div class="empty-state">Select an incident to view details.</div>
+      </div>
+    </div>
+  </section>
+
+  <!-- New Incident tab -->
+  <section id="tab-new-incident" class="tab-panel">
+    <div class="form-card">
+      <h2>Submit a New Incident</h2>
+      <form id="new-incident-form">
+        <label>Description
+          <textarea id="ni-description" rows="3" required placeholder="Multiple failed logins from 1.2.3.4 targeting DC-01"></textarea>
+        </label>
+        <div class="form-row">
+          <label>Severity
+            <select id="ni-severity">
+              <option value="low">low</option>
+              <option value="medium" selected>medium</option>
+              <option value="high">high</option>
+              <option value="critical">critical</option>
+            </select>
+          </label>
+          <label>Source
+            <input id="ni-source" type="text" placeholder="SIEM">
+          </label>
+        </div>
+        <div class="form-row">
+          <label>Affected Assets (comma-separated)
+            <input id="ni-assets" type="text" placeholder="DC-01, WEB-SRV-01">
+          </label>
+          <label>IOCs (comma-separated)
+            <input id="ni-iocs" type="text" placeholder="1.2.3.4">
+          </label>
+        </div>
+        <button type="submit" id="ni-submit-btn">Run Pipeline (live)</button>
+      </form>
+      <div id="ni-live-output" class="live-output" hidden></div>
+    </div>
+  </section>
+
+  <!-- Threat Hunt tab -->
+  <section id="tab-hunt" class="tab-panel">
+    <div class="form-card">
+      <h2>Standalone Threat Hunt</h2>
+      <form id="hunt-form">
+        <label>Question
+          <textarea id="hunt-query" rows="3" required placeholder="Any signs of a broader credential-stuffing campaign against our domain controllers?"></textarea>
+        </label>
+        <button type="submit" id="hunt-submit-btn">Run Hunt</button>
+      </form>
+      <div id="hunt-output" class="live-output" hidden></div>
+    </div>
+  </section>
+
+</main>
+
+<script src="/static/app.js"></script>
+</body>
+</html>

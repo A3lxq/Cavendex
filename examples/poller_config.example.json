@@ -1,0 +1,37 @@
+{
+  "_comment": "Annotated example for poll_connector.py --config. Copy this, point it at your actual SIEM/EDR's alert-listing endpoint, and describe that API's real JSON shape below — none of these values are real. Delete this _comment field (or leave it; it's ignored) before using.",
+
+  "name": "my-siem",
+  "base_url": "https://siem.example.com/api/v1/alerts",
+  "method": "GET",
+
+  "_comment_auth": "auth_token_env names an ENVIRONMENT VARIABLE holding the real token — never put the token itself in this file. Set it in your .env or the process environment.",
+  "auth_header": "Authorization",
+  "auth_scheme": "Bearer",
+  "auth_token_env": "MY_SIEM_API_TOKEN",
+
+  "_comment_records_path": "Dotted path to the list of alert records within the JSON response body. Use null (or omit) if the response body IS that list.",
+  "records_path": "results",
+
+  "_comment_cursor": "Incremental polling: after each fetch, the LAST record's cursor_field value is remembered and sent as cursor_query_param on the next request. Omit both to always fetch fresh with no narrowing.",
+  "cursor_query_param": "since",
+  "cursor_field": "timestamp",
+
+  "_comment_field_map": "Maps SentinelOS's own alert fields to a dotted path within ONE record, in your API's real field names. Only description is required in practice (everything else defaults sensibly if omitted).",
+  "field_map": {
+    "description": "title",
+    "severity": "severity",
+    "source": "source_name",
+    "iocs": "indicators",
+    "affected_assets": "affected_hosts",
+    "dedup_key": "alert_id"
+  },
+
+  "static_query_params": {
+    "limit": "100"
+  },
+
+  "poll_interval_seconds": 60,
+  "tenant": "default",
+  "source_name": "my-siem"
+}
