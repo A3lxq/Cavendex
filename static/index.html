@@ -29,12 +29,21 @@
   <button class="tab-btn active" data-tab="incidents">Incidents</button>
   <button class="tab-btn" data-tab="new-incident">New Incident</button>
   <button class="tab-btn" data-tab="hunt">Threat Hunt</button>
+  <button class="tab-btn" data-tab="ioc-lookup">IOC Lookup</button>
 </nav>
 
 <main>
 
   <!-- Incidents tab -->
   <section id="tab-incidents" class="tab-panel active">
+    <div class="onboarding-banner" id="onboarding-banner" hidden>
+      <div>
+        <strong>New here?</strong> Submit an incident from the "New Incident" tab, or point a real alert source
+        (Suricata, Wazuh, syslog, a webhook) at this tenant — see <code>GETTING_STARTED.md</code> in the project root.
+        Every incident an agent flags for remediation waits for you to Approve or Deny before anything is treated as decided.
+      </div>
+      <button id="onboarding-dismiss-btn">Got it</button>
+    </div>
     <div class="stats-bar" id="stats-bar" aria-live="polite">
       <div class="stat-tile stat-total"><div class="stat-n" id="stat-total">–</div><div class="stat-l">Total</div></div>
       <div class="stat-tile stat-open"><div class="stat-n" id="stat-open">–</div><div class="stat-l">Open</div></div>
@@ -69,9 +78,16 @@
             <option value="closed">Closed</option>
           </select>
         </div>
+        <div class="bulk-bar" id="bulk-bar" hidden>
+          <span id="bulk-count">0 selected</span>
+          <button id="bulk-approve-btn" class="btn-approve">Approve Selected</button>
+          <button id="bulk-deny-btn" class="btn-deny">Deny Selected</button>
+          <button id="bulk-clear-btn">Clear</button>
+        </div>
         <table class="incident-table">
           <thead>
             <tr>
+              <th class="th-checkbox"></th>
               <th>Severity</th>
               <th>Status</th>
               <th>Description</th>
@@ -79,7 +95,7 @@
             </tr>
           </thead>
           <tbody id="incident-list-body">
-            <tr><td colspan="4" class="empty-row">Loading…</td></tr>
+            <tr><td colspan="5" class="empty-row">Loading…</td></tr>
           </tbody>
         </table>
         <div class="kbd-hint"><kbd>j</kbd>/<kbd>k</kbd> navigate · <kbd>Enter</kbd> open · <kbd>a</kbd>/<kbd>d</kbd> approve/deny · <kbd>/</kbd> search</div>
@@ -136,6 +152,21 @@
         <button type="submit" id="hunt-submit-btn">Run Hunt</button>
       </form>
       <div id="hunt-output" class="live-output" hidden></div>
+    </div>
+  </section>
+
+  <!-- IOC Lookup tab -->
+  <section id="tab-ioc-lookup" class="tab-panel">
+    <div class="form-card">
+      <h2>IOC Lookup</h2>
+      <p class="form-hint">Check an indicator's real threat-intel reputation without creating an incident. One or more, comma-separated.</p>
+      <form id="ioc-lookup-form">
+        <label>Indicators
+          <input id="ioc-lookup-input" type="text" required placeholder="1.2.3.4, evil-c2.example.com" spellcheck="false">
+        </label>
+        <button type="submit" id="ioc-lookup-submit-btn">Look Up</button>
+      </form>
+      <div id="ioc-lookup-output" class="live-output" hidden></div>
     </div>
   </section>
 

@@ -146,6 +146,20 @@ main { padding: 22px; }
 .tab-panel { display: none; }
 .tab-panel.active { display: block; }
 
+/* ---------- Onboarding banner ---------- */
+
+.onboarding-banner {
+  display: flex; align-items: center; gap: 16px;
+  background: var(--bg-elevated); border: 1px solid var(--pulse-dim);
+  border-left: 3px solid var(--pulse);
+  border-radius: 6px; padding: 12px 16px; margin-bottom: 14px;
+  font-size: 13px; color: var(--text-dim); line-height: 1.5;
+}
+.onboarding-banner[hidden] { display: none; }
+.onboarding-banner strong { color: var(--text); }
+.onboarding-banner code { font-family: var(--font-mono); background: var(--bg-inset); padding: 1px 5px; border-radius: 3px; }
+.onboarding-banner button { flex-shrink: 0; }
+
 /* ---------- Stats bar ---------- */
 
 .stats-bar {
@@ -215,6 +229,21 @@ main { padding: 22px; }
   border-radius: var(--radius); padding: 6px 6px; font-size: 11px; font-family: var(--font-sans);
 }
 .filter-bar select:focus { border-color: var(--pulse); color: var(--text); }
+
+.bulk-bar {
+  display: flex; align-items: center; gap: 10px; padding: 8px 10px;
+  background: var(--pulse-dim); border-bottom: 1px solid var(--border); font-size: 12px;
+}
+/* Author CSS setting `display` beats the UA stylesheet's [hidden] rule
+   regardless of specificity -- without this, `.bulk-bar { display: flex }`
+   above silently defeats element.hidden entirely. */
+.bulk-bar[hidden] { display: none; }
+.bulk-bar span { color: var(--text); font-weight: 700; margin-right: 4px; }
+.bulk-bar button { padding: 5px 10px; font-size: 11px; }
+#bulk-clear-btn { margin-left: auto; background: transparent; border-color: var(--border); }
+
+.th-checkbox, .td-checkbox { width: 28px; text-align: center; }
+.bulk-checkbox { cursor: pointer; accent-color: var(--pulse); }
 
 .incident-table { width: 100%; border-collapse: collapse; overflow-y: auto; display: block; }
 .incident-table thead, .incident-table tbody { display: block; }
@@ -291,10 +320,12 @@ main { padding: 22px; }
 .attack-verified { color: var(--ok); }
 .attack-unverified { color: var(--critical); }
 
-.action-card { background: var(--bg-inset); border: 1px solid var(--border-soft); border-radius: 6px; padding: 13px; margin-bottom: 10px; }
+.action-cards { display: flex; flex-direction: column; gap: 10px; margin-bottom: 4px; }
+.action-card { background: var(--bg-inset); border: 1px solid var(--border-soft); border-radius: 6px; padding: 13px; }
 .action-card .action-title { font-weight: 700; margin-bottom: 4px; }
 .action-card .action-target { font-family: var(--font-mono); font-size: 12px; color: var(--text-dim); margin-bottom: 6px; }
-.action-card .action-rationale { font-size: 13px; color: var(--text-dim); margin-bottom: 10px; }
+.action-card .action-rationale { font-size: 13px; color: var(--text-dim); }
+.action-decision { margin-top: 10px; }
 .action-buttons { display: flex; gap: 8px; }
 .btn-approve { background: rgba(51,224,138,0.1); border-color: var(--ok); color: var(--ok); }
 .btn-approve:hover:not(:disabled) { background: var(--ok); color: #04170d; box-shadow: 0 0 10px rgba(51,224,138,0.3); }
@@ -304,7 +335,43 @@ main { padding: 22px; }
 .action-decided.approved { color: var(--ok); }
 .action-decided.denied { color: var(--critical); }
 
-.audit-log { font-family: var(--font-mono); font-size: 12px; color: var(--text-dim); line-height: 1.8; }
+/* ---------- Audit log timeline ---------- */
+
+.audit-timeline { display: flex; flex-direction: column; }
+
+.audit-entry {
+  position: relative;
+  padding: 0 0 16px 20px;
+  border-left: 1px solid var(--border);
+  font-family: var(--font-mono);
+  font-size: 12px;
+}
+.audit-entry:last-child { border-left-color: transparent; padding-bottom: 0; }
+.audit-entry::before {
+  content: "";
+  position: absolute;
+  left: -4.5px; top: 3px;
+  width: 8px; height: 8px;
+  border-radius: 50%;
+  background: var(--bg-elevated);
+  border: 1.5px solid var(--text-faint);
+}
+.audit-entry.audit-kind-agent::before { border-color: var(--pulse); }
+.audit-entry.audit-kind-human::before { border-color: var(--ok); background: var(--ok); }
+.audit-entry.audit-kind-correlation::before { border-color: var(--medium); }
+.audit-entry.audit-kind-error::before { border-color: var(--critical); background: var(--critical); box-shadow: 0 0 6px rgba(255,77,106,0.5); }
+
+.audit-actor {
+  font-weight: 700; text-transform: uppercase; letter-spacing: 0.03em; font-size: 11px;
+  color: var(--text-dim); margin-bottom: 2px;
+}
+.audit-kind-agent .audit-actor { color: var(--pulse); }
+.audit-kind-human .audit-actor { color: var(--ok); }
+.audit-kind-correlation .audit-actor { color: var(--medium); }
+.audit-kind-error .audit-actor { color: var(--critical); }
+
+.audit-detail { color: var(--text-dim); line-height: 1.5; }
+.audit-kind-error .audit-detail { color: var(--critical); }
 
 /* ---------- Forms ---------- */
 
@@ -313,6 +380,7 @@ main { padding: 22px; }
   border-radius: 6px; padding: 24px;
 }
 .form-card h2 { margin-top: 0; font-size: 15px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--pulse); }
+.form-card .form-hint { margin-top: -6px; margin-bottom: 4px; font-size: 12px; color: var(--text-dim); }
 .form-card form { display: flex; flex-direction: column; gap: 14px; }
 .form-card label { display: flex; flex-direction: column; gap: 5px; font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--text-faint); }
 .form-card input, .form-card textarea, .form-card select {

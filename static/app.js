@@ -177,15 +177,23 @@ async function loadIncidents() {
   try {
     const rows = await apiGet(`${tenantPrefix()}/incidents?${buildIncidentsQuery()}`);
     currentRows = rows;
+    // Drop selections for incidents no longer in view (resolved, filtered
+    // out, etc.) so the bulk bar's count never lies about what a click
+    // would actually act on.
+    const visibleIds = new Set(rows.map((r) => r.thread_id));
+    for (const id of bulkSelected) {
+      if (!visibleIds.has(id)) bulkSelected.delete(id);
+    }
     if (!rows.length) {
       const { search, severity, status } = activeFilters();
       const filtered = search || severity || status;
-      tbody.innerHTML = `<tr><td colspan="4" class="empty-row">${
+      tbody.innerHTML = `<tr><td colspan="5" class="empty-row">${
         filtered
           ? "No incidents match the current filters."
           : `No incidents yet for tenant "${escapeHtml(settings.tenant)}".` +
             `<span class="empty-hint">Submit one from the "New Incident" tab, or point an ingestion source at this tenant — see GETTING_STARTED.md.</span>`
       }</td></tr>`;
+      updateBulkBar();
       return;
     }
     tbody.innerHTML = rows
@@ -193,8 +201,14 @@ async function loadIncidents() {
         const selected = r.thread_id === selectedThreadId ? "row-selected" : "";
         const kbdFocus = idx === keyboardFocusIndex ? "row-keyboard-focus" : "";
         const pendingMark = r.has_pending_actions ? " ⏳" : "";
+        const checkboxCell = r.has_pending_actions
+          ? `<input type="checkbox" class="bulk-checkbox" data-thread-id="${escapeHtml(r.thread_id)}" ${
+              bulkSelected.has(r.thread_id) ? "checked" : ""
+            }>`
+          : "";
         return `
           <tr class="row-clickable ${selected} ${kbdFocus}" data-thread-id="${escapeHtml(r.thread_id)}" data-idx="${idx}">
+            <td class="td-checkbox">${checkboxCell}</td>
             <td>${severityBadge(r.severity)}</td>
             <td>${statusBadge(r.status)}${pendingMark}</td>
             <td class="desc-cell" title="${escapeHtml(r.description)}">${escapeHtml(r.description)}</td>
@@ -203,14 +217,96 @@ async function loadIncidents() {
       })
       .join("");
     tbody.querySelectorAll("tr[data-thread-id]").forEach((tr) => {
-      tr.addEventListener("click", () => {
+      tr.addEventListener("click", (evt) => {
+        if (evt.target.classList.contains("bulk-checkbox")) return;
         keyboardFocusIndex = Number(tr.dataset.idx);
         openIncident(tr.dataset.threadId);
       });
     });
+    tbody.querySelectorAll("input.bulk-checkbox").forEach((cb) => {
+      cb.addEventListener("click", (evt) => evt.stopPropagation());
+      cb.addEventListener("change", () => {
+        if (cb.checked) bulkSelected.add(cb.dataset.threadId);
+        else bulkSelected.delete(cb.dataset.threadId);
+        updateBulkBar();
+      });
+    });
+    updateBulkBar();
   } catch (err) {
-    tbody.innerHTML = `<tr><td colspan="4" class="empty-row">Failed to load: ${escapeHtml(err.message)}</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="5" class="empty-row">Failed to load: ${escapeHtml(err.message)}</td></tr>`;
   }
+}
+
+/* ---------- Bulk approve/deny across selected incidents ---------- */
+
+const bulkSelected = new Set();
+
+function updateBulkBar() {
+  const bar = document.getElementById("bulk-bar");
+  const count = bulkSelected.size;
+  bar.hidden = count === 0;
+  document.getElementById("bulk-count").textContent = `${count} selected`;
+}
+
+async function bulkDecide(approve) {
+  if (!settings.analystName) {
+    alert(
+      "Set your analyst name in the top bar first — it's recorded in the audit trail for every " +
+        "approve/deny decision, so \"who approved this\" is never unanswerable."
+    );
+    return;
+  }
+  const ids = Array.from(bulkSelected);
+  if (!ids.length) return;
+  const verb = approve ? "approve" : "deny";
+  if (!confirm(`${approve ? "Approve" : "Deny"} the pending action(s) on ${ids.length} incident(s) as "${settings.analystName}"?`)) {
+    return;
+  }
+
+  const results = await Promise.allSettled(
+    ids.map((id) =>
+      apiPost(`${tenantPrefix()}/incidents/${encodeURIComponent(id)}/${verb}`, { approved_by: settings.analystName })
+    )
+  );
+  const failures = results.filter((r) => r.status === "rejected");
+  bulkSelected.clear();
+  await loadIncidents();
+  await loadStats();
+  if (selectedThreadId) await renderIncidentDetail(selectedThreadId);
+  if (failures.length) {
+    alert(`${failures.length} of ${ids.length} failed to ${verb}. Check the incident list for what went through.`);
+  }
+}
+
+/* ---------- First-visit onboarding banner ---------- */
+
+function initOnboardingBanner() {
+  const banner = document.getElementById("onboarding-banner");
+  let dismissed = false;
+  try {
+    dismissed = localStorage.getItem("sentinelos.onboardingDismissed") === "true";
+  } catch (err) {
+    // Private browsing / storage blocked -- fail open (show it once per
+    // page load) rather than crash the whole dashboard over a banner.
+  }
+  banner.hidden = dismissed;
+  document.getElementById("onboarding-dismiss-btn").addEventListener("click", () => {
+    banner.hidden = true;
+    try {
+      localStorage.setItem("sentinelos.onboardingDismissed", "true");
+    } catch (err) {
+      // Ignore -- worst case it reappears next visit, not a functional problem.
+    }
+  });
+}
+
+function initBulkActions() {
+  document.getElementById("bulk-approve-btn").addEventListener("click", () => bulkDecide(true));
+  document.getElementById("bulk-deny-btn").addEventListener("click", () => bulkDecide(false));
+  document.getElementById("bulk-clear-btn").addEventListener("click", () => {
+    bulkSelected.clear();
+    loadIncidents();
+  });
 }
 
 /* ---------- Summary stats bar ---------- */
@@ -343,30 +439,42 @@ function renderAttackTechnique(technique) {
 
 function renderProposedActions(actions, threadId) {
   if (!actions || !actions.length) return "<p>No actions proposed.</p>";
-  return actions
-    .map((a, idx) => {
-      let decisionHtml;
-      const byLabel = a.approved_by ? ` by ${escapeHtml(a.approved_by)}` : " by (unspecified)";
-      if (a.approved === true) {
-        decisionHtml = `<span class="action-decided approved">✔ Approved${byLabel}</span>`;
-      } else if (a.approved === false) {
-        decisionHtml = `<span class="action-decided denied">✘ Denied${byLabel}</span>`;
-      } else {
-        decisionHtml = `
-          <div class="action-buttons">
-            <button class="btn-approve" data-approve="true" data-thread-id="${escapeHtml(threadId)}">Approve</button>
-            <button class="btn-deny" data-approve="false" data-thread-id="${escapeHtml(threadId)}">Deny</button>
-          </div>`;
-      }
-      return `
+
+  const cardsHtml = actions
+    .map(
+      (a) => `
         <div class="action-card">
           <div class="action-title">${escapeHtml(a.action)}</div>
           <div class="action-target">→ ${escapeHtml(a.target)}</div>
           <div class="action-rationale">${escapeHtml(a.rationale)}</div>
-          ${decisionHtml}
-        </div>`;
-    })
+        </div>`
+    )
     .join("");
+
+  // Approval is all-or-nothing per incident -- resolve_proposed_actions
+  // sets the same decision on every proposed action in one call, there
+  // is no independent per-action approval. One decision control for the
+  // whole set, not one per card, so the UI doesn't imply a capability
+  // that doesn't exist.
+  const decided = actions.find((a) => a.approved !== null && a.approved !== undefined);
+  let decisionHtml;
+  if (decided) {
+    const byLabel = decided.approved_by ? ` by ${escapeHtml(decided.approved_by)}` : " by (unspecified)";
+    const countNote = actions.length > 1 ? ` (all ${actions.length} actions)` : "";
+    decisionHtml = decided.approved
+      ? `<span class="action-decided approved">✔ Approved${byLabel}${countNote}</span>`
+      : `<span class="action-decided denied">✘ Denied${byLabel}${countNote}</span>`;
+  } else {
+    const approveLabel = actions.length > 1 ? `Approve All (${actions.length})` : "Approve";
+    const denyLabel = actions.length > 1 ? `Deny All (${actions.length})` : "Deny";
+    decisionHtml = `
+      <div class="action-buttons">
+        <button class="btn-approve" data-approve="true" data-thread-id="${escapeHtml(threadId)}">${approveLabel}</button>
+        <button class="btn-deny" data-approve="false" data-thread-id="${escapeHtml(threadId)}">${denyLabel}</button>
+      </div>`;
+  }
+
+  return `<div class="action-cards">${cardsHtml}</div><div class="action-decision">${decisionHtml}</div>`;
 }
 
 function renderTokenUsage(usage) {
@@ -377,9 +485,36 @@ function renderTokenUsage(usage) {
   return `<div class="token-usage-line"><strong>Total: ${usage.total_tokens} tokens</strong> (${usage.input_tokens} in / ${usage.output_tokens} out)</div>${byAgent}`;
 }
 
+/** Every audit_log entry across this project follows "<Actor> -> <detail>"
+ * (see agents/*.py, workflows/incident_pipeline.py) -- split on the first
+ * occurrence so the actor can be styled distinctly, with a safe fallback
+ * for anything that doesn't match rather than breaking the render. */
+function parseAuditEntry(entry) {
+  const idx = entry.indexOf(" -> ");
+  if (idx === -1) return { actor: "Event", detail: entry };
+  return { actor: entry.slice(0, idx), detail: entry.slice(idx + 4) };
+}
+
+function auditEntryKind(actor, detail) {
+  if (/ERROR:/.test(detail)) return "error";
+  if (/^Human Reviewer/.test(actor)) return "human";
+  if (/^Correlation/.test(actor)) return "correlation";
+  return "agent";
+}
+
 function renderAuditLog(entries) {
   if (!entries || !entries.length) return "<p>Empty.</p>";
-  return `<div class="audit-log">${entries.map((e) => `• ${escapeHtml(e)}`).join("<br>")}</div>`;
+  return `<div class="audit-timeline">${entries
+    .map((e) => {
+      const { actor, detail } = parseAuditEntry(e);
+      const kind = auditEntryKind(actor, detail);
+      return `
+        <div class="audit-entry audit-kind-${kind}">
+          <div class="audit-actor">${escapeHtml(actor)}</div>
+          <div class="audit-detail">${escapeHtml(detail)}</div>
+        </div>`;
+    })
+    .join("")}</div>`;
 }
 
 async function openIncident(threadId) {
@@ -513,6 +648,32 @@ async function submitHunt(evt) {
   }
 }
 
+/* ---------- Standalone IOC lookup ---------- */
+
+async function submitIocLookup(evt) {
+  evt.preventDefault();
+  const submitBtn = document.getElementById("ioc-lookup-submit-btn");
+  const output = document.getElementById("ioc-lookup-output");
+  output.hidden = false;
+  output.innerHTML = "<div class=\"live-event\">Looking up…</div>";
+  submitBtn.disabled = true;
+
+  const iocs = document
+    .getElementById("ioc-lookup-input")
+    .value.split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
+
+  try {
+    const results = await apiPost(`${tenantPrefix()}/enrichment/lookup`, { iocs });
+    output.innerHTML = `<div class="detail-section"><h3>Threat Intelligence</h3>${renderThreatIntel(results)}</div>`;
+  } catch (err) {
+    output.innerHTML = `<div class="live-event">Error: ${escapeHtml(err.message)}</div>`;
+  } finally {
+    submitBtn.disabled = false;
+  }
+}
+
 /* ---------- Wiring ---------- */
 
 function initSettingsForm() {
@@ -553,8 +714,11 @@ document.addEventListener("DOMContentLoaded", () => {
   initAutoRefresh();
   initFilters();
   initKeyboardShortcuts();
+  initBulkActions();
+  initOnboardingBanner();
   document.getElementById("new-incident-form").addEventListener("submit", submitNewIncident);
   document.getElementById("hunt-form").addEventListener("submit", submitHunt);
+  document.getElementById("ioc-lookup-form").addEventListener("submit", submitIocLookup);
   checkConnection();
   loadIncidents();
   loadStats();

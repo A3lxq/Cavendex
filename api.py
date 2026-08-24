@@ -292,6 +292,10 @@ class ApprovalRequest(BaseModel):
     approved_by: Optional[ShortStr] = None
 
 
+class IocLookupRequest(BaseModel):
+    iocs: List[ShortStr] = Field(max_length=50)
+
+
 def _msg_name_content(msg):
     if isinstance(msg, dict):
         return msg.get("name") or msg.get("role", "assistant"), msg.get("content", "")
@@ -436,6 +440,21 @@ def create_hunt(payload: HuntRequest):
     return _create_hunt(payload, DEFAULT_TENANT)
 
 
+@router.post("/enrichment/lookup", dependencies=[Depends(rate_limit_default)])
+def enrichment_lookup(payload: IocLookupRequest):
+    """Real threat-intel lookups on demand, with no incident created —
+    for an analyst who just wants to check an indicator's reputation.
+    Reuses the exact same enrich_iocs() the pipeline calls internally, so
+    results (and their caching/rate-limit behavior against the real
+    providers) are identical either way. Rate-limited the same as
+    incident/hunt creation, even though it never calls an LLM itself —
+    it's still spending real, possibly-quota-limited external API calls.
+    """
+    from enrichment.pipeline import enrich_iocs
+
+    return [r.model_dump() for r in enrich_iocs(payload.iocs)]
+
+
 @router.post(
     "/ingest/{source}",
     dependencies=[Depends(rate_limit_default), Depends(enforce_max_body_size)],
@@ -502,6 +521,13 @@ def deny_incident_for_tenant(tenant_id: str, thread_id: str, payload: Optional[A
 @tenant_router.post("/tenants/{tenant_id}/hunts", dependencies=[Depends(rate_limit_for_tenant)])
 def create_hunt_for_tenant(tenant_id: str, payload: HuntRequest):
     return _create_hunt(payload, tenant_id)
+
+
+@tenant_router.post("/tenants/{tenant_id}/enrichment/lookup", dependencies=[Depends(rate_limit_for_tenant)])
+def enrichment_lookup_for_tenant(tenant_id: str, payload: IocLookupRequest):
+    from enrichment.pipeline import enrich_iocs
+
+    return [r.model_dump() for r in enrich_iocs(payload.iocs)]
 
 
 @tenant_router.post(
