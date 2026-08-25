@@ -4,6 +4,7 @@ assert exactly when it was (and wasn't) invoked."""
 
 import pytest
 
+from utils.asset_inventory import reset_for_tests as reset_asset_inventory
 from utils.dedup import reset_for_tests as reset_dedup
 from utils.incident_index import reset_for_tests as reset_index, upsert_incident_summary
 from utils.rate_limit import reset_for_tests as reset_rate_limit
@@ -20,14 +21,17 @@ def _isolate(monkeypatch, tmp_path):
     reset_dedup()
     reset_index()
     reset_rate_limit()
+    reset_asset_inventory()
     monkeypatch.setenv("SENTINELOS_DEDUP_WINDOW_SECONDS", "300")
     monkeypatch.setenv("SENTINELOS_INGEST_MIN_SEVERITY", "medium")
     monkeypatch.setenv("SENTINELOS_DATA_DIR", str(tmp_path))
     monkeypatch.delenv("SENTINELOS_INGEST_RATE_LIMIT_PER_MINUTE", raising=False)
+    monkeypatch.delenv("SENTINELOS_ASSET_INVENTORY_PATH", raising=False)
     yield
     reset_dedup()
     reset_index()
     reset_rate_limit()
+    reset_asset_inventory()
 
 
 @pytest.fixture
@@ -254,6 +258,74 @@ def test_fuzzy_subnet_match_correlates_and_surfaces_reason(fake_run_new_incident
     assert "10.0.0.9" in result["reason"] and "10.0.0.5" in result["reason"]
     merge_call = fake_merge_correlated_alert[0]
     assert merge_call["match_reason"] == result["reason"]
+
+
+def test_renamed_asset_correlates_via_identity_tier(
+    fake_run_new_incident, fake_merge_correlated_alert, monkeypatch, tmp_path
+):
+    """A renamed asset shares no IOC and no exact/fuzzy signal with the
+    open incident -- exercises the full ingest_alert() -> pipeline wiring
+    for ingestion/identity_correlation.py, not just the tier in
+    isolation."""
+    import json
+
+    inventory_path = tmp_path / "inventory.json"
+    inventory_path.write_text(json.dumps({"WEB-01": "asset-042", "WEB-01-RENAMED": "asset-042"}))
+    monkeypatch.setenv("SENTINELOS_ASSET_INVENTORY_PATH", str(inventory_path))
+
+    from ingestion.pipeline import ingest_alert
+
+    _seed_open_incident("t1", "inc-1", affected_assets=["WEB-01"])
+
+    result = ingest_alert(
+        "generic",
+        {
+            "description": "same host, new name",
+            "severity": "high",
+            "source": "test",
+            "affected_assets": ["WEB-01-RENAMED"],
+        },
+        tenant_id="t1",
+    )
+
+    assert result["outcome"] == "correlated"
+    assert result["thread_id"] == "inc-1"
+    assert result["match_type"] == "identity_asset"
+    assert len(fake_merge_correlated_alert) == 1
+    assert len(fake_run_new_incident) == 0
+
+
+def test_identity_tier_only_checked_when_exact_fuzzy_tier_finds_nothing(
+    fake_run_new_incident, fake_merge_correlated_alert, monkeypatch, tmp_path
+):
+    """Exact IOC match must win even when an identity match is also
+    available -- exact/fuzzy is checked first."""
+    import json
+
+    inventory_path = tmp_path / "inventory.json"
+    inventory_path.write_text(json.dumps({"WEB-01": "asset-042", "WEB-01-RENAMED": "asset-042"}))
+    monkeypatch.setenv("SENTINELOS_ASSET_INVENTORY_PATH", str(inventory_path))
+
+    from ingestion.pipeline import ingest_alert
+
+    _seed_open_incident("t1", "inc-identity", affected_assets=["WEB-01"])
+    _seed_open_incident("t1", "inc-exact", iocs=["1.2.3.4"])
+
+    result = ingest_alert(
+        "generic",
+        {
+            "description": "matches both tiers",
+            "severity": "high",
+            "source": "test",
+            "iocs": ["1.2.3.4"],
+            "affected_assets": ["WEB-01-RENAMED"],
+        },
+        tenant_id="t1",
+    )
+
+    assert result["outcome"] == "correlated"
+    assert result["thread_id"] == "inc-exact"
+    assert result["match_type"] == "exact_ioc"
 
 
 def test_semantic_match_correlates_and_passes_usage_to_merge(

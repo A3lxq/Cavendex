@@ -18,15 +18,23 @@ and — because it's clearly relevant to something an analyst is already
 looking at — that happens even if the alert alone would've been below
 the severity threshold.
 
-A third case neither of those catches: two alerts that are genuinely the
-same campaign but share no IOC, no subnet, no domain family at all — the
-same attack technique against a completely different, unrelated-looking
-host, say. ingestion/semantic_correlation.py handles that with a real
-LLM judgment call, which is why it's checked *after* the severity floor
-below rather than before like the free tiers: it only ever runs for an
-alert that's already about to trigger a full (far more expensive) agent
-pipeline run, so a match replaces that cost rather than adding a new one
-on top of routine noise that would've been suppressed anyway.
+Neither of those catches a renamed asset or a lexically-unrelated
+second-stage domain — ingestion/identity_correlation.py handles that,
+free and deterministic like the tiers above it, by consulting an
+authoritative identity source (an operator's asset-inventory export, or
+real passive DNS) instead of guessing from the string itself. Checked
+right alongside the exact/fuzzy tiers, before the severity floor.
+
+A further case none of those catch: two alerts that are genuinely the
+same campaign but share no IOC, no subnet, no domain family, and no
+resolvable identity at all — the same attack technique against a
+completely different, unrelated-looking host, say. ingestion/semantic_correlation.py
+handles that with a real LLM judgment call, which is why it's checked
+*after* the severity floor below rather than before like the free tiers:
+it only ever runs for an alert that's already about to trigger a full
+(far more expensive) agent pipeline run, so a match replaces that cost
+rather than adding a new one on top of routine noise that would've been
+suppressed anyway.
 
 Nothing is ever silently discarded — every outcome, including suppressed
 and deduped events, is appended to the tenant's ingestion_log.jsonl so
@@ -46,6 +54,7 @@ from datetime import datetime, timezone
 
 from graph import tenant_data_dir
 from ingestion.correlation import find_correlated_incident
+from ingestion.identity_correlation import find_identity_correlation
 from ingestion.normalizers import NORMALIZERS
 from ingestion.schemas import NormalizedAlert
 from ingestion.semantic_correlation import find_semantic_correlation
@@ -120,9 +129,11 @@ def ingest_normalized_alert(alert: NormalizedAlert, tenant_id: str = DEFAULT_TEN
     - "rate_limited": this tenant exceeded SENTINELOS_INGEST_RATE_LIMIT_PER_MINUTE
     - "deduped": an identical (tenant, dedup_key) was seen recently
     - "correlated": merged into an already-open incident — exact IOC/asset
-      match, fuzzy subnet/domain-family match, or (opt-in) a semantic
-      match from an LLM judgment call; includes thread_id/status of the
-      incident it joined plus match_type/reason
+      match, fuzzy subnet/domain-family match, an identity match (a
+      renamed asset or a lexically-unrelated domain resolved to a shared
+      identity — see ingestion/identity_correlation.py), or (opt-in) a
+      semantic match from an LLM judgment call; includes thread_id/status
+      of the incident it joined plus match_type/reason
     - "suppressed_low_severity": below SENTINELOS_INGEST_MIN_SEVERITY
     - "promoted": a full incident was created; includes thread_id/status
 
@@ -150,7 +161,7 @@ def ingest_normalized_alert(alert: NormalizedAlert, tenant_id: str = DEFAULT_TEN
         _log_raw_event(tenant_id, alert, "deduped")
         return {"outcome": "deduped", "dedup_key": alert.dedup_key}
 
-    correlation = find_correlated_incident(tenant_id, alert)
+    correlation = find_correlated_incident(tenant_id, alert) or find_identity_correlation(tenant_id, alert)
     if correlation:
         from workflows.incident_pipeline import merge_correlated_alert
 

@@ -12,6 +12,7 @@ import socket
 import pytest
 
 from enrichment.providers import (
+    lookup_domain_resolutions_virustotal,
     lookup_hash_virustotal,
     lookup_ip_abuseipdb,
     lookup_ip_shodan,
@@ -201,6 +202,100 @@ def test_shodan_results_are_cached(monkeypatch):
 
     lookup_ip_shodan("1.2.3.4")
     lookup_ip_shodan("1.2.3.4")
+
+    assert call_count["n"] == 1
+
+
+def test_domain_resolutions_returns_none_without_api_key(monkeypatch):
+    monkeypatch.delenv("VIRUSTOTAL_API_KEY", raising=False)
+    assert lookup_domain_resolutions_virustotal("evil-c2.example") is None
+
+
+@pytest.mark.skipif(not _HAS_NETWORK, reason="No network access in this environment")
+def test_domain_resolutions_invalid_key_returns_none_live(monkeypatch):
+    """Unlike the EnrichmentResult-returning lookups, this one has no
+    "error" verdict to distinguish -- an invalid key and an unconfigured
+    key both mean "no signal" to its only caller (identity correlation),
+    so this proves the real 401 path degrades to None rather than raising
+    or returning a malformed value."""
+    monkeypatch.setenv("VIRUSTOTAL_API_KEY", "definitely-not-a-real-key")
+    assert lookup_domain_resolutions_virustotal("evil-c2.example") is None
+
+
+def test_domain_resolutions_parses_real_response_shape(monkeypatch):
+    monkeypatch.setenv("VIRUSTOTAL_API_KEY", "fake-key")
+
+    class _FakeResponse:
+        status_code = 200
+
+        def json(self):
+            return {
+                "data": [
+                    {"attributes": {"ip_address": "203.0.113.9", "date": 1}},
+                    {"attributes": {"ip_address": "203.0.113.10", "date": 2}},
+                    {"attributes": {}},
+                ]
+            }
+
+    monkeypatch.setattr("requests.get", lambda *a, **kw: _FakeResponse())
+    ips = lookup_domain_resolutions_virustotal("evil-c2.example")
+    assert ips == ["203.0.113.9", "203.0.113.10"]
+
+
+def test_domain_resolutions_empty_data_is_a_real_empty_list_not_none(monkeypatch):
+    monkeypatch.setenv("VIRUSTOTAL_API_KEY", "fake-key")
+
+    class _FakeResponse:
+        status_code = 200
+
+        def json(self):
+            return {"data": []}
+
+    monkeypatch.setattr("requests.get", lambda *a, **kw: _FakeResponse())
+    assert lookup_domain_resolutions_virustotal("never-seen.example") == []
+
+
+def test_domain_resolutions_error_status_returns_none(monkeypatch):
+    monkeypatch.setenv("VIRUSTOTAL_API_KEY", "fake-key")
+
+    class _FakeResponse:
+        status_code = 503
+        text = "Service Unavailable"
+
+    monkeypatch.setattr("requests.get", lambda *a, **kw: _FakeResponse())
+    assert lookup_domain_resolutions_virustotal("evil-c2.example") is None
+
+
+def test_domain_resolutions_request_exception_returns_none(monkeypatch):
+    monkeypatch.setenv("VIRUSTOTAL_API_KEY", "fake-key")
+
+    import requests
+
+    def _raise(*a, **kw):
+        raise requests.ConnectionError("boom")
+
+    monkeypatch.setattr("requests.get", _raise)
+    assert lookup_domain_resolutions_virustotal("evil-c2.example") is None
+
+
+def test_domain_resolutions_are_cached(monkeypatch):
+    monkeypatch.setenv("VIRUSTOTAL_API_KEY", "fake-key")
+    call_count = {"n": 0}
+
+    class _FakeResponse:
+        status_code = 200
+
+        def json(self):
+            return {"data": [{"attributes": {"ip_address": "203.0.113.9"}}]}
+
+    def _fake_get(*args, **kwargs):
+        call_count["n"] += 1
+        return _FakeResponse()
+
+    monkeypatch.setattr("requests.get", _fake_get)
+
+    lookup_domain_resolutions_virustotal("evil-c2.example")
+    lookup_domain_resolutions_virustotal("evil-c2.example")
 
     assert call_count["n"] == 1
 

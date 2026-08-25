@@ -17,7 +17,7 @@ Triage already checked).
 import os
 import threading
 import time
-from typing import Optional
+from typing import List, Optional
 
 from enrichment.schemas import EnrichmentResult
 
@@ -26,7 +26,10 @@ _cache_lock = threading.Lock()
 _cache: dict = {}
 
 
-def _cache_get(key) -> Optional[EnrichmentResult]:
+def _cache_get(key) -> Optional[object]:
+    """Generic TTL cache read — not just EnrichmentResult; also backs
+    lookup_domain_resolutions_virustotal's plain list-of-IPs result.
+    """
     with _cache_lock:
         entry = _cache.get(key)
         if entry is None:
@@ -38,7 +41,7 @@ def _cache_get(key) -> Optional[EnrichmentResult]:
         return result
 
 
-def _cache_set(key, result: EnrichmentResult) -> None:
+def _cache_set(key, result: object) -> None:
     with _cache_lock:
         _cache[key] = (result, time.monotonic())
 
@@ -181,6 +184,53 @@ def lookup_domain_virustotal(domain: str) -> Optional[EnrichmentResult]:
 
 def lookup_hash_virustotal(file_hash: str) -> Optional[EnrichmentResult]:
     return _lookup_virustotal(file_hash, "hash")
+
+
+def lookup_domain_resolutions_virustotal(domain: str, limit: int = 10) -> Optional[List[str]]:
+    """Passive DNS: historical IP addresses `domain` has resolved to, via
+    VirusTotal's /domains/{domain}/resolutions endpoint — the same kind
+    of evidence a real threat-intel analyst pulls to link two
+    lexically-unrelated domains as the same infrastructure (see
+    ingestion/identity_correlation.py, which is the only caller of this).
+    Requires VIRUSTOTAL_API_KEY, same as every other VirusTotal lookup
+    here. Returns None if unconfigured or the request fails outright; an
+    empty list is a real, meaningful "no recorded resolutions" answer,
+    not a failure — the caller treats both "unconfigured" and "nothing on
+    file" the same way (no match), but the distinction matters for anyone
+    debugging why a match wasn't found.
+    """
+    api_key = os.getenv("VIRUSTOTAL_API_KEY")
+    if not api_key:
+        return None
+
+    cache_key = ("virustotal_resolutions", domain)
+    cached = _cache_get(cache_key)
+    if cached is not None:
+        return cached
+
+    import requests
+
+    try:
+        response = requests.get(
+            f"https://www.virustotal.com/api/v3/domains/{domain}/resolutions",
+            headers={"x-apikey": api_key},
+            params={"limit": limit},
+            timeout=10,
+        )
+    except requests.RequestException:
+        return None
+
+    if response.status_code != 200:
+        return None
+
+    entries = (response.json() or {}).get("data") or []
+    ips = [
+        entry["attributes"]["ip_address"]
+        for entry in entries
+        if isinstance(entry, dict) and (entry.get("attributes") or {}).get("ip_address")
+    ]
+    _cache_set(cache_key, ips)
+    return ips
 
 
 _SHODAN_INTERNETDB_URL = "https://internetdb.shodan.io/{}"
