@@ -1,4 +1,4 @@
-"""Classifies a free-text IOC string as ip/domain/hash/unknown so the
+"""Classifies a free-text IOC string as ip/domain/hash/url/unknown so the
 enrichment pipeline knows which provider(s), if any, can look it up.
 
 Most "IOCs" an LLM proposes are actually descriptive phrases ("Suricata
@@ -23,6 +23,9 @@ def classify_ioc(value: str) -> str:
         return "ip"
     except ValueError:
         pass
+
+    if value.lower().startswith(("http://", "https://")):
+        return "url"
 
     if _HEX_RE.match(value) and len(value) in _HASH_LENGTHS:
         return "hash"

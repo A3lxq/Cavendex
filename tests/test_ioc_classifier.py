@@ -20,6 +20,17 @@ def test_classifies_hashes():
     assert classify_ioc("e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855") == "hash"  # sha256
 
 
+def test_classifies_urls():
+    assert classify_ioc("http://evil.example.com/payload.exe") == "url"
+    assert classify_ioc("https://evil.example.com/path?query=1") == "url"
+    assert classify_ioc("HTTPS://EVIL.EXAMPLE.COM/") == "url"  # case-insensitive scheme
+
+
+def test_bare_domain_with_path_is_not_a_url_without_a_scheme():
+    # No scheme -> ambiguous, deliberately not guessed as a URL.
+    assert classify_ioc("evil.example.com/payload.exe") == "unknown"
+
+
 def test_rejects_malformed_ip_looking_string():
     assert classify_ioc("999.999.999.999") == "unknown"
 

@@ -78,7 +78,15 @@ Edit `.env`:
   redeploy — e.g. `/var/lib/sentinelos/{data,chroma,vault}`. These three
   directories are the entire state of the system; see Section 12.
 - Optionally set `ABUSEIPDB_API_KEY` / `VIRUSTOTAL_API_KEY` for real
-  threat-intel lookups, and tune `SENTINELOS_INGEST_MIN_SEVERITY`,
+  threat-intel lookups — and optionally any of the 8 further opt-in
+  providers (`ALIENVAULT_OTX_API_KEY`, `GREYNOISE_API_KEY`,
+  `ABUSECH_API_KEY` covering MalwareBazaar/ThreatFox/URLhaus,
+  `IBM_XFORCE_API_KEY`+`IBM_XFORCE_API_PASSWORD`, `METADEFENDER_API_KEY`,
+  `CENSYS_API_KEY` — see README's "Adding a Threat-Intel Provider" for
+  what each one actually adds, and real honesty caveats for the last
+  three specifically before depending on them in production). Configure
+  only the ones you want; every one is inert without its key, same as
+  the two above. Then tune `SENTINELOS_INGEST_MIN_SEVERITY`,
   `SENTINELOS_DEDUP_WINDOW_SECONDS`, `SENTINELOS_CORRELATION_*` to your
   actual alert volume — the shipped defaults are reasonable starting
   points, not tuned to any specific environment. **In particular, set
@@ -1071,10 +1079,22 @@ affect a live deployment decision, not just a feature-completeness one:
   ledger up alongside `SENTINELOS_DATA_DIR` and treat a `MISMATCH` as a
   serious signal, not "no detected tampering" as an absolute guarantee.
 - **"Air-gapped" doesn't extend to enrichment or alerting.** The
-  dashboard's own assets have no CDN dependency, but `enrichment/`
-  (AbuseIPDB/VirusTotal/Shodan) and `notifications/webhook.py` make real
-  outbound HTTP calls whenever configured. A genuinely air-gapped
-  deployment needs those left unconfigured, not just the dashboard.
+  dashboard's own assets have no CDN dependency, but `enrichment/` (all
+  11 threat-intel providers, not just AbuseIPDB/VirusTotal/Shodan) and
+  `notifications/webhook.py` make real outbound HTTP calls whenever
+  configured. A genuinely air-gapped deployment needs those left
+  unconfigured, not just the dashboard.
+- **8 of the 11 threat-intel providers have deferred live-network
+  verification (Section 1).** AlienVault OTX, GreyNoise, MalwareBazaar,
+  ThreatFox, URLhaus, IBM X-Force, Metadefender, and Censys are built
+  and unit/mocked-tested against their documented API shapes, but no
+  real request has been sent to any of their actual endpoints yet
+  (deliberately held back during review). IBM X-Force, Metadefender,
+  and Censys specifically carry additional real uncertainty — see
+  README's "Adding a Threat-Intel Provider" — degrading to an honest
+  `"unknown"` verdict rather than crashing if their real response shape
+  differs, but not yet confirmed against a live successful response.
+  Test each against a real key before depending on it in production.
 
 None of this means "don't deploy it" — it means deploy it as what it
 actually is: a real, tested incident-response assistant that watches

@@ -12,11 +12,29 @@ import socket
 import pytest
 
 from enrichment.providers import (
+    lookup_domain_metadefender,
+    lookup_domain_otx,
     lookup_domain_resolutions_virustotal,
+    lookup_domain_threatfox,
+    lookup_hash_malwarebazaar,
+    lookup_hash_metadefender,
+    lookup_hash_otx,
+    lookup_hash_threatfox,
     lookup_hash_virustotal,
+    lookup_hash_xforce,
     lookup_ip_abuseipdb,
+    lookup_ip_censys,
+    lookup_ip_greynoise,
+    lookup_ip_metadefender,
+    lookup_ip_otx,
     lookup_ip_shodan,
+    lookup_ip_threatfox,
     lookup_ip_virustotal,
+    lookup_ip_xforce,
+    lookup_url_metadefender,
+    lookup_url_threatfox,
+    lookup_url_urlhaus,
+    lookup_url_xforce,
     reset_cache_for_tests,
 )
 
@@ -298,6 +316,819 @@ def test_domain_resolutions_are_cached(monkeypatch):
     lookup_domain_resolutions_virustotal("evil-c2.example")
 
     assert call_count["n"] == 1
+
+
+# ---------- 8 newer providers (AlienVault OTX, GreyNoise, MalwareBazaar,
+# ThreatFox, URLhaus, IBM X-Force, Metadefender, Censys) ----------
+#
+# Deliberately NO live network tests against these 8, unlike the
+# AbuseIPDB/VirusTotal/Shodan tests above (per explicit instruction while
+# this feature was reviewed) -- every test below is a pure unit test
+# (no-key gating, cache behavior) or uses a monkeypatched fake response,
+# never a real outbound call. A live-verification pass against these
+# providers' real APIs is deferred, not skipped by oversight.
+
+
+def test_otx_returns_none_without_api_key(monkeypatch):
+    monkeypatch.delenv("ALIENVAULT_OTX_API_KEY", raising=False)
+    assert lookup_ip_otx("8.8.8.8") is None
+    assert lookup_domain_otx("example.com") is None
+    assert lookup_hash_otx("d41d8cd98f00b204e9800998ecf8427e") is None
+
+
+def test_otx_pulse_count_zero_is_unknown(monkeypatch):
+    monkeypatch.setenv("ALIENVAULT_OTX_API_KEY", "fake-key")
+
+    class _FakeResponse:
+        status_code = 200
+
+        def json(self):
+            return {"pulse_info": {"count": 0, "pulses": []}}
+
+    monkeypatch.setattr("requests.get", lambda *a, **kw: _FakeResponse())
+    result = lookup_ip_otx("203.0.113.9")
+    assert result.verdict == "unknown"
+
+
+def test_otx_pulse_count_positive_is_malicious(monkeypatch):
+    monkeypatch.setenv("ALIENVAULT_OTX_API_KEY", "fake-key")
+
+    class _FakeResponse:
+        status_code = 200
+
+        def json(self):
+            return {"pulse_info": {"count": 3, "pulses": [{"name": "FIN7 C2 infrastructure"}]}}
+
+    monkeypatch.setattr("requests.get", lambda *a, **kw: _FakeResponse())
+    result = lookup_ip_otx("203.0.113.9")
+    assert result.verdict == "malicious"
+    assert "FIN7 C2 infrastructure" in result.detail
+    assert "3" in result.detail
+
+
+def test_otx_404_returns_unknown(monkeypatch):
+    monkeypatch.setenv("ALIENVAULT_OTX_API_KEY", "fake-key")
+
+    class _FakeResponse:
+        status_code = 404
+        text = "not found"
+
+    monkeypatch.setattr("requests.get", lambda *a, **kw: _FakeResponse())
+    assert lookup_ip_otx("203.0.113.9").verdict == "unknown"
+
+
+def test_otx_error_status_returns_error(monkeypatch):
+    monkeypatch.setenv("ALIENVAULT_OTX_API_KEY", "fake-key")
+
+    class _FakeResponse:
+        status_code = 503
+        text = "Service Unavailable"
+
+    monkeypatch.setattr("requests.get", lambda *a, **kw: _FakeResponse())
+    result = lookup_ip_otx("203.0.113.9")
+    assert result.verdict == "error"
+    assert "503" in result.detail
+
+
+def test_otx_request_exception_returns_error(monkeypatch):
+    monkeypatch.setenv("ALIENVAULT_OTX_API_KEY", "fake-key")
+    import requests
+
+    monkeypatch.setattr("requests.get", lambda *a, **kw: (_ for _ in ()).throw(requests.ConnectionError("boom")))
+    result = lookup_ip_otx("203.0.113.9")
+    assert result.verdict == "error"
+    assert "boom" in result.detail
+
+
+def test_otx_results_are_cached(monkeypatch):
+    monkeypatch.setenv("ALIENVAULT_OTX_API_KEY", "fake-key")
+    call_count = {"n": 0}
+
+    class _FakeResponse:
+        status_code = 200
+
+        def json(self):
+            return {"pulse_info": {"count": 0, "pulses": []}}
+
+    def _fake_get(*a, **kw):
+        call_count["n"] += 1
+        return _FakeResponse()
+
+    monkeypatch.setattr("requests.get", _fake_get)
+    lookup_ip_otx("1.2.3.4")
+    lookup_ip_otx("1.2.3.4")
+    assert call_count["n"] == 1
+
+
+def test_greynoise_returns_none_without_api_key(monkeypatch):
+    monkeypatch.delenv("GREYNOISE_API_KEY", raising=False)
+    assert lookup_ip_greynoise("8.8.8.8") is None
+
+
+def test_greynoise_malicious_classification(monkeypatch):
+    monkeypatch.setenv("GREYNOISE_API_KEY", "fake-key")
+
+    class _FakeResponse:
+        status_code = 200
+
+        def json(self):
+            return {"classification": "malicious", "noise": True, "riot": False}
+
+    monkeypatch.setattr("requests.get", lambda *a, **kw: _FakeResponse())
+    result = lookup_ip_greynoise("203.0.113.9")
+    assert result.verdict == "malicious"
+    assert "background scanning noise" in result.detail
+
+
+def test_greynoise_benign_riot_classification(monkeypatch):
+    monkeypatch.setenv("GREYNOISE_API_KEY", "fake-key")
+
+    class _FakeResponse:
+        status_code = 200
+
+        def json(self):
+            return {"classification": "benign", "noise": False, "riot": True, "name": "Google"}
+
+    monkeypatch.setattr("requests.get", lambda *a, **kw: _FakeResponse())
+    result = lookup_ip_greynoise("8.8.8.8")
+    assert result.verdict == "harmless"
+    assert "Google" in result.detail
+
+
+def test_greynoise_404_returns_unknown(monkeypatch):
+    monkeypatch.setenv("GREYNOISE_API_KEY", "fake-key")
+
+    class _FakeResponse:
+        status_code = 404
+        text = "not found"
+
+    monkeypatch.setattr("requests.get", lambda *a, **kw: _FakeResponse())
+    assert lookup_ip_greynoise("203.0.113.9").verdict == "unknown"
+
+
+def test_greynoise_error_status_returns_error(monkeypatch):
+    monkeypatch.setenv("GREYNOISE_API_KEY", "fake-key")
+
+    class _FakeResponse:
+        status_code = 401
+        text = "Unauthorized"
+
+    monkeypatch.setattr("requests.get", lambda *a, **kw: _FakeResponse())
+    result = lookup_ip_greynoise("203.0.113.9")
+    assert result.verdict == "error"
+    assert "401" in result.detail
+
+
+def test_greynoise_results_are_cached(monkeypatch):
+    monkeypatch.setenv("GREYNOISE_API_KEY", "fake-key")
+    call_count = {"n": 0}
+
+    class _FakeResponse:
+        status_code = 200
+
+        def json(self):
+            return {"classification": "unknown", "noise": False, "riot": False}
+
+    def _fake_get(*a, **kw):
+        call_count["n"] += 1
+        return _FakeResponse()
+
+    monkeypatch.setattr("requests.get", _fake_get)
+    lookup_ip_greynoise("1.2.3.4")
+    lookup_ip_greynoise("1.2.3.4")
+    assert call_count["n"] == 1
+
+
+def test_malwarebazaar_returns_none_without_api_key(monkeypatch):
+    monkeypatch.delenv("ABUSECH_API_KEY", raising=False)
+    assert lookup_hash_malwarebazaar("d41d8cd98f00b204e9800998ecf8427e") is None
+
+
+def test_malwarebazaar_found_is_malicious(monkeypatch):
+    monkeypatch.setenv("ABUSECH_API_KEY", "fake-key")
+
+    class _FakeResponse:
+        status_code = 200
+
+        def json(self):
+            return {"query_status": "ok", "data": [{"signature": "AsyncRAT", "tags": ["rat", "asyncrat"]}]}
+
+    monkeypatch.setattr("requests.post", lambda *a, **kw: _FakeResponse())
+    result = lookup_hash_malwarebazaar("d41d8cd98f00b204e9800998ecf8427e")
+    assert result.verdict == "malicious"
+    assert "AsyncRAT" in result.detail
+
+
+def test_malwarebazaar_not_found_is_unknown(monkeypatch):
+    monkeypatch.setenv("ABUSECH_API_KEY", "fake-key")
+
+    class _FakeResponse:
+        status_code = 200
+
+        def json(self):
+            return {"query_status": "hash_not_found"}
+
+    monkeypatch.setattr("requests.post", lambda *a, **kw: _FakeResponse())
+    result = lookup_hash_malwarebazaar("d41d8cd98f00b204e9800998ecf8427e")
+    assert result.verdict == "unknown"
+
+
+def test_malwarebazaar_error_status_returns_error(monkeypatch):
+    monkeypatch.setenv("ABUSECH_API_KEY", "fake-key")
+
+    class _FakeResponse:
+        status_code = 403
+        text = "Forbidden"
+
+    monkeypatch.setattr("requests.post", lambda *a, **kw: _FakeResponse())
+    result = lookup_hash_malwarebazaar("d41d8cd98f00b204e9800998ecf8427e")
+    assert result.verdict == "error"
+    assert "403" in result.detail
+
+
+def test_malwarebazaar_request_exception_returns_error(monkeypatch):
+    monkeypatch.setenv("ABUSECH_API_KEY", "fake-key")
+    import requests
+
+    monkeypatch.setattr("requests.post", lambda *a, **kw: (_ for _ in ()).throw(requests.ConnectionError("boom")))
+    result = lookup_hash_malwarebazaar("d41d8cd98f00b204e9800998ecf8427e")
+    assert result.verdict == "error"
+    assert "boom" in result.detail
+
+
+def test_malwarebazaar_results_are_cached(monkeypatch):
+    monkeypatch.setenv("ABUSECH_API_KEY", "fake-key")
+    call_count = {"n": 0}
+
+    class _FakeResponse:
+        status_code = 200
+
+        def json(self):
+            return {"query_status": "hash_not_found"}
+
+    def _fake_post(*a, **kw):
+        call_count["n"] += 1
+        return _FakeResponse()
+
+    monkeypatch.setattr("requests.post", _fake_post)
+    lookup_hash_malwarebazaar("d41d8cd98f00b204e9800998ecf8427e")
+    lookup_hash_malwarebazaar("d41d8cd98f00b204e9800998ecf8427e")
+    assert call_count["n"] == 1
+
+
+def test_threatfox_returns_none_without_api_key(monkeypatch):
+    monkeypatch.delenv("ABUSECH_API_KEY", raising=False)
+    assert lookup_ip_threatfox("8.8.8.8") is None
+    assert lookup_domain_threatfox("example.com") is None
+    assert lookup_hash_threatfox("d41d8cd98f00b204e9800998ecf8427e") is None
+    assert lookup_url_threatfox("http://evil.example.com/") is None
+
+
+def test_threatfox_found_is_malicious_with_confidence(monkeypatch):
+    monkeypatch.setenv("ABUSECH_API_KEY", "fake-key")
+
+    class _FakeResponse:
+        status_code = 200
+
+        def json(self):
+            return {
+                "query_status": "ok",
+                "data": [{"malware_printable": "AsyncRAT", "confidence_level": 90, "threat_type": "botnet_cc"}],
+            }
+
+    monkeypatch.setattr("requests.post", lambda *a, **kw: _FakeResponse())
+    result = lookup_ip_threatfox("203.0.113.9")
+    assert result.verdict == "malicious"
+    assert "AsyncRAT" in result.detail
+    assert "90" in result.detail
+
+
+def test_threatfox_no_result_is_unknown(monkeypatch):
+    monkeypatch.setenv("ABUSECH_API_KEY", "fake-key")
+
+    class _FakeResponse:
+        status_code = 200
+
+        def json(self):
+            return {"query_status": "no_result"}
+
+    monkeypatch.setattr("requests.post", lambda *a, **kw: _FakeResponse())
+    assert lookup_url_threatfox("http://evil.example.com/").verdict == "unknown"
+
+
+def test_threatfox_error_status_returns_error(monkeypatch):
+    monkeypatch.setenv("ABUSECH_API_KEY", "fake-key")
+
+    class _FakeResponse:
+        status_code = 401
+        text = "Unauthorized"
+
+    monkeypatch.setattr("requests.post", lambda *a, **kw: _FakeResponse())
+    result = lookup_ip_threatfox("203.0.113.9")
+    assert result.verdict == "error"
+    assert "401" in result.detail
+
+
+def test_threatfox_request_exception_returns_error(monkeypatch):
+    monkeypatch.setenv("ABUSECH_API_KEY", "fake-key")
+    import requests
+
+    monkeypatch.setattr("requests.post", lambda *a, **kw: (_ for _ in ()).throw(requests.ConnectionError("boom")))
+    result = lookup_ip_threatfox("203.0.113.9")
+    assert result.verdict == "error"
+    assert "boom" in result.detail
+
+
+def test_threatfox_results_are_cached(monkeypatch):
+    monkeypatch.setenv("ABUSECH_API_KEY", "fake-key")
+    call_count = {"n": 0}
+
+    class _FakeResponse:
+        status_code = 200
+
+        def json(self):
+            return {"query_status": "no_result"}
+
+    def _fake_post(*a, **kw):
+        call_count["n"] += 1
+        return _FakeResponse()
+
+    monkeypatch.setattr("requests.post", _fake_post)
+    lookup_ip_threatfox("1.2.3.4")
+    lookup_ip_threatfox("1.2.3.4")
+    assert call_count["n"] == 1
+
+
+def test_urlhaus_returns_none_without_api_key(monkeypatch):
+    monkeypatch.delenv("ABUSECH_API_KEY", raising=False)
+    assert lookup_url_urlhaus("http://evil.example.com/payload.exe") is None
+
+
+def test_urlhaus_found_is_malicious(monkeypatch):
+    monkeypatch.setenv("ABUSECH_API_KEY", "fake-key")
+
+    class _FakeResponse:
+        status_code = 200
+
+        def json(self):
+            return {
+                "query_status": "ok",
+                "url_status": "online",
+                "threat": "malware_download",
+                "payloads": [{"file_type": "exe"}],
+                "urlhaus_reference": "https://urlhaus.abuse.ch/url/12345/",
+            }
+
+    monkeypatch.setattr("requests.post", lambda *a, **kw: _FakeResponse())
+    result = lookup_url_urlhaus("http://evil.example.com/payload.exe")
+    assert result.verdict == "malicious"
+    assert "malware_download" in result.detail
+    assert "exe" in result.detail
+    assert result.link == "https://urlhaus.abuse.ch/url/12345/"
+
+
+def test_urlhaus_no_results_is_unknown(monkeypatch):
+    monkeypatch.setenv("ABUSECH_API_KEY", "fake-key")
+
+    class _FakeResponse:
+        status_code = 200
+
+        def json(self):
+            return {"query_status": "no_results"}
+
+    monkeypatch.setattr("requests.post", lambda *a, **kw: _FakeResponse())
+    result = lookup_url_urlhaus("http://never-seen.example.com/")
+    assert result.verdict == "unknown"
+
+
+def test_urlhaus_error_status_returns_error(monkeypatch):
+    monkeypatch.setenv("ABUSECH_API_KEY", "fake-key")
+
+    class _FakeResponse:
+        status_code = 500
+        text = "Internal Server Error"
+
+    monkeypatch.setattr("requests.post", lambda *a, **kw: _FakeResponse())
+    result = lookup_url_urlhaus("http://evil.example.com/")
+    assert result.verdict == "error"
+    assert "500" in result.detail
+
+
+def test_urlhaus_request_exception_returns_error(monkeypatch):
+    monkeypatch.setenv("ABUSECH_API_KEY", "fake-key")
+    import requests
+
+    monkeypatch.setattr("requests.post", lambda *a, **kw: (_ for _ in ()).throw(requests.ConnectionError("boom")))
+    result = lookup_url_urlhaus("http://evil.example.com/")
+    assert result.verdict == "error"
+    assert "boom" in result.detail
+
+
+def test_urlhaus_rejects_a_non_urlhaus_reference_link(monkeypatch):
+    """Defense-in-depth: only ever surface a link that actually points at
+    urlhaus.abuse.ch, never whatever a (real, trusted, but defensively
+    treated) response body happens to put in that field."""
+    monkeypatch.setenv("ABUSECH_API_KEY", "fake-key")
+
+    class _FakeResponse:
+        status_code = 200
+
+        def json(self):
+            return {
+                "query_status": "ok", "url_status": "online", "threat": "malware_download",
+                "payloads": [], "urlhaus_reference": "http://attacker.example.com/not-urlhaus",
+            }
+
+    monkeypatch.setattr("requests.post", lambda *a, **kw: _FakeResponse())
+    result = lookup_url_urlhaus("http://evil.example.com/x")
+    assert result.link is None
+
+
+def test_urlhaus_results_are_cached(monkeypatch):
+    monkeypatch.setenv("ABUSECH_API_KEY", "fake-key")
+    call_count = {"n": 0}
+
+    class _FakeResponse:
+        status_code = 200
+
+        def json(self):
+            return {"query_status": "no_results"}
+
+    def _fake_post(*a, **kw):
+        call_count["n"] += 1
+        return _FakeResponse()
+
+    monkeypatch.setattr("requests.post", _fake_post)
+    lookup_url_urlhaus("http://evil.example.com/")
+    lookup_url_urlhaus("http://evil.example.com/")
+    assert call_count["n"] == 1
+
+
+def test_xforce_returns_none_without_both_credentials(monkeypatch):
+    monkeypatch.delenv("IBM_XFORCE_API_KEY", raising=False)
+    monkeypatch.delenv("IBM_XFORCE_API_PASSWORD", raising=False)
+    assert lookup_ip_xforce("8.8.8.8") is None
+
+    monkeypatch.setenv("IBM_XFORCE_API_KEY", "key-only")
+    assert lookup_ip_xforce("8.8.8.8") is None  # password still missing
+
+    monkeypatch.delenv("IBM_XFORCE_API_KEY", raising=False)
+    monkeypatch.setenv("IBM_XFORCE_API_PASSWORD", "password-only")
+    assert lookup_ip_xforce("8.8.8.8") is None  # key still missing
+
+
+def test_xforce_high_score_is_malicious(monkeypatch):
+    monkeypatch.setenv("IBM_XFORCE_API_KEY", "fake-key")
+    monkeypatch.setenv("IBM_XFORCE_API_PASSWORD", "fake-password")
+
+    class _FakeResponse:
+        status_code = 200
+
+        def json(self):
+            return {"score": 8.5}
+
+    monkeypatch.setattr("requests.get", lambda *a, **kw: _FakeResponse())
+    result = lookup_ip_xforce("203.0.113.9")
+    assert result.verdict == "malicious"
+
+
+def test_xforce_low_score_is_harmless(monkeypatch):
+    monkeypatch.setenv("IBM_XFORCE_API_KEY", "fake-key")
+    monkeypatch.setenv("IBM_XFORCE_API_PASSWORD", "fake-password")
+
+    class _FakeResponse:
+        status_code = 200
+
+        def json(self):
+            return {"score": 1}
+
+    monkeypatch.setattr("requests.get", lambda *a, **kw: _FakeResponse())
+    result = lookup_ip_xforce("8.8.8.8")
+    assert result.verdict == "harmless"
+
+
+def test_xforce_unrecognized_shape_does_not_crash(monkeypatch):
+    """Response-shape uncertainty (see module docstring) must degrade to
+    'unknown', never raise."""
+    monkeypatch.setenv("IBM_XFORCE_API_KEY", "fake-key")
+    monkeypatch.setenv("IBM_XFORCE_API_PASSWORD", "fake-password")
+
+    class _FakeResponse:
+        status_code = 200
+
+        def json(self):
+            return {"something_unexpected": True}
+
+    monkeypatch.setattr("requests.get", lambda *a, **kw: _FakeResponse())
+    result = lookup_ip_xforce("203.0.113.9")
+    assert result.verdict == "unknown"
+
+
+def test_xforce_404_returns_unknown(monkeypatch):
+    monkeypatch.setenv("IBM_XFORCE_API_KEY", "fake-key")
+    monkeypatch.setenv("IBM_XFORCE_API_PASSWORD", "fake-password")
+
+    class _FakeResponse:
+        status_code = 404
+        text = "not found"
+
+    monkeypatch.setattr("requests.get", lambda *a, **kw: _FakeResponse())
+    assert lookup_ip_xforce("203.0.113.9").verdict == "unknown"
+
+
+def test_xforce_error_status_returns_error(monkeypatch):
+    monkeypatch.setenv("IBM_XFORCE_API_KEY", "fake-key")
+    monkeypatch.setenv("IBM_XFORCE_API_PASSWORD", "fake-password")
+
+    class _FakeResponse:
+        status_code = 401
+        text = "Unauthorized"
+
+    monkeypatch.setattr("requests.get", lambda *a, **kw: _FakeResponse())
+    result = lookup_ip_xforce("203.0.113.9")
+    assert result.verdict == "error"
+    assert "401" in result.detail
+
+
+def test_xforce_request_exception_returns_error(monkeypatch):
+    monkeypatch.setenv("IBM_XFORCE_API_KEY", "fake-key")
+    monkeypatch.setenv("IBM_XFORCE_API_PASSWORD", "fake-password")
+    import requests
+
+    monkeypatch.setattr("requests.get", lambda *a, **kw: (_ for _ in ()).throw(requests.ConnectionError("boom")))
+    result = lookup_ip_xforce("203.0.113.9")
+    assert result.verdict == "error"
+    assert "boom" in result.detail
+
+
+def test_xforce_uses_http_basic_auth(monkeypatch):
+    monkeypatch.setenv("IBM_XFORCE_API_KEY", "the-key")
+    monkeypatch.setenv("IBM_XFORCE_API_PASSWORD", "the-password")
+    seen = {}
+
+    class _FakeResponse:
+        status_code = 200
+
+        def json(self):
+            return {"score": 0}
+
+    def _fake_get(*a, **kw):
+        seen["auth"] = kw.get("auth")
+        return _FakeResponse()
+
+    monkeypatch.setattr("requests.get", _fake_get)
+    lookup_ip_xforce("203.0.113.9")
+    assert seen["auth"] == ("the-key", "the-password")
+
+
+def test_xforce_results_are_cached(monkeypatch):
+    monkeypatch.setenv("IBM_XFORCE_API_KEY", "fake-key")
+    monkeypatch.setenv("IBM_XFORCE_API_PASSWORD", "fake-password")
+    call_count = {"n": 0}
+
+    class _FakeResponse:
+        status_code = 200
+
+        def json(self):
+            return {"score": 0}
+
+    def _fake_get(*a, **kw):
+        call_count["n"] += 1
+        return _FakeResponse()
+
+    monkeypatch.setattr("requests.get", _fake_get)
+    lookup_ip_xforce("1.2.3.4")
+    lookup_ip_xforce("1.2.3.4")
+    assert call_count["n"] == 1
+
+
+def test_metadefender_returns_none_without_api_key(monkeypatch):
+    monkeypatch.delenv("METADEFENDER_API_KEY", raising=False)
+    assert lookup_ip_metadefender("8.8.8.8") is None
+    assert lookup_domain_metadefender("example.com") is None
+    assert lookup_hash_metadefender("d41d8cd98f00b204e9800998ecf8427e") is None
+    assert lookup_url_metadefender("http://evil.example.com/") is None
+
+
+def test_metadefender_detections_is_malicious(monkeypatch):
+    monkeypatch.setenv("METADEFENDER_API_KEY", "fake-key")
+
+    class _FakeResponse:
+        status_code = 200
+
+        def json(self):
+            return [{"lookup_result": {"detected_by": 12, "total_detected_avs": 40}}]
+
+    monkeypatch.setattr("requests.post", lambda *a, **kw: _FakeResponse())
+    result = lookup_hash_metadefender("d41d8cd98f00b204e9800998ecf8427e")
+    assert result.verdict == "malicious"
+    assert "12" in result.detail
+    assert "40" in result.detail
+
+
+def test_metadefender_no_detections_is_harmless(monkeypatch):
+    monkeypatch.setenv("METADEFENDER_API_KEY", "fake-key")
+
+    class _FakeResponse:
+        status_code = 200
+
+        def json(self):
+            return [{"lookup_result": {"detected_by": 0, "total_detected_avs": 40}}]
+
+    monkeypatch.setattr("requests.post", lambda *a, **kw: _FakeResponse())
+    result = lookup_ip_metadefender("8.8.8.8")
+    assert result.verdict == "harmless"
+
+
+def test_metadefender_empty_response_is_unknown(monkeypatch):
+    """Response-shape uncertainty (see module docstring) must degrade to
+    'unknown', never raise or crash on an empty/unexpected body."""
+    monkeypatch.setenv("METADEFENDER_API_KEY", "fake-key")
+
+    class _FakeResponse:
+        status_code = 200
+
+        def json(self):
+            return []
+
+    monkeypatch.setattr("requests.post", lambda *a, **kw: _FakeResponse())
+    result = lookup_ip_metadefender("8.8.8.8")
+    assert result.verdict == "unknown"
+
+
+def test_metadefender_error_status_returns_error(monkeypatch):
+    monkeypatch.setenv("METADEFENDER_API_KEY", "fake-key")
+
+    class _FakeResponse:
+        status_code = 403
+        text = "Forbidden"
+
+    monkeypatch.setattr("requests.post", lambda *a, **kw: _FakeResponse())
+    result = lookup_ip_metadefender("8.8.8.8")
+    assert result.verdict == "error"
+    assert "403" in result.detail
+
+
+def test_metadefender_request_exception_returns_error(monkeypatch):
+    monkeypatch.setenv("METADEFENDER_API_KEY", "fake-key")
+    import requests
+
+    monkeypatch.setattr("requests.post", lambda *a, **kw: (_ for _ in ()).throw(requests.ConnectionError("boom")))
+    result = lookup_ip_metadefender("8.8.8.8")
+    assert result.verdict == "error"
+    assert "boom" in result.detail
+
+
+def test_metadefender_results_are_cached(monkeypatch):
+    monkeypatch.setenv("METADEFENDER_API_KEY", "fake-key")
+    call_count = {"n": 0}
+
+    class _FakeResponse:
+        status_code = 200
+
+        def json(self):
+            return []
+
+    def _fake_post(*a, **kw):
+        call_count["n"] += 1
+        return _FakeResponse()
+
+    monkeypatch.setattr("requests.post", _fake_post)
+    lookup_ip_metadefender("1.2.3.4")
+    lookup_ip_metadefender("1.2.3.4")
+    assert call_count["n"] == 1
+
+
+def test_censys_returns_none_without_api_key(monkeypatch):
+    monkeypatch.delenv("CENSYS_API_KEY", raising=False)
+    assert lookup_ip_censys("8.8.8.8") is None
+
+
+def test_censys_with_services_is_harmless(monkeypatch):
+    monkeypatch.setenv("CENSYS_API_KEY", "fake-key")
+
+    class _FakeResponse:
+        status_code = 200
+
+        def json(self):
+            return {"result": {"services": [{"port": 443}, {"port": 22}]}}
+
+    monkeypatch.setattr("requests.get", lambda *a, **kw: _FakeResponse())
+    result = lookup_ip_censys("203.0.113.9")
+    assert result.verdict == "harmless"
+    assert "22" in result.detail
+    assert "443" in result.detail
+
+
+def test_censys_no_services_is_unknown(monkeypatch):
+    monkeypatch.setenv("CENSYS_API_KEY", "fake-key")
+
+    class _FakeResponse:
+        status_code = 200
+
+        def json(self):
+            return {"result": {"services": []}}
+
+    monkeypatch.setattr("requests.get", lambda *a, **kw: _FakeResponse())
+    result = lookup_ip_censys("203.0.113.9")
+    assert result.verdict == "unknown"
+
+
+def test_censys_uses_bearer_auth(monkeypatch):
+    monkeypatch.setenv("CENSYS_API_KEY", "the-token")
+    seen = {}
+
+    class _FakeResponse:
+        status_code = 200
+
+        def json(self):
+            return {"result": {"services": []}}
+
+    def _fake_get(*a, **kw):
+        seen["headers"] = kw.get("headers")
+        return _FakeResponse()
+
+    monkeypatch.setattr("requests.get", _fake_get)
+    lookup_ip_censys("203.0.113.9")
+    assert seen["headers"]["Authorization"] == "Bearer the-token"
+
+
+def test_censys_404_returns_unknown(monkeypatch):
+    monkeypatch.setenv("CENSYS_API_KEY", "fake-key")
+
+    class _FakeResponse:
+        status_code = 404
+        text = "not found"
+
+    monkeypatch.setattr("requests.get", lambda *a, **kw: _FakeResponse())
+    assert lookup_ip_censys("203.0.113.9").verdict == "unknown"
+
+
+def test_censys_error_status_returns_error(monkeypatch):
+    monkeypatch.setenv("CENSYS_API_KEY", "fake-key")
+
+    class _FakeResponse:
+        status_code = 401
+        text = "Unauthorized"
+
+    monkeypatch.setattr("requests.get", lambda *a, **kw: _FakeResponse())
+    result = lookup_ip_censys("203.0.113.9")
+    assert result.verdict == "error"
+    assert "401" in result.detail
+
+
+def test_censys_request_exception_returns_error(monkeypatch):
+    monkeypatch.setenv("CENSYS_API_KEY", "fake-key")
+    import requests
+
+    monkeypatch.setattr("requests.get", lambda *a, **kw: (_ for _ in ()).throw(requests.ConnectionError("boom")))
+    result = lookup_ip_censys("203.0.113.9")
+    assert result.verdict == "error"
+    assert "boom" in result.detail
+
+
+def test_censys_results_are_cached(monkeypatch):
+    monkeypatch.setenv("CENSYS_API_KEY", "fake-key")
+    call_count = {"n": 0}
+
+    class _FakeResponse:
+        status_code = 200
+
+        def json(self):
+            return {"result": {"services": []}}
+
+    def _fake_get(*a, **kw):
+        call_count["n"] += 1
+        return _FakeResponse()
+
+    monkeypatch.setattr("requests.get", _fake_get)
+    lookup_ip_censys("1.2.3.4")
+    lookup_ip_censys("1.2.3.4")
+    assert call_count["n"] == 1
+
+
+def test_path_segments_are_url_encoded_not_interpolated_raw(monkeypatch):
+    """Security regression guard: an indicator containing path-breaking
+    characters must never be concatenated raw into a request URL's path
+    -- it's always run through urllib.parse.quote first (see
+    enrichment/providers.py's module-level security note)."""
+    monkeypatch.setenv("ALIENVAULT_OTX_API_KEY", "fake-key")
+    seen = {}
+
+    class _FakeResponse:
+        status_code = 200
+
+        def json(self):
+            return {"pulse_info": {"count": 0, "pulses": []}}
+
+    def _fake_get(url, *a, **kw):
+        seen["url"] = url
+        return _FakeResponse()
+
+    monkeypatch.setattr("requests.get", _fake_get)
+    lookup_domain_otx("evil.example/../../admin?x=1")
+    assert "evil.example/../../admin?x=1" not in seen["url"]
+    assert "%2F" in seen["url"] or "%2E%2E" in seen["url"].upper()
 
 
 def test_results_are_cached_to_avoid_repeat_calls(monkeypatch):

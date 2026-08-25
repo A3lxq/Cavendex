@@ -10,12 +10,15 @@ from pydantic import BaseModel, Field
 
 class EnrichmentResult(BaseModel):
     indicator: str = Field(max_length=300)
-    indicator_type: str  # "ip" | "domain" | "hash"
-    source: str  # "abuseipdb" | "virustotal" | "shodan"
+    indicator_type: str  # "ip" | "domain" | "hash" | "url"
+    # "abuseipdb" | "virustotal" | "shodan" | "alienvault_otx" |
+    # "greynoise" | "malwarebazaar" | "threatfox" | "urlhaus" |
+    # "ibm_xforce" | "metadefender" | "censys"
+    source: str
     # "malicious" | "suspicious" | "harmless" | "unknown" | "error" — for
-    # shodan specifically this describes exposed-service *risk*, not
-    # actor reputation: "suspicious" means a known CVE was found on an
-    # exposed service, not that the IP itself is a known attacker.
+    # shodan/censys specifically this describes exposed-service *risk*,
+    # not actor reputation: "suspicious"/"harmless" describe what's
+    # exposed, not whether the IP itself is a known attacker.
     verdict: str
     detail: str = Field(max_length=1000)
     link: Optional[str] = None

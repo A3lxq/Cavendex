@@ -67,7 +67,25 @@ def test_hash_iocs_only_check_virustotal(monkeypatch):
     assert ("abuseipdb", "d41d8cd98f00b204e9800998ecf8427e") not in called
 
 
+def test_url_iocs_are_routed_to_url_capable_providers(monkeypatch):
+    called = []
+    monkeypatch.setattr(
+        "enrichment.pipeline.lookup_url_urlhaus",
+        lambda u: called.append(("urlhaus", u)) or _fake_result(u, "url", "urlhaus"),
+    )
+    monkeypatch.setattr("enrichment.pipeline.lookup_url_threatfox", lambda u: None)
+    monkeypatch.setattr("enrichment.pipeline.lookup_url_xforce", lambda u: None)
+    monkeypatch.setattr("enrichment.pipeline.lookup_url_metadefender", lambda u: None)
+    monkeypatch.setattr("enrichment.pipeline.lookup_ip_abuseipdb", lambda ip: called.append(("abuseipdb", ip)) or None)
+
+    results = enrich_iocs(["http://evil.example.com/payload.exe"])
+    assert len(results) == 1
+    assert results[0].source == "urlhaus"
+    assert ("abuseipdb", "http://evil.example.com/payload.exe") not in called
+
+
 def test_lookup_count_is_capped_per_incident(monkeypatch):
+    monkeypatch.setenv("SENTINELOS_ENRICHMENT_MAX_LOOKUPS_PER_INCIDENT", "10")
     monkeypatch.setattr(
         "enrichment.pipeline.lookup_ip_abuseipdb",
         lambda ip: _fake_result(ip, "ip", "abuseipdb"),
@@ -77,6 +95,37 @@ def test_lookup_count_is_capped_per_incident(monkeypatch):
     many_ips = [f"10.0.0.{i}" for i in range(1, 30)]
     results = enrich_iocs(many_ips)
     assert len(results) <= 10
+
+
+def test_lookup_cap_bounds_attempts_not_just_appended_results(monkeypatch):
+    """The cap must bound real outbound *attempts*, not just successful
+    results -- a malicious/fabricated-IOC-heavy incident shouldn't be
+    able to turn a wide per-IOC provider fan-out into far more than the
+    configured number of real network calls. Every IP-capable provider
+    here "succeeds" so appended-results count and attempt count would
+    otherwise diverge sharply (up to 8 providers/IOC) if attempts were
+    not itself bounded to the cap."""
+    monkeypatch.setenv("SENTINELOS_ENRICHMENT_MAX_LOOKUPS_PER_INCIDENT", "5")
+    attempts = []
+
+    def _tracked(source):
+        def _inner(ip):
+            attempts.append((source, ip))
+            return _fake_result(ip, "ip", source)
+        return _inner
+
+    for name, source in [
+        ("lookup_ip_abuseipdb", "abuseipdb"), ("lookup_ip_virustotal", "virustotal"),
+        ("lookup_ip_shodan", "shodan"), ("lookup_ip_otx", "alienvault_otx"),
+        ("lookup_ip_greynoise", "greynoise"), ("lookup_ip_xforce", "ibm_xforce"),
+        ("lookup_ip_metadefender", "metadefender"), ("lookup_ip_censys", "censys"),
+    ]:
+        monkeypatch.setattr(f"enrichment.pipeline.{name}", _tracked(source))
+
+    many_ips = [f"10.0.0.{i}" for i in range(1, 10)]
+    results = enrich_iocs(many_ips)
+    assert len(results) == 5
+    assert len(attempts) == 5
 
 
 def test_format_for_prompt_handles_empty_results():
