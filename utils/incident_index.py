@@ -59,14 +59,19 @@ def _get_connection(tenant_id: str) -> sqlite3.Connection:
 
 
 def _ensure_correlation_columns(conn: sqlite3.Connection) -> None:
-    """Add the columns correlation needs (iocs/affected_assets/created_at)
-    to a table that may already exist from before correlation was built —
-    an ALTER TABLE migration instead of a schema bump, since this is a
-    disposable index the dashboard rebuilds from vault writes, not a
-    system worth a real migration framework.
+    """Add columns that may not exist on a table created before they were
+    needed — an ALTER TABLE migration instead of a schema bump, since
+    this is a disposable index the dashboard rebuilds from vault writes,
+    not a system worth a real migration framework. `assigned_to` is
+    deliberately never written by upsert_incident_summary below (only by
+    set_assigned_to) — leaving it out of that INSERT/UPDATE entirely
+    means a routine pipeline re-upsert can never silently wipe an
+    analyst's assignment.
     """
     existing = {row[1] for row in conn.execute("PRAGMA table_info(incidents)")}
-    for column in ("iocs", "affected_assets", "created_at", "attack_technique_id", "attack_technique_name"):
+    for column in (
+        "iocs", "affected_assets", "created_at", "attack_technique_id", "attack_technique_name", "assigned_to",
+    ):
         if column not in existing:
             conn.execute(f"ALTER TABLE incidents ADD COLUMN {column} TEXT")
 
@@ -161,13 +166,52 @@ def list_incidents(
 
     cursor = conn.execute(
         f"""
-        SELECT thread_id, report_type, description, severity, status, source, has_pending_actions, updated_at
+        SELECT thread_id, report_type, description, severity, status, source, has_pending_actions,
+               assigned_to, updated_at
         FROM incidents {where_sql} ORDER BY updated_at DESC LIMIT ?
         """,
         params,
     )
     columns = [d[0] for d in cursor.description]
     return [dict(zip(columns, row)) for row in cursor.fetchall()]
+
+
+def set_assigned_to(tenant_id: str, thread_id: str, assigned_to: Optional[str]) -> bool:
+    """Sets (or clears, if `assigned_to` is None/empty) which analyst is
+    working an incident — a free-text label, not an authenticated
+    identity, the same accountability caveat as `approved_by` everywhere
+    else in this project. Returns False if the incident isn't in the
+    index at all (nothing to assign), True otherwise.
+    """
+    conn = _get_connection(tenant_id)
+    with _lock:
+        cursor = conn.execute(
+            "UPDATE incidents SET assigned_to = ? WHERE thread_id = ?",
+            (assigned_to or None, thread_id),
+        )
+        conn.commit()
+    return cursor.rowcount > 0
+
+
+def get_attack_technique_stats(tenant_id: str = DEFAULT_TENANT) -> List[dict]:
+    """How many incidents cited each ATT&CK technique — only ever
+    *verified* citations, since upsert_incident_summary() never persists
+    an unverified one here in the first place (see its own docstring
+    below). The tactic each technique belongs to isn't looked up here —
+    that needs enrichment/mitre_attack.py's dataset, a different module
+    this one doesn't import, to avoid a layering dependency the other
+    direction doesn't have; callers combine the two (see api.py).
+    """
+    conn = _get_connection(tenant_id)
+    rows = conn.execute(
+        """
+        SELECT attack_technique_id, attack_technique_name, COUNT(*) as cnt
+        FROM incidents WHERE attack_technique_id IS NOT NULL
+        GROUP BY attack_technique_id, attack_technique_name
+        ORDER BY cnt DESC
+        """
+    ).fetchall()
+    return [{"id": r[0], "name": r[1], "count": r[2]} for r in rows]
 
 
 def get_incident_stats(tenant_id: str = DEFAULT_TENANT) -> dict:

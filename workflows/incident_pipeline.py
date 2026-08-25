@@ -19,6 +19,7 @@ from graph import get_app
 from notifications.pipeline import notify_if_needed
 from state import SEVERITY_RANK, Incident, SentinelState
 from utils.audit_chain import record_chain
+from utils.incident_events import publish as publish_incident_event
 from utils.incident_index import upsert_incident_summary
 from utils.llm import accumulate_usage
 from utils.obsidian import write_incident_report
@@ -38,14 +39,20 @@ def _persist(state: SentinelState, report_type: str = "incident") -> None:
     record itself) so a bug in either can never break the pipeline.
     """
     write_incident_report(state, report_type=report_type)
+    tenant_id = state.get("tenant_id") or DEFAULT_TENANT
     try:
-        upsert_incident_summary(state.get("tenant_id") or DEFAULT_TENANT, state, report_type=report_type)
+        upsert_incident_summary(tenant_id, state, report_type=report_type)
     except Exception:
         pass
 
     incident = state.get("incident")
     if incident is not None:
-        record_chain(state.get("tenant_id") or DEFAULT_TENANT, incident.id, state.get("audit_log", []))
+        record_chain(tenant_id, incident.id, state.get("audit_log", []))
+
+    try:
+        publish_incident_event(tenant_id, {"type": "incident_updated", "thread_id": incident.id if incident else None})
+    except Exception:
+        pass
 
 
 def _new_incident_state(

@@ -32,8 +32,10 @@ A tenant with no entry keeps today's behavior and falls back to the
 global key, so a single-operator deployment needs no new configuration.
 """
 
+import asyncio
 import json
 import os
+import queue
 import secrets
 from typing import List, Optional
 
@@ -52,6 +54,8 @@ from pydantic import BaseModel, Field
 from ingestion.pipeline import ingest_alert
 from state import Severity, ShortStr
 from utils.auth_monitor import record_auth_failure
+from utils.incident_events import subscribe as subscribe_incident_events
+from utils.incident_events import unsubscribe as unsubscribe_incident_events
 from utils.incident_index import get_incident_stats, list_incidents
 from utils.rate_limit import check_rate_limit
 from utils.tenancy import DEFAULT_TENANT
@@ -296,6 +300,19 @@ class IocLookupRequest(BaseModel):
     iocs: List[ShortStr] = Field(max_length=50)
 
 
+class NoteRequest(BaseModel):
+    text: str = Field(max_length=2000)
+    # Same "analyst-typed label, not an authenticated identity" pattern
+    # as ApprovalRequest.approved_by.
+    author: Optional[ShortStr] = None
+
+
+class AssignRequest(BaseModel):
+    # None/omitted unassigns the incident. Same accountability-label
+    # caveat as everywhere else an analyst name is recorded.
+    assigned_to: Optional[ShortStr] = None
+
+
 def _msg_name_content(msg):
     if isinstance(msg, dict):
         return msg.get("name") or msg.get("role", "assistant"), msg.get("content", "")
@@ -356,6 +373,72 @@ def _verify_audit(thread_id: str, tenant_id: str):
     return verify_incident_audit_log(tenant_id, thread_id, state.get("audit_log", []))
 
 
+def _list_notes(thread_id: str, tenant_id: str):
+    from utils.incident_notes import list_notes
+
+    if get_incident_state(thread_id, tenant_id=tenant_id) is None:
+        raise HTTPException(status_code=404, detail="Incident not found")
+    return list_notes(tenant_id, thread_id)
+
+
+def _add_note(thread_id: str, tenant_id: str, payload: NoteRequest):
+    from utils.incident_notes import add_note
+
+    if get_incident_state(thread_id, tenant_id=tenant_id) is None:
+        raise HTTPException(status_code=404, detail="Incident not found")
+    try:
+        return add_note(tenant_id, thread_id, payload.text, author=payload.author)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
+def _assign_incident(thread_id: str, tenant_id: str, assigned_to: Optional[str]):
+    from utils.incident_index import set_assigned_to
+
+    if get_incident_state(thread_id, tenant_id=tenant_id) is None:
+        raise HTTPException(status_code=404, detail="Incident not found")
+    set_assigned_to(tenant_id, thread_id, assigned_to)
+    return {"thread_id": thread_id, "assigned_to": assigned_to}
+
+
+# The standard MITRE ATT&CK Enterprise kill-chain order — matches every
+# tactic name actually used in enrichment/mitre_attack.py's curated
+# dataset, so the overview renders tactics left-to-right in the order an
+# analyst already expects from the real ATT&CK matrix, not alphabetical.
+_TACTIC_ORDER = [
+    "Reconnaissance", "Resource Development", "Initial Access", "Execution", "Persistence",
+    "Privilege Escalation", "Defense Evasion", "Credential Access", "Discovery", "Lateral Movement",
+    "Collection", "Command and Control", "Exfiltration", "Impact",
+]
+
+
+def _attack_overview(tenant_id: str) -> dict:
+    """Groups every ATT&CK technique cited (and verified) across this
+    tenant's incidents by tactic — a single incident only ever cites one
+    technique, so there's no per-incident "matrix" to show; this is the
+    aggregate view across everything this tenant has actually seen.
+    Tactic membership comes from enrichment/mitre_attack.py's own
+    dataset (the same one citations are verified against), not a second
+    copy of that mapping.
+    """
+    from enrichment.mitre_attack import lookup_technique
+    from utils.incident_index import get_attack_technique_stats
+
+    by_tactic: dict = {tactic: [] for tactic in _TACTIC_ORDER}
+    for entry in get_attack_technique_stats(tenant_id):
+        info = lookup_technique(entry["id"])
+        tactic = info["tactic"] if info else "Unknown"
+        by_tactic.setdefault(tactic, []).append(entry)
+
+    return {
+        "tactics": [
+            {"tactic": tactic, "techniques": techniques}
+            for tactic, techniques in by_tactic.items()
+            if techniques
+        ]
+    }
+
+
 def _resolve_incident(thread_id: str, approve: bool, tenant_id: str, approved_by: Optional[str] = None):
     try:
         state = resolve_proposed_actions(thread_id, approve=approve, tenant_id=tenant_id, approved_by=approved_by)
@@ -390,6 +473,63 @@ def _stream_incident(payload: NewIncidentRequest, tenant_id: str) -> StreamingRe
     return StreamingResponse(_sse_events(generator), media_type="text/event-stream")
 
 
+# How long a single blocking queue.get() waits before giving up and
+# looping again — bounds how often we re-check for client disconnect and
+# how often an idle connection gets a heartbeat comment (keeps proxies/
+# load balancers with their own idle-timeout from silently killing the
+# connection; see DEPLOYMENT.md's note on long-lived SSE behind a proxy).
+# Configurable because it's also the longest a background executor thread
+# can be left blocked in queue.get() after a client disconnects (that
+# thread only unblocks on its own timeout, not on cancellation) — tests
+# turn this down so a closed test connection doesn't leave a slow-to-join
+# thread behind.
+def _events_heartbeat_seconds() -> float:
+    try:
+        return max(1.0, float(os.getenv("SENTINELOS_EVENTS_HEARTBEAT_SECONDS", "15")))
+    except ValueError:
+        return 15.0
+
+
+async def _incident_events_stream(tenant_id: str):
+    """Pushes a small "something changed, go refetch" event to the
+    dashboard every time this tenant's incident index is updated (new
+    incident, approve/deny, correlated merge, hunt — anything that calls
+    workflows/incident_pipeline.py's _persist()). Deliberately just a
+    signal, not the incident payload itself — the dashboard already has
+    a correct, tested loadIncidents()/loadStats() path; this only tells
+    it *when* to call that path again instead of waiting for the next
+    poll tick.
+
+    Bridges the sync queue.Queue (utils/incident_events.py) into this
+    async route via run_in_executor. Disconnect is *not* detected via
+    request.is_disconnected() -- that call races Starlette's own ASGI
+    receive loop and, behind this app's @api.middleware("http") (which
+    already owns the request's receive channel to relay it through
+    call_next), it never resolves, hanging the connection open forever
+    with nothing ever flushed to the client. Instead, a dead connection
+    is discovered the ordinary way: the next attempt to yield to it
+    fails, which closes this generator (running the `finally` below) --
+    bounded by the heartbeat interval below, same as any idle connection.
+    """
+    q = subscribe_incident_events(tenant_id)
+    loop = asyncio.get_running_loop()
+    try:
+        yield "data: {\"type\": \"connected\"}\n\n"
+        while True:
+            try:
+                event = await loop.run_in_executor(None, q.get, True, _events_heartbeat_seconds())
+            except queue.Empty:
+                yield ": heartbeat\n\n"
+                continue
+            yield f"data: {json.dumps(event)}\n\n"
+    finally:
+        unsubscribe_incident_events(tenant_id, q)
+
+
+def _incident_events(tenant_id: str) -> StreamingResponse:
+    return StreamingResponse(_incident_events_stream(tenant_id), media_type="text/event-stream")
+
+
 # --- Default-tenant routes (backward-compatible / convenience) ---
 
 
@@ -403,6 +543,16 @@ def list_incidents_default(
 @router.get("/incidents/stats")
 def incident_stats_default():
     return get_incident_stats(DEFAULT_TENANT)
+
+
+@router.get("/incidents/attack-overview")
+def attack_overview_default():
+    return _attack_overview(DEFAULT_TENANT)
+
+
+@router.get("/incidents/events")
+def incident_events_default():
+    return _incident_events(DEFAULT_TENANT)
 
 
 @router.post("/incidents", dependencies=[Depends(rate_limit_default)])
@@ -423,6 +573,21 @@ def read_incident(thread_id: str):
 @router.get("/incidents/{thread_id}/verify-audit")
 def verify_incident_audit(thread_id: str):
     return _verify_audit(thread_id, DEFAULT_TENANT)
+
+
+@router.get("/incidents/{thread_id}/notes")
+def list_incident_notes(thread_id: str):
+    return _list_notes(thread_id, DEFAULT_TENANT)
+
+
+@router.post("/incidents/{thread_id}/notes")
+def add_incident_note(thread_id: str, payload: NoteRequest):
+    return _add_note(thread_id, DEFAULT_TENANT, payload)
+
+
+@router.post("/incidents/{thread_id}/assign")
+def assign_incident(thread_id: str, payload: Optional[AssignRequest] = None):
+    return _assign_incident(thread_id, DEFAULT_TENANT, payload.assigned_to if payload else None)
 
 
 @router.post("/incidents/{thread_id}/approve")
@@ -488,6 +653,16 @@ def incident_stats_for_tenant(tenant_id: str):
     return get_incident_stats(tenant_id)
 
 
+@tenant_router.get("/tenants/{tenant_id}/incidents/attack-overview")
+def attack_overview_for_tenant(tenant_id: str):
+    return _attack_overview(tenant_id)
+
+
+@tenant_router.get("/tenants/{tenant_id}/incidents/events")
+def incident_events_for_tenant(tenant_id: str):
+    return _incident_events(tenant_id)
+
+
 @tenant_router.post("/tenants/{tenant_id}/incidents", dependencies=[Depends(rate_limit_for_tenant)])
 def create_incident_for_tenant(tenant_id: str, payload: NewIncidentRequest):
     return _create_incident(payload, tenant_id)
@@ -506,6 +681,21 @@ def read_incident_for_tenant(tenant_id: str, thread_id: str):
 @tenant_router.get("/tenants/{tenant_id}/incidents/{thread_id}/verify-audit")
 def verify_incident_audit_for_tenant(tenant_id: str, thread_id: str):
     return _verify_audit(thread_id, tenant_id)
+
+
+@tenant_router.get("/tenants/{tenant_id}/incidents/{thread_id}/notes")
+def list_incident_notes_for_tenant(tenant_id: str, thread_id: str):
+    return _list_notes(thread_id, tenant_id)
+
+
+@tenant_router.post("/tenants/{tenant_id}/incidents/{thread_id}/notes")
+def add_incident_note_for_tenant(tenant_id: str, thread_id: str, payload: NoteRequest):
+    return _add_note(thread_id, tenant_id, payload)
+
+
+@tenant_router.post("/tenants/{tenant_id}/incidents/{thread_id}/assign")
+def assign_incident_for_tenant(tenant_id: str, thread_id: str, payload: Optional[AssignRequest] = None):
+    return _assign_incident(thread_id, tenant_id, payload.assigned_to if payload else None)
 
 
 @tenant_router.post("/tenants/{tenant_id}/incidents/{thread_id}/approve")

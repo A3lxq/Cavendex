@@ -109,6 +109,69 @@ async function streamPost(path, body, onEvent) {
   }
 }
 
+/* ---------- Live push updates (SSE, polling stays as a fallback) ----------
+   Reuses the manual fetch-stream reader pattern from streamPost() above,
+   not native EventSource, for the same reason: EventSource can't send
+   an Authorization header, and this API is bearer-token protected.
+   Reconnects with exponential backoff on any drop (a proxy that kills
+   long-lived connections is a real, already-documented deployment risk
+   -- see DEPLOYMENT.md) -- initAutoRefresh()'s polling interval keeps
+   the list eventually-correct even if this never reconnects at all. */
+
+let eventsAbortController = null;
+let eventsReconnectDelay = 1000;
+const EVENTS_MAX_RECONNECT_DELAY_MS = 30000;
+
+async function connectIncidentEvents() {
+  if (eventsAbortController) eventsAbortController.abort();
+  const controller = new AbortController();
+  eventsAbortController = controller;
+
+  try {
+    const response = await fetch(`${tenantPrefix()}/incidents/events`, {
+      headers: authHeaders(),
+      signal: controller.signal,
+    });
+    if (!response.ok || !response.body) throw new Error(`HTTP ${response.status}`);
+    eventsReconnectDelay = 1000; // reset backoff once a connection actually succeeds
+
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      let idx;
+      while ((idx = buffer.indexOf("\n\n")) !== -1) {
+        const rawEvent = buffer.slice(0, idx).trim();
+        buffer = buffer.slice(idx + 2);
+        if (!rawEvent.startsWith("data: ")) continue; // heartbeat comments -- nothing to do
+        let event;
+        try {
+          event = JSON.parse(rawEvent.slice(6));
+        } catch (err) {
+          continue;
+        }
+        if (event.type === "incident_updated") {
+          loadIncidents();
+          loadStats();
+          if (selectedThreadId && event.thread_id === selectedThreadId) renderIncidentDetail(selectedThreadId);
+        }
+      }
+    }
+  } catch (err) {
+    if (controller.signal.aborted) return; // deliberate disconnect (settings changed) -- no retry
+    console.error("Incident event stream dropped, will reconnect", err);
+  }
+
+  if (controller.signal.aborted) return;
+  setTimeout(() => {
+    if (eventsAbortController === controller) connectIncidentEvents();
+  }, eventsReconnectDelay);
+  eventsReconnectDelay = Math.min(eventsReconnectDelay * 2, EVENTS_MAX_RECONNECT_DELAY_MS);
+}
+
 /* ---------- Connection status ---------- */
 
 async function checkConnection() {
@@ -136,6 +199,7 @@ function initTabs() {
       document.querySelectorAll(".tab-panel").forEach((p) => p.classList.remove("active"));
       btn.classList.add("active");
       document.getElementById(`tab-${btn.dataset.tab}`).classList.add("active");
+      if (btn.dataset.tab === "attack-overview") loadAttackOverview();
     });
   });
 }
@@ -206,12 +270,15 @@ async function loadIncidents() {
               bulkSelected.has(r.thread_id) ? "checked" : ""
             }>`
           : "";
+        const assignedTag = r.assigned_to
+          ? `<span class="assigned-tag" title="Assigned to ${escapeHtml(r.assigned_to)}">👤 ${escapeHtml(r.assigned_to)}</span>`
+          : "";
         return `
           <tr class="row-clickable ${selected} ${kbdFocus}" data-thread-id="${escapeHtml(r.thread_id)}" data-idx="${idx}">
             <td class="td-checkbox">${checkboxCell}</td>
             <td>${severityBadge(r.severity)}</td>
             <td>${statusBadge(r.status)}${pendingMark}</td>
-            <td class="desc-cell" title="${escapeHtml(r.description)}">${escapeHtml(r.description)}</td>
+            <td class="desc-cell" title="${escapeHtml(r.description)}">${escapeHtml(r.description)}${assignedTag}</td>
             <td>${escapeHtml(timeAgo(r.updated_at))}</td>
           </tr>`;
       })
@@ -525,17 +592,51 @@ async function openIncident(threadId) {
   await renderIncidentDetail(threadId);
 }
 
+function renderAssignment(threadId, assignedTo) {
+  if (assignedTo) {
+    return `
+      <div class="assignment-row">
+        <span>Assigned to <strong>${escapeHtml(assignedTo)}</strong></span>
+        <button class="btn-unassign" data-thread-id="${escapeHtml(threadId)}">Unassign</button>
+      </div>`;
+  }
+  return `
+    <div class="assignment-row">
+      <span class="text-dim">Unassigned</span>
+      <button class="btn-assign-me" data-thread-id="${escapeHtml(threadId)}">Assign to me</button>
+    </div>`;
+}
+
+function renderNotes(notes) {
+  if (!notes || !notes.length) return "<p>No notes yet.</p>";
+  return notes
+    .map(
+      (n) => `
+      <div class="note-card">
+        <div class="note-meta">${escapeHtml(n.author || "(unspecified)")} · ${escapeHtml(timeAgo(n.created_at))}</div>
+        <div class="note-text">${escapeHtml(n.text)}</div>
+      </div>`
+    )
+    .join("");
+}
+
 async function renderIncidentDetail(threadId) {
   const pane = document.getElementById("detail-pane");
   try {
-    const data = await apiGet(`${tenantPrefix()}/incidents/${encodeURIComponent(threadId)}`);
+    const [data, notes] = await Promise.all([
+      apiGet(`${tenantPrefix()}/incidents/${encodeURIComponent(threadId)}`),
+      apiGet(`${tenantPrefix()}/incidents/${encodeURIComponent(threadId)}/notes`).catch(() => []),
+    ]);
     const incident = data.incident;
+    const row = currentRows.find((r) => r.thread_id === threadId);
+    const assignedTo = row ? row.assigned_to : null;
     pane.innerHTML = `
       <div class="detail-header">
         <h2>${severityBadge(incident.severity)} ${statusBadge(incident.status)}</h2>
         <span class="detail-id">${escapeHtml(incident.id)}</span>
       </div>
       <div class="detail-desc">${escapeHtml(incident.description)}</div>
+      <div class="detail-section"><h3>Assignment</h3>${renderAssignment(threadId, assignedTo)}</div>
       <div class="detail-section"><h3>Affected Assets</h3><p>${incident.affected_assets.map(escapeHtml).join(", ") || "none"}</p></div>
       <div class="detail-section"><h3>Indicators of Compromise</h3><p>${incident.iocs.map(escapeHtml).join(", ") || "none"}</p></div>
       <div class="detail-section"><h3>Agent Findings</h3>${renderFindings(data.messages)}</div>
@@ -544,12 +645,73 @@ async function renderIncidentDetail(threadId) {
       <div class="detail-section"><h3>Proposed Actions</h3>${renderProposedActions(data.proposed_actions, threadId)}</div>
       <div class="detail-section"><h3>Token Usage</h3>${renderTokenUsage(data.token_usage)}</div>
       <div class="detail-section"><h3>Audit Log</h3>${renderAuditLog(data.audit_log)}</div>
+      <div class="detail-section">
+        <h3>Analyst Notes</h3>
+        <div id="notes-list">${renderNotes(notes)}</div>
+        <form class="note-form" data-thread-id="${escapeHtml(threadId)}">
+          <textarea class="note-input" rows="2" placeholder="Add a note for other analysts…" maxlength="2000"></textarea>
+          <button type="submit">Add Note</button>
+        </form>
+      </div>
     `;
     pane.querySelectorAll("button[data-approve]").forEach((btn) => {
       btn.addEventListener("click", () => decideAction(btn.dataset.threadId, btn.dataset.approve === "true"));
     });
+    const assignBtn = pane.querySelector("button.btn-assign-me");
+    if (assignBtn) {
+      assignBtn.addEventListener("click", () => {
+        if (!settings.analystName) {
+          alert("Set your analyst name in the top bar first, so assignment means something.");
+          return;
+        }
+        setAssignment(threadId, settings.analystName);
+      });
+    }
+    const unassignBtn = pane.querySelector("button.btn-unassign");
+    if (unassignBtn) unassignBtn.addEventListener("click", () => setAssignment(threadId, null));
+    const noteForm = pane.querySelector("form.note-form");
+    if (noteForm) noteForm.addEventListener("submit", submitNote);
   } catch (err) {
     pane.innerHTML = `<div class="empty-state">Failed to load incident: ${escapeHtml(err.message)}</div>`;
+  }
+}
+
+/* ---------- Assignment ---------- */
+
+async function setAssignment(threadId, assignedTo) {
+  try {
+    await apiPost(`${tenantPrefix()}/incidents/${encodeURIComponent(threadId)}/assign`, { assigned_to: assignedTo });
+    await loadIncidents();
+    await renderIncidentDetail(threadId);
+  } catch (err) {
+    alert(`Failed to update assignment: ${err.message}`);
+  }
+}
+
+/* ---------- Notes ---------- */
+
+async function submitNote(evt) {
+  evt.preventDefault();
+  const form = evt.target;
+  const threadId = form.dataset.threadId;
+  const textarea = form.querySelector(".note-input");
+  const text = textarea.value.trim();
+  if (!text) return;
+
+  const submitBtn = form.querySelector("button[type=submit]");
+  submitBtn.disabled = true;
+  try {
+    await apiPost(`${tenantPrefix()}/incidents/${encodeURIComponent(threadId)}/notes`, {
+      text,
+      author: settings.analystName || null,
+    });
+    textarea.value = "";
+    const notes = await apiGet(`${tenantPrefix()}/incidents/${encodeURIComponent(threadId)}/notes`);
+    document.getElementById("notes-list").innerHTML = renderNotes(notes);
+  } catch (err) {
+    alert(`Failed to add note: ${err.message}`);
+  } finally {
+    submitBtn.disabled = false;
   }
 }
 
@@ -674,6 +836,45 @@ async function submitIocLookup(evt) {
   }
 }
 
+/* ---------- ATT&CK technique overview ---------- */
+
+async function loadAttackOverview() {
+  const body = document.getElementById("attack-overview-body");
+  body.innerHTML = '<div class="empty-state">Loading…</div>';
+  try {
+    const data = await apiGet(`${tenantPrefix()}/incidents/attack-overview`);
+    body.innerHTML = renderAttackOverview(data.tactics);
+  } catch (err) {
+    body.innerHTML = `<div class="live-event">Error: ${escapeHtml(err.message)}</div>`;
+  }
+}
+
+function renderAttackOverview(tactics) {
+  if (!tactics || !tactics.length) {
+    return '<div class="empty-state">No verified ATT&amp;CK techniques cited yet for this tenant.</div>';
+  }
+  return tactics
+    .map(
+      (t) => `
+      <div class="attack-tactic-group">
+        <h3 class="attack-tactic-name">${escapeHtml(t.tactic)}</h3>
+        <div class="attack-technique-grid">
+          ${t.techniques
+            .map(
+              (tech) => `
+            <div class="attack-technique-tile">
+              <span class="attack-technique-id">${escapeHtml(tech.id)}</span>
+              <span class="attack-technique-name">${escapeHtml(tech.name)}</span>
+              <span class="attack-technique-count">${escapeHtml(tech.count)}</span>
+            </div>`
+            )
+            .join("")}
+        </div>
+      </div>`
+    )
+    .join("");
+}
+
 /* ---------- Wiring ---------- */
 
 function initSettingsForm() {
@@ -691,6 +892,7 @@ function initSettingsForm() {
     loadIncidents();
     loadStats();
     checkConnection();
+    connectIncidentEvents();
   });
 }
 
@@ -722,4 +924,5 @@ document.addEventListener("DOMContentLoaded", () => {
   checkConnection();
   loadIncidents();
   loadStats();
+  connectIncidentEvents();
 });

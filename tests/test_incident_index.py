@@ -1,9 +1,11 @@
 from state import Incident
 from utils.incident_index import (
+    get_attack_technique_stats,
     get_incident_stats,
     list_incidents,
     list_open_incidents,
     reset_for_tests,
+    set_assigned_to,
     upsert_incident_summary,
 )
 
@@ -273,3 +275,83 @@ def test_stats_scoped_per_tenant(monkeypatch, tmp_path):
 
     assert stats_t1["total"] == 3
     assert stats_t2["total"] == 1
+
+
+# ---------- set_assigned_to ----------
+
+
+def test_assign_then_list_reflects_it(monkeypatch, tmp_path):
+    monkeypatch.setenv("SENTINELOS_DATA_DIR", str(tmp_path))
+    upsert_incident_summary("t1", _state("inc-1", "x"))
+
+    result = set_assigned_to("t1", "inc-1", "j.smith")
+
+    assert result is True
+    rows = list_incidents("t1")
+    assert rows[0]["assigned_to"] == "j.smith"
+
+
+def test_unassign_clears_it(monkeypatch, tmp_path):
+    monkeypatch.setenv("SENTINELOS_DATA_DIR", str(tmp_path))
+    upsert_incident_summary("t1", _state("inc-1", "x"))
+    set_assigned_to("t1", "inc-1", "j.smith")
+
+    set_assigned_to("t1", "inc-1", None)
+
+    rows = list_incidents("t1")
+    assert rows[0]["assigned_to"] is None
+
+
+def test_assign_unknown_thread_returns_false(monkeypatch, tmp_path):
+    monkeypatch.setenv("SENTINELOS_DATA_DIR", str(tmp_path))
+    assert set_assigned_to("t1", "never-existed", "j.smith") is False
+
+
+def test_reupsert_never_wipes_an_existing_assignment(monkeypatch, tmp_path):
+    """A routine pipeline re-upsert (a new agent step, a correlation
+    merge) must never silently clear who's assigned to an incident."""
+    monkeypatch.setenv("SENTINELOS_DATA_DIR", str(tmp_path))
+    upsert_incident_summary("t1", _state("inc-1", "x", severity="low"))
+    set_assigned_to("t1", "inc-1", "j.smith")
+
+    upsert_incident_summary("t1", _state("inc-1", "x", severity="high"))  # re-upsert, e.g. after escalation
+
+    rows = list_incidents("t1")
+    assert rows[0]["assigned_to"] == "j.smith"
+    assert rows[0]["severity"] == "high"  # the actual update still took effect
+
+
+# ---------- get_attack_technique_stats ----------
+
+
+def test_attack_stats_counts_verified_techniques(monkeypatch, tmp_path):
+    monkeypatch.setenv("SENTINELOS_DATA_DIR", str(tmp_path))
+    verified = {"id": "T1110", "name": "Brute Force", "verified": True}
+    upsert_incident_summary("t1", _state("inc-1", "x", attack_technique=verified))
+    upsert_incident_summary("t1", _state("inc-2", "y", attack_technique=verified))
+    upsert_incident_summary("t1", _state("inc-3", "z", attack_technique={"id": "T1595", "name": "Active Scanning", "verified": True}))
+
+    stats = get_attack_technique_stats("t1")
+
+    by_id = {s["id"]: s for s in stats}
+    assert by_id["T1110"]["count"] == 2
+    assert by_id["T1110"]["name"] == "Brute Force"
+    assert by_id["T1595"]["count"] == 1
+
+
+def test_attack_stats_excludes_unverified_and_uncited(monkeypatch, tmp_path):
+    monkeypatch.setenv("SENTINELOS_DATA_DIR", str(tmp_path))
+    upsert_incident_summary("t1", _state("inc-1", "x", attack_technique={"id": "T9999", "name": "Fake", "verified": False}))
+    upsert_incident_summary("t1", _state("inc-2", "y"))  # no citation at all
+
+    assert get_attack_technique_stats("t1") == []
+
+
+def test_attack_stats_scoped_per_tenant(monkeypatch, tmp_path):
+    monkeypatch.setenv("SENTINELOS_DATA_DIR", str(tmp_path))
+    verified = {"id": "T1110", "name": "Brute Force", "verified": True}
+    upsert_incident_summary("t1", _state("inc-1", "x", attack_technique=verified))
+    upsert_incident_summary("t2", _state("inc-2", "y", attack_technique=verified))
+
+    assert len(get_attack_technique_stats("t1")) == 1
+    assert len(get_attack_technique_stats("t2")) == 1

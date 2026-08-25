@@ -165,15 +165,24 @@ curl http://127.0.0.1:8000/health   # {"status": "ok"}
 
 ## 5. Put a reverse proxy in front (TLS)
 
-SentinelOS's SSE streaming endpoints (`/incidents/stream`, and the
-dashboard's live "New Incident"/"Threat Hunt" forms) need two settings
-most default reverse-proxy configs get wrong: **response buffering must
-be off**, and the **read timeout must be long**, because a real
+SentinelOS's SSE streaming endpoints (`/incidents/stream`, the
+dashboard's live "New Incident"/"Threat Hunt" forms, and `/incidents/events`
+behind the dashboard's real-time incident list) need two settings most
+default reverse-proxy configs get wrong: **response buffering must be
+off**, and the **read timeout must be long**, because a real
 multi-agent pipeline run can legitimately take anywhere from a few
 seconds (a fast hosted API) to well over ten minutes (a local model on
 modest hardware — genuinely observed during this project's own live
 testing, not a hypothetical). A default 60-second proxy timeout will cut
 the stream off mid-incident.
+
+`/incidents/events` is a different shape of stream — deliberately
+open-ended (heartbeats keep it alive indefinitely, not just for one
+pipeline run), so *any* finite proxy read timeout will eventually close
+it. That's expected, not a bug: the dashboard reconnects automatically
+with backoff, and falls back to its existing 15-second polling in the
+meantime, so a periodic proxy-forced disconnect on this one endpoint is
+invisible to an analyst using the dashboard normally.
 
 **nginx** (`/etc/nginx/sites-available/sentinelos`):
 

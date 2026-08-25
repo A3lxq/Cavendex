@@ -30,6 +30,7 @@
   <button class="tab-btn" data-tab="new-incident">New Incident</button>
   <button class="tab-btn" data-tab="hunt">Threat Hunt</button>
   <button class="tab-btn" data-tab="ioc-lookup">IOC Lookup</button>
+  <button class="tab-btn" data-tab="attack-overview">ATT&amp;CK Overview</button>
 </nav>
 
 <main>
@@ -167,6 +168,21 @@
         <button type="submit" id="ioc-lookup-submit-btn">Look Up</button>
       </form>
       <div id="ioc-lookup-output" class="live-output" hidden></div>
+    </div>
+  </section>
+
+  <!-- ATT&CK Overview tab -->
+  <section id="tab-attack-overview" class="tab-panel">
+    <div class="form-card">
+      <h2>ATT&amp;CK Technique Overview</h2>
+      <p class="form-hint">
+        Every verified MITRE ATT&amp;CK technique cited across this tenant's incidents, grouped by tactic in
+        kill-chain order. A technique only appears here once an agent has cited it AND that citation has been
+        verified against the real ATT&amp;CK dataset — see <code>enrichment/mitre_attack.py</code>.
+      </p>
+      <div id="attack-overview-body">
+        <div class="empty-state">Loading…</div>
+      </div>
     </div>
   </section>
 
