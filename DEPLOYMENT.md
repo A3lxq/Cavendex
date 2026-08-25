@@ -117,15 +117,55 @@ working.
 
 ## 4. Run it as a service
 
-Run SentinelOS as **one** `uvicorn` process, not multiple workers or
-multiple replicas behind a load balancer. Rate limiting, the alert dedup
-window, and alert correlation (`utils/rate_limit.py`, `utils/dedup.py`,
-`ingestion/correlation.py`'s candidate cache) all keep their state
-in-process — a second worker has its own separate copy of that state, so
-`--workers 4` doesn't scale this app, it silently breaks dedup, rate
-limiting, and correlation across whichever worker happens to handle each
-request. Scaling to multiple replicas needs the Redis-backed rework
-noted in README's Future Roadmap first.
+**Default (no `SENTINELOS_REDIS_URL`): run SentinelOS as one `uvicorn`
+process, not multiple workers or multiple replicas behind a load
+balancer.** Rate limiting and the alert dedup window
+(`utils/rate_limit.py`, `utils/dedup.py`) keep their state in-process by
+default — a second worker has its own separate copy of that state, so
+`--workers 4` doesn't scale this app, it silently breaks dedup and rate
+limiting across whichever worker happens to handle each request.
+
+**Set `SENTINELOS_REDIS_URL` and both switch to a real Redis-backed
+implementation, safe to run behind `--workers N` or multiple host
+replicas:**
+
+```env
+SENTINELOS_REDIS_URL=redis://redis.internal.example.com:6379/0
+```
+
+Same function signatures, same semantics — every caller of
+`check_rate_limit()`/`is_duplicate()` behaves identically either way;
+only the storage backing the shared state changes. Live-verified with
+two genuinely independent `uvicorn` processes pointed at the same
+Redis instance: a 3-requests/minute limit was correctly enforced as ONE
+shared quota across both processes combined (not 3 each), and a
+duplicate alert sent to two separate processes was correctly deduped on
+the second one regardless of which process handled which request. A
+Redis connection/command failure is never silently swallowed here —
+rate limiting exists specifically to hold up under load, and quietly
+admitting every request because Redis hiccuped would defeat the point;
+expect a visible error (a 500 from the API, a logged-and-skipped message
+from `syslog_listener.py`/`poll_connector.py`) instead, the same
+"fail loud, not silently open" choice this project makes for other
+protective controls.
+
+**Correlation does NOT need (or use) Redis, and was never really
+"per-process in-memory state" to begin with.** `ingestion/correlation.py`'s
+candidate pool reads from `utils/incident_index.py`'s SQLite file, which
+is durable and already shared correctly by multiple worker processes on
+*one* host — a `--workers 4` setup was never silently breaking
+correlation the way it broke rate limiting/dedup. What it doesn't do is
+extend across multiple *hosts* without pointing `SENTINELOS_DATA_DIR` at
+genuinely shared/networked storage, which introduces its own real
+caveats (SQLite's locking model is not a great fit for a networked
+filesystem like NFS under concurrent writers). If you need true
+multi-host correlation with zero shared storage at all, that needs a
+real client-server database in place of SQLite — a materially bigger
+migration than adding Redis, and out of scope here; Redis (a fast
+key/counter store) is also just the wrong tool for `incident_index.db`'s
+actual job (structured queries with `WHERE`/`ORDER BY` across incident
+fields the dashboard's search/filter/stats also depend on), not merely
+an unbuilt feature.
 
 Create `/etc/systemd/system/sentinelos-api.service`:
 
@@ -806,7 +846,10 @@ Notes — this is the short, do-it-before-go-live version:
 - [ ] The service runs as a dedicated non-root user (`sentinelos` above),
       not root and not your own login user.
 - [ ] Exactly one `uvicorn` process — no `--workers`, no multiple
-      replicas (see Section 4).
+      replicas — unless `SENTINELOS_REDIS_URL` is set, in which case
+      multiple workers/replicas are safe for rate limiting and dedup
+      (see Section 4; correlation has its own, separate multi-host
+      caveat there regardless of Redis).
 - [ ] Backups of `SENTINELOS_DATA_DIR` / `CHROMA_PERSIST_DIR` /
       `OBSIDIAN_VAULT_PATH` are actually running, not just planned —
       **and you've actually restored from one at least once** (see
@@ -875,11 +918,18 @@ affect a live deployment decision, not just a feature-completeness one:
   If you need fast turnaround and are running Ollama, budget for a real
   GPU host, or use a hosted API provider for anything response-time
   sensitive.
-- **Rate limiting, dedup, and correlation are single-process, in-memory
-  state.** Fine for one `uvicorn` process on one machine (the only
-  supported topology today); does not survive a restart, and does not
-  work correctly across multiple processes/replicas. A Redis-backed
-  version is on the roadmap, not built yet.
+- **Rate limiting and dedup are single-process, in-memory state by
+  default — but a real Redis-backed alternative exists now.** Set
+  `SENTINELOS_REDIS_URL` (Section 4) and both become genuinely shared
+  across multiple `uvicorn` workers/replicas, live-verified with two
+  independent processes. Unconfigured, the original limitation still
+  applies exactly as before: fine for one process, doesn't survive a
+  restart, doesn't work correctly across multiple processes/replicas.
+  **Correlation was never actually in-memory state** — its candidate
+  pool reads from a durable SQLite file already shared correctly across
+  multiple workers on one host; its own remaining limitation is
+  multi-*host* replicas without shared storage, unrelated to Redis (see
+  Section 4 for why Redis isn't the right tool for that specific gap).
 - **No per-user accounts.** Multi-tenancy isolates *organizations* from
   each other, not individual analysts within one tenant. Within a
   tenant, the dashboard's auth is one shared key for everyone using it.
