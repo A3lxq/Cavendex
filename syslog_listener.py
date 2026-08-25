@@ -24,6 +24,16 @@ Usage:
     python syslog_listener.py --protocol udp --port 5514 \
         --api-url http://sentinelos-host:8000 --api-key secret
 
+    # TCP wrapped in real TLS (encrypted transport, TCP only -- see the
+    # "no DTLS" note below for UDP senders):
+    python syslog_listener.py --protocol tcp --port 6514 \
+        --tls-cert server.crt --tls-key server.key
+
+    # ...and requiring a client certificate too (mutual TLS), verified
+    # against a CA file rather than trusting any client that presents one:
+    python syslog_listener.py --protocol tcp --port 6514 \
+        --tls-cert server.crt --tls-key server.key --tls-client-ca ca.crt
+
 Run one instance per protocol you need (like ingest_watch.py, one
 instance per log file) — this deliberately does not multiplex UDP and
 TCP in a single process, for the same "one script, one job" simplicity
@@ -46,11 +56,23 @@ what's mitigable:
     ranges (repeatable) — real syslog senders almost always live on a
     trusted management network/VLAN, not the open internet, so this
     should usually be set in production.
-  - There is no TLS/DTLS here (real "syslog over TLS," RFC 5425, is a
-    materially bigger undertaking). If you need encrypted transport, run
-    this behind a VPN/stunnel/WireGuard tunnel between the sender and
-    this host, the same way DEPLOYMENT.md recommends a reverse proxy for
-    the API's TLS rather than reimplementing it here.
+  - Real TLS transport is supported for TCP via --tls-cert/--tls-key
+    (stdlib `ssl`, no extra dependency) -- see DEPLOYMENT.md's "Syslog
+    over TLS" section for a full self-signed-cert recipe. This is
+    TLS-wrapped newline-delimited TCP, not full RFC 5425 (which also
+    specifies octet-counting message framing this listener doesn't
+    implement) -- most real TLS syslog senders (e.g. rsyslog's `omfwd`
+    with a `gtls` StreamDriver) don't require octet-counting and work
+    against this directly. --tls-client-ca additionally requires and
+    verifies a client certificate (mutual TLS) instead of trusting any
+    client that completes the handshake.
+  - UDP has no TLS equivalent here (DTLS is a materially bigger
+    undertaking this project doesn't implement). If a UDP-only appliance
+    needs encrypted transport, or a TCP sender can't speak TLS itself,
+    run this behind a VPN/stunnel/WireGuard tunnel between the sender and
+    this host instead -- see DEPLOYMENT.md for a concrete stunnel recipe,
+    the same way DEPLOYMENT.md recommends a reverse proxy for the API's
+    TLS rather than reimplementing it there either.
   - Every accepted message still goes through the exact same
     dedup/correlation/severity-prefilter gate as file-tailed or
     API-pushed alerts (see ingestion/pipeline.py) — a flood of injected
@@ -68,6 +90,7 @@ standard port.
 import argparse
 import ipaddress
 import socketserver
+import ssl
 from typing import List, Optional
 
 from dotenv import load_dotenv
@@ -187,6 +210,44 @@ class _ThreadingTCPServer(socketserver.ThreadingMixIn, socketserver.TCPServer):
     daemon_threads = True
 
 
+def _build_ssl_context(certfile: str, keyfile: str, client_ca: Optional[str] = None) -> ssl.SSLContext:
+    context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+    context.load_cert_chain(certfile=certfile, keyfile=keyfile)
+    if client_ca:
+        context.verify_mode = ssl.CERT_REQUIRED
+        context.load_verify_locations(cafile=client_ca)
+    return context
+
+
+class _TLSThreadingTCPServer(_ThreadingTCPServer):
+    """TLS-wrapped version of _ThreadingTCPServer -- socketserver has no
+    built-in TLS support, so this overrides get_request() to wrap the
+    accepted socket the same way the standard library's own docs show.
+    Known tradeoff: the handshake happens in this single accept loop
+    (get_request runs before a handler thread is spun up), so one slow or
+    hostile handshake briefly delays accepting the next connection --
+    acceptable for a syslog listener's expected connection rate, not
+    appropriate for a high-concurrency TLS server.
+    """
+
+    def get_request(self):
+        newsocket, fromaddr = self.socket.accept()
+        try:
+            connstream = self.ssl_context.wrap_socket(newsocket, server_side=True)
+        except ssl.SSLError as exc:
+            # A failed handshake (bad/missing client cert under mutual
+            # TLS, a port scanner, a plaintext sender pointed at the TLS
+            # port) is routine noise on a network-facing listener, not a
+            # crash -- log one short line and let it propagate as the
+            # OSError socketserver's accept loop already knows to swallow
+            # (ssl.SSLError subclasses OSError) instead of tearing down
+            # the whole listener.
+            print(f"  TLS handshake failed from {fromaddr[0]}: {exc}")
+            newsocket.close()
+            raise
+        return connstream, fromaddr
+
+
 def main():
     parser = argparse.ArgumentParser(description="Receive syslog messages over the network into SentinelOS")
     parser.add_argument("--protocol", choices=["udp", "tcp"], default="udp")
@@ -205,12 +266,40 @@ def main():
         "--api-url", default=None, help="POST to this SentinelOS API instead of ingesting in-process"
     )
     parser.add_argument("--api-key", default=None)
+    parser.add_argument(
+        "--tls-cert",
+        default=None,
+        help="Enable real TLS (TCP only): path to a PEM server certificate. Requires --tls-key. "
+        "See DEPLOYMENT.md's 'Syslog over TLS' section for a self-signed-cert recipe.",
+    )
+    parser.add_argument("--tls-key", default=None, help="Path to the PEM private key for --tls-cert.")
+    parser.add_argument(
+        "--tls-client-ca",
+        default=None,
+        help="Optional: require and verify a client certificate against this CA PEM file (mutual TLS). "
+        "Requires --tls-cert/--tls-key.",
+    )
     args = parser.parse_args()
+
+    if args.tls_cert or args.tls_key:
+        if not (args.tls_cert and args.tls_key):
+            parser.error("--tls-cert and --tls-key must be given together")
+        if args.protocol != "tcp":
+            parser.error(
+                "--tls-cert/--tls-key require --protocol tcp -- there is no UDP/DTLS support here, "
+                "see the module docstring for the VPN/tunnel alternative"
+            )
+    elif args.tls_client_ca:
+        parser.error("--tls-client-ca requires --tls-cert/--tls-key")
 
     allowed_networks = _parse_allowed_networks(args.allow_from)
 
-    server_cls = _ThreadingUDPServer if args.protocol == "udp" else _ThreadingTCPServer
-    handler_cls = _UDPHandler if args.protocol == "udp" else _TCPHandler
+    if args.tls_cert:
+        server_cls = _TLSThreadingTCPServer
+        handler_cls = _TCPHandler
+    else:
+        server_cls = _ThreadingUDPServer if args.protocol == "udp" else _ThreadingTCPServer
+        handler_cls = _UDPHandler if args.protocol == "udp" else _TCPHandler
 
     server = server_cls((args.bind, args.port), handler_cls)
     server.source = args.source
@@ -218,9 +307,14 @@ def main():
     server.api_url = args.api_url
     server.api_key = args.api_key
     server.allowed_networks = allowed_networks
+    if args.tls_cert:
+        server.ssl_context = _build_ssl_context(args.tls_cert, args.tls_key, args.tls_client_ca)
 
+    tls_note = ""
+    if args.tls_cert:
+        tls_note = " [TLS" + (", mutual" if args.tls_client_ca else "") + "]"
     print(
-        f"Listening for {args.protocol.upper()} syslog on {args.bind}:{args.port} "
+        f"Listening for {args.protocol.upper()} syslog on {args.bind}:{args.port}{tls_note} "
         f"(source={args.source}, tenant={args.tenant})..."
     )
     if allowed_networks:

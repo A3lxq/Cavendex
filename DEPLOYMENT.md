@@ -352,6 +352,129 @@ root:
 AmbientCapabilities=CAP_NET_BIND_SERVICE
 ```
 
+### Syslog over TLS
+
+Binding to a management interface and restricting `--allow-from` doesn't
+give you encryption or integrity on the wire — anyone on that segment
+can still read or spoof plain UDP/TCP syslog. `syslog_listener.py`
+supports real TLS for TCP via Python's standard-library `ssl` module (no
+extra dependency): a self-signed cert is enough for most real syslog
+senders, since (like most syslog-over-TLS setups) they're configured to
+trust one specific cert or CA rather than a public one.
+
+**1. Generate a self-signed cert** (swap in a real CA-issued one if your
+org has an internal CA — nothing here requires a self-signed cert
+specifically):
+
+```bash
+openssl req -x509 -newkey rsa:2048 -keyout server.key -out server.crt \
+    -days 825 -nodes -subj "/CN=sentinelos-syslog.internal"
+```
+
+**2. Run the listener with `--tls-cert`/`--tls-key`:**
+
+```ini
+ExecStart=/opt/sentinelos/venv/bin/python syslog_listener.py \
+    --protocol tcp \
+    --bind 10.0.5.10 \
+    --port 6514 \
+    --source syslog_cef \
+    --tenant default \
+    --allow-from 10.0.5.0/24 \
+    --tls-cert /opt/sentinelos/tls/server.crt \
+    --tls-key /opt/sentinelos/tls/server.key
+```
+
+Port 6514 is IANA's registered "syslog-tls" port, used here by
+convention (nothing enforces it — any port works, same as the plaintext
+listener's 5514 default).
+
+**3. Point a real TLS-capable sender at it.** rsyslog's `omfwd` action
+with a `gtls` `StreamDriver` is the common case:
+
+```
+action(type="omfwd" target="sentinelos-syslog.internal" port="6514"
+       protocol="tcp"
+       StreamDriver="gtls" StreamDriverMode="1" StreamDriverAuthMode="anon")
+```
+
+(`StreamDriverAuthMode="anon"` trusts the server cert without verifying
+its identity against a CA — appropriate for a self-signed cert in a
+closed environment; use `"x509/name"` with the CA imported into rsyslog's
+trust store instead if you want real hostname verification.)
+
+**Verify the handshake actually works** before relying on it — a quick
+`openssl s_client` connection confirms the listener presents the
+expected cert and completes a real handshake without needing a full
+sender configured yet:
+
+```bash
+openssl s_client -connect sentinelos-syslog.internal:6514 -brief
+```
+
+**Mutual TLS** (`--tls-client-ca <CA file>`) additionally requires and
+verifies a client certificate, so only a sender holding a key you've
+actually issued can connect at all — not just anyone who can reach the
+port and complete a one-way handshake. This is worth the extra
+cert-issuing overhead when the syslog listener is reachable from a
+shared network segment rather than a point-to-point link you already
+trust.
+
+**Honest limits:**
+- This is TLS-wrapped newline-delimited TCP, not full RFC 5425 — RFC
+  5425 also specifies octet-counting message framing, which this
+  listener doesn't implement. Most real TLS syslog senders (rsyslog's
+  `omfwd`/`gtls` included) don't require it and work against this
+  directly; a sender that specifically demands octet-counted framing
+  won't.
+- There's no DTLS for UDP senders — if an appliance only speaks UDP
+  syslog and needs encrypted transport, see "A VPN/tunnel alternative"
+  below instead.
+- The TLS handshake happens in the server's single accept loop before a
+  connection is handed to a worker thread, so one slow or hostile
+  handshake briefly delays accepting the next connection. Fine at a
+  syslog listener's expected connection rate; not a general-purpose
+  high-concurrency TLS server.
+
+### A VPN/tunnel alternative
+
+For a UDP-only appliance, or a TCP sender that genuinely can't be
+configured to speak TLS itself, wrap the whole connection in a tunnel
+instead of relying on `syslog_listener.py`'s own TLS support. `stunnel`
+is the lightest-weight option for a single TCP stream — it terminates
+TLS and forwards plaintext to the listener locally, so from
+`syslog_listener.py`'s point of view the traffic looks like an ordinary
+local plaintext connection (run `syslog_listener.py` without
+`--tls-cert` in this setup):
+
+```ini
+# stunnel.conf on the SentinelOS host (server side)
+[syslog-tls]
+accept = 6514
+connect = 127.0.0.1:5514
+cert = /opt/sentinelos/tls/server.crt
+key = /opt/sentinelos/tls/server.key
+```
+
+```ini
+# stunnel.conf on the sending host (client side)
+[syslog-tls]
+client = yes
+accept = 127.0.0.1:5514
+connect = sentinelos-syslog.internal:6514
+```
+
+The sending appliance then points its plain syslog output at
+`127.0.0.1:5514` on its own host, unaware TLS is involved at all —
+useful for legacy appliances with no TLS support of their own. For a
+UDP-only sender, or for encrypting more than just this one port,
+a network-level VPN (WireGuard is the lightest-weight modern choice)
+between the sender's network and this host is the more general fix —
+outside this project's scope to configure for you, but the same
+principle DEPLOYMENT.md already applies to the API's own TLS: terminate
+it at a layer built and hardened for exactly that job, not inside this
+project's own listener code.
+
 (add that under `[Service]` and change `--port` to `514`). Run a second
 instance with `--protocol tcp` if you need both transports — one process,
 one protocol, the same pattern as one `ingest_watch.py` per log file.
@@ -623,8 +746,13 @@ Notes — this is the short, do-it-before-go-live version:
 - [ ] If `syslog_listener.py` is running: it's bound to a specific
       management-network interface (not `0.0.0.0` on a general-purpose
       host), and `--allow-from` is set to the real CIDR range your
-      syslog senders live on. It has no built-in authentication or
-      encryption — that's inherent to syslog, not a missing setting.
+      syslog senders live on. Plain UDP/TCP syslog has no built-in
+      authentication or encryption — that's inherent to the protocol,
+      not a missing setting. If a sender can speak TLS, prefer
+      `--tls-cert`/`--tls-key` (see "Syslog over TLS" above) over relying
+      on network position alone; if it can't, use the `stunnel`/VPN
+      recipe there instead of exposing plaintext syslog beyond a link
+      you already trust.
 - [ ] If `poll_connector.py` is running: its config file lives outside
       the repo checkout (or is at least gitignored), and its
       `auth_token_env` variable is set in `.env`/the service's
