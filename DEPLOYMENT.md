@@ -6,7 +6,7 @@ walkthrough — start there if you just want to try it. This file is for
 standing SentinelOS up as a service that watches real logs and stays
 running.
 
-Read **Section 12 (Known Limitations to Plan Around)** before you point
+Read **Section 13 (Known Limitations to Plan Around)** before you point
 this at production infrastructure. Nothing in this project is dishonest
 about what it is: an analyst's assistant with a mandatory human-approval
 gate, not an unattended SOC.
@@ -25,7 +25,7 @@ gate, not an unattended SOC.
   - [Ollama](https://ollama.com) running locally or on a reachable host,
     with a model already pulled (`ollama pull llama3.1`, or similar) —
     free and keeps incident data off third-party APIs entirely, but see
-    the honest performance note in Section 12 before relying on it for
+    the honest performance note in Section 13 before relying on it for
     time-sensitive response.
 - **(Optional) AbuseIPDB and/or VirusTotal API keys** — free tiers exist
   for both — for real IOC reputation lookups instead of LLM recall alone.
@@ -76,7 +76,7 @@ Edit `.env`:
   `OBSIDIAN_VAULT_PATH` at real, persistent paths outside the repo
   checkout if you're deploying to a directory that might get wiped on
   redeploy — e.g. `/var/lib/sentinelos/{data,chroma,vault}`. These three
-  directories are the entire state of the system; see Section 10.
+  directories are the entire state of the system; see Section 11.
 - Optionally set `ABUSEIPDB_API_KEY` / `VIRUSTOTAL_API_KEY` for real
   threat-intel lookups, and tune `SENTINELOS_INGEST_MIN_SEVERITY`,
   `SENTINELOS_DEDUP_WINDOW_SECONDS`, `SENTINELOS_CORRELATION_*` to your
@@ -688,7 +688,40 @@ A broken or unreachable remediation receiver never blocks the approve call itsel
 
 ---
 
-## 9. Back up the incident vault off-box
+## 9. Set up real user accounts and dashboard sessions (opt-in)
+
+`SENTINELOS_API_KEY` still works exactly as before and remains the simplest option for a single analyst or a scripted/automation setup. `utils/user_accounts.py` adds real per-tenant usernames/passwords and a dashboard login on top of that — never instead of it.
+
+**Bootstrap the first user** (a tenant's very first user account is the one and only thing this feature lets through unauthenticated, since there's no admin session yet to require):
+
+```bash
+python cli.py --tenant default create-user j.smith 'a-real-password' --role admin
+```
+
+Log in from the dashboard's Sign In form (username + password, next to the existing API Key field), or via `POST /auth/login` — either way you get back a session token good for `SENTINELOS_SESSION_TTL_SECONDS` (default 8 hours). The dashboard stores it and uses it as the `Authorization` bearer credential in place of the API key, and locks the "Analyst name" field to your authenticated username instead of a freely-typed label.
+
+**Creating a user does NOT, by itself, lock out unauthenticated callers.** This is deliberate, and was a real mistake caught during this feature's own live testing — see README's "User Accounts and Sessions" for the story. If you want account creation itself to be the access-control switch (instead of, or in addition to, `SENTINELOS_API_KEY`):
+
+```env
+SENTINELOS_REQUIRE_LOGIN=true
+```
+
+With this set, any tenant that has at least one real user account requires a valid credential (a session or the API key) for every request — a tenant with no user accounts yet is unaffected.
+
+**Managing users beyond the first one requires a real credential** — either an `admin`-role session (log in as an admin, then `POST`/`GET /auth/users`, `DELETE /auth/users/{username}`, `PATCH /auth/users/{username}/role`), the API key (treated as implicitly admin, since it already authorizes everything else), or `python cli.py create-user` directly against the same store. There's no dashboard UI for user management yet — use the CLI or API.
+
+**Tune the password hashing cost and login rate limit if needed:**
+
+```env
+SENTINELOS_PASSWORD_HASH_ITERATIONS=600000
+SENTINELOS_LOGIN_RATE_LIMIT_PER_MINUTE=5
+```
+
+The default iteration count (roughly OWASP's 2023 PBKDF2-SHA256 guidance) costs a few hundred milliseconds per login/user-creation call — a real, deliberate cost, not an oversight, and one you shouldn't lower just to make logins feel snappier.
+
+---
+
+## 10. Back up the incident vault off-box
 
 Your `OBSIDIAN_VAULT_PATH` is the durable, human-readable record of
 every incident — worth a copy somewhere other than this one host.
@@ -741,7 +774,7 @@ schedule instead of `--interval-seconds`.
 
 ---
 
-## 10. Persistent data and backups
+## 11. Persistent data and backups
 
 Everything SentinelOS knows lives in three places — back all three up
 together, since a per-tenant incident's checkpoint, vector memory, and
@@ -749,7 +782,7 @@ vault report are meant to stay in sync:
 
 | Path (via env var)     | What's in it                                                          |
 |-------------------------|------------------------------------------------------------------------|
-| `SENTINELOS_DATA_DIR`   | Per-tenant SQLite: incident checkpoints (`sentinelos.db`), the dashboard/correlation index (`incident_index.db`), `ingestion_log.jsonl`, `audit_chain_ledger.jsonl`, `remediation_log.jsonl`, polling-connector cursor state (`poller_state/`); tenant-independent `auth_failures.jsonl` at the root |
+| `SENTINELOS_DATA_DIR`   | Per-tenant SQLite: incident checkpoints (`sentinelos.db`), the dashboard/correlation index (`incident_index.db`), user accounts + sessions (`user_accounts.db`), `ingestion_log.jsonl`, `audit_chain_ledger.jsonl`, `remediation_log.jsonl`, polling-connector cursor state (`poller_state/`); tenant-independent `auth_failures.jsonl` at the root |
 | `CHROMA_PERSIST_DIR`    | Per-tenant ChromaDB collections — long-term incident memory used for recall |
 | `OBSIDIAN_VAULT_PATH`   | Markdown incident/hunt reports with wikilinks — the durable, human-readable audit trail |
 
@@ -824,7 +857,7 @@ the real incident, not a 404.
 
 ---
 
-## 11. Security hardening checklist
+## 12. Security hardening checklist
 
 Everything here is already discussed in more depth in README's Security
 Notes — this is the short, do-it-before-go-live version:
@@ -853,17 +886,25 @@ Notes — this is the short, do-it-before-go-live version:
 - [ ] Backups of `SENTINELOS_DATA_DIR` / `CHROMA_PERSIST_DIR` /
       `OBSIDIAN_VAULT_PATH` are actually running, not just planned —
       **and you've actually restored from one at least once** (see
-      "Restoring from backup" in Section 10). An untested backup is a
+      "Restoring from backup" in Section 11). An untested backup is a
       hypothesis.
 - [ ] Whoever gets the analyst-dashboard API key understands it's a
-      `localStorage`-held bearer token, not a per-user login — treat
-      dashboard access like SSH key access, not like a website password.
-- [ ] Analysts know to set their name (dashboard's "Analyst name" field,
-      the CLI's `--by`, or `SENTINELOS_ANALYST_NAME`) before approving or
-      denying — otherwise the audit trail honestly records that decision
-      as "unspecified" rather than attributing it to anyone. This is a
-      typed label, not a login; it doesn't stop anyone from typing the
-      wrong name.
+      `localStorage`-held bearer token shared by everyone who has it, not
+      a per-user login — treat dashboard access like SSH key access, not
+      like a website password. If individual accountability matters,
+      set up real user accounts instead (Section 9) so `approved_by`
+      auto-fills from an authenticated identity rather than a shared key.
+- [ ] If real user accounts are set up: passwords are strong (nothing
+      enforces complexity beyond a length minimum), and
+      `SENTINELOS_REQUIRE_LOGIN` reflects what you actually intend —
+      off means account creation alone never restricts unauthenticated
+      access; see Section 9.
+- [ ] Analysts without a real account know to set their name (dashboard's
+      "Analyst name" field, the CLI's `--by`, or
+      `SENTINELOS_ANALYST_NAME`) before approving or denying — otherwise
+      the audit trail honestly records that decision as "unspecified"
+      rather than attributing it to anyone. This is a typed label, not a
+      login; it doesn't stop anyone from typing the wrong name.
 - [ ] If `syslog_listener.py` is running: it's bound to a specific
       management-network interface (not `0.0.0.0` on a general-purpose
       host), and `--allow-from` is set to the real CIDR range your
@@ -906,7 +947,7 @@ Notes — this is the short, do-it-before-go-live version:
 
 ---
 
-## 12. Known limitations to plan around
+## 13. Known limitations to plan around
 
 Pulled forward from README's Known Gaps section because they specifically
 affect a live deployment decision, not just a feature-completeness one:
@@ -930,9 +971,7 @@ affect a live deployment decision, not just a feature-completeness one:
   multiple workers on one host; its own remaining limitation is
   multi-*host* replicas without shared storage, unrelated to Redis (see
   Section 4 for why Redis isn't the right tool for that specific gap).
-- **No per-user accounts.** Multi-tenancy isolates *organizations* from
-  each other, not individual analysts within one tenant. Within a
-  tenant, the dashboard's auth is one shared key for everyone using it.
+- **Per-user accounts exist now (Section 9) but stay a simple two-role system.** `analyst`/`admin` gates only user-management routes, not a general permission matrix — there's no per-feature access control, no dashboard UI for managing users (CLI/API only), no self-service password reset, and incident assignment/notes still use the older freely-typed-label pattern rather than a real session identity. Without setting up accounts at all, the dashboard's auth remains one shared key for everyone using it, same as always.
 - **Cross-tenant authorization needs its own configuration step.**
   `SENTINELOS_TENANT_API_KEYS` lets each tenant require its own key —
   set it for every tenant you actually need isolated from the others.
@@ -998,7 +1037,7 @@ project's stated goal, not a hedge.
 
 ---
 
-## 13. Day-to-day operation
+## 14. Day-to-day operation
 
 - **Dashboard**: `https://your-host/` — incident queue, detail view,
   approve/deny (enter an analyst name once in the top bar — it's
@@ -1030,7 +1069,7 @@ project's stated goal, not a hedge.
 
 ---
 
-## 14. Upgrading
+## 15. Upgrading
 
 ```bash
 sudo systemctl stop sentinelos-api sentinelos-ingest-*
@@ -1049,7 +1088,7 @@ a backup costs a minute and a bad one costs a lot more.
 
 ---
 
-## 15. Troubleshooting
+## 16. Troubleshooting
 
 - **`/health` doesn't respond**: check `journalctl -u sentinelos-api -e`
   for a Python traceback — usually a missing/misconfigured provider

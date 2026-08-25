@@ -71,6 +71,8 @@ a { color: var(--pulse); }
   display: flex;
   align-items: center;
   justify-content: space-between;
+  flex-wrap: wrap;
+  row-gap: 8px;
   padding: 11px 22px;
   background: var(--bg-elevated);
   border-bottom: 1px solid var(--border);
@@ -95,6 +97,17 @@ a { color: var(--pulse); }
   font-family: var(--font-mono);
 }
 .topbar-controls input:focus { border-color: var(--pulse); }
+
+#login-form, #logged-in-state { padding-left: 16px; border-left: 1px solid var(--border-soft); }
+/* .topbar-controls sets display: flex, which otherwise beats [hidden]
+   regardless of specificity — the same CSS trap already documented
+   elsewhere in this file; the fix is the same explicit override. */
+#login-form[hidden], #logged-in-state[hidden] { display: none; }
+#login-form input { width: 120px; }
+.login-error { font-size: 11px; color: var(--critical); max-width: 220px; }
+.logged-in-label {
+  font-family: var(--font-mono); font-size: 12px; color: var(--ok);
+}
 
 button {
   background: var(--bg-elevated-2-solid); color: var(--text); border: 1px solid var(--border);

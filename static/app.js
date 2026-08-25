@@ -5,16 +5,34 @@
 const settings = {
   tenant: localStorage.getItem("sentinelos.tenant") || "default",
   apiKey: localStorage.getItem("sentinelos.apiKey") || "",
-  // Recorded on every approve/deny decision — an audit-trail label the
-  // analyst types in, not an authenticated identity (see README Known
-  // Gaps: no per-user accounts/logins yet).
+  // Recorded on every approve/deny decision. Freely typed unless a real
+  // session is active (below), in which case it's locked to the
+  // authenticated username instead — a real identity is strictly better
+  // attribution than a typed label.
   analystName: localStorage.getItem("sentinelos.analystName") || "",
+  // A real per-user session (see utils/user_accounts.py) — optional.
+  // Unset, the dashboard behaves exactly as it always did (API key +
+  // freely-typed analyst name). Logging in issues a token used as the
+  // Authorization bearer credential in place of the API key.
+  sessionToken: localStorage.getItem("sentinelos.sessionToken") || "",
+  sessionUsername: localStorage.getItem("sentinelos.sessionUsername") || "",
+  sessionRole: localStorage.getItem("sentinelos.sessionRole") || "",
 };
 
 function saveSettings() {
   localStorage.setItem("sentinelos.tenant", settings.tenant);
   localStorage.setItem("sentinelos.apiKey", settings.apiKey);
   localStorage.setItem("sentinelos.analystName", settings.analystName);
+  localStorage.setItem("sentinelos.sessionToken", settings.sessionToken);
+  localStorage.setItem("sentinelos.sessionUsername", settings.sessionUsername);
+  localStorage.setItem("sentinelos.sessionRole", settings.sessionRole);
+}
+
+function clearSession() {
+  settings.sessionToken = "";
+  settings.sessionUsername = "";
+  settings.sessionRole = "";
+  saveSettings();
 }
 
 /* ---------- HTML escaping — everything rendered here can contain
@@ -55,7 +73,12 @@ function tenantPrefix() {
 
 function authHeaders(extra) {
   const headers = Object.assign({}, extra || {});
-  if (settings.apiKey) headers["Authorization"] = `Bearer ${settings.apiKey}`;
+  // A real session token takes priority over the static API key when
+  // both happen to be set — it's the more specific, authenticated
+  // credential, and login() overwrites the API key on the wire either
+  // way, so this only matters if the two disagree.
+  const token = settings.sessionToken || settings.apiKey;
+  if (token) headers["Authorization"] = `Bearer ${token}`;
   return headers;
 }
 
@@ -1253,15 +1276,100 @@ function initStrandMap() {
 
 /* ---------- Wiring ---------- */
 
+/* ---------- Real per-user login (optional; see utils/user_accounts.py) ---------- */
+
+function renderLoginState() {
+  const loggedIn = Boolean(settings.sessionToken);
+  document.getElementById("login-form").hidden = loggedIn;
+  document.getElementById("logged-in-state").hidden = !loggedIn;
+  if (loggedIn) {
+    document.getElementById("logged-in-label").textContent =
+      `Signed in as ${settings.sessionUsername} (${settings.sessionRole})`;
+  }
+  const analystInput = document.getElementById("analyst-name-input");
+  analystInput.readOnly = loggedIn;
+  analystInput.title = loggedIn ? "Locked to your signed-in identity while logged in." : "";
+}
+
+async function doLogin() {
+  const username = document.getElementById("login-username-input").value.trim();
+  const password = document.getElementById("login-password-input").value;
+  const errorEl = document.getElementById("login-error");
+  errorEl.textContent = "";
+  if (!username || !password) {
+    errorEl.textContent = "Username and password are both required.";
+    return;
+  }
+  try {
+    const response = await fetch(`${tenantPrefix()}/auth/login`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ username, password }),
+    });
+    if (!response.ok) {
+      const body = await response.json().catch(() => ({}));
+      errorEl.textContent = body.detail || `Login failed (HTTP ${response.status}).`;
+      return;
+    }
+    const data = await response.json();
+    settings.sessionToken = data.token;
+    settings.sessionUsername = data.username;
+    settings.sessionRole = data.role;
+    settings.analystName = data.username;
+    saveSettings();
+    document.getElementById("login-password-input").value = "";
+    document.getElementById("analyst-name-input").value = settings.analystName;
+    renderLoginState();
+    loadIncidents();
+    loadStats();
+    checkConnection();
+  } catch (exc) {
+    errorEl.textContent = `Login failed: ${exc.message}`;
+  }
+}
+
+async function doLogout() {
+  try {
+    await apiPost(`${tenantPrefix()}/auth/logout`, {});
+  } catch (exc) {
+    // Best-effort -- even if the network call fails, still forget the
+    // token locally so the UI reflects "logged out" immediately.
+  }
+  clearSession();
+  renderLoginState();
+  checkConnection();
+}
+
+function initLoginForm() {
+  renderLoginState();
+  document.getElementById("login-submit-btn").addEventListener("click", doLogin);
+  document.getElementById("login-password-input").addEventListener("keydown", (e) => {
+    if (e.key === "Enter") doLogin();
+  });
+  document.getElementById("logout-btn").addEventListener("click", doLogout);
+}
+
 function initSettingsForm() {
   document.getElementById("tenant-input").value = settings.tenant;
   document.getElementById("apikey-input").value = settings.apiKey;
   document.getElementById("analyst-name-input").value = settings.analystName;
   document.getElementById("apply-settings-btn").addEventListener("click", () => {
-    settings.tenant = document.getElementById("tenant-input").value.trim() || "default";
+    const newTenant = document.getElementById("tenant-input").value.trim() || "default";
+    // A session token is scoped to the tenant it was issued for (see
+    // utils/user_accounts.py) -- switching tenants while one is active
+    // would otherwise silently carry a token that can never validate
+    // against the new tenant, which reads as a confusing auth failure
+    // rather than the tenant switch the analyst actually asked for.
+    if (newTenant !== settings.tenant && settings.sessionToken) {
+      clearSession();
+    }
+    settings.tenant = newTenant;
     settings.apiKey = document.getElementById("apikey-input").value.trim();
-    settings.analystName = document.getElementById("analyst-name-input").value.trim();
+    if (!settings.sessionToken) {
+      settings.analystName = document.getElementById("analyst-name-input").value.trim();
+    }
     saveSettings();
+    renderLoginState();
     selectedThreadId = null;
     keyboardFocusIndex = -1;
     document.getElementById("detail-pane").innerHTML = '<div class="empty-state">Select an incident to view details.</div>';
@@ -1289,6 +1397,7 @@ function initAutoRefresh() {
 document.addEventListener("DOMContentLoaded", () => {
   initTabs();
   initSettingsForm();
+  initLoginForm();
   initAutoRefresh();
   initFilters();
   initKeyboardShortcuts();

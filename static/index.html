@@ -17,11 +17,25 @@
     <label>API Key
       <input id="apikey-input" type="password" placeholder="only if SENTINELOS_API_KEY is set" spellcheck="false">
     </label>
-    <label title="Recorded on every approve/deny decision you make — not an authenticated login, just an audit-trail label.">Analyst name
+    <label title="Recorded on every approve/deny decision you make. Freely typed unless you're signed in below, in which case it's locked to your real account.">Analyst name
       <input id="analyst-name-input" type="text" placeholder="e.g. j.smith" spellcheck="false">
     </label>
     <button id="apply-settings-btn">Apply</button>
     <span id="connection-status" class="status-pill status-unknown">checking…</span>
+  </div>
+  <div class="topbar-controls" id="login-form" title="Optional: a real per-user login (see DEPLOYMENT.md). Without one, use the API Key field above instead.">
+    <label>Username
+      <input id="login-username-input" type="text" placeholder="e.g. j.smith" spellcheck="false" autocomplete="username">
+    </label>
+    <label>Password
+      <input id="login-password-input" type="password" autocomplete="current-password">
+    </label>
+    <button id="login-submit-btn">Sign In</button>
+    <span id="login-error" class="login-error"></span>
+  </div>
+  <div class="topbar-controls" id="logged-in-state" hidden>
+    <span id="logged-in-label" class="logged-in-label"></span>
+    <button id="logout-btn">Sign Out</button>
   </div>
 </header>
 

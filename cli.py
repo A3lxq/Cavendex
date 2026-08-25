@@ -281,6 +281,25 @@ def cmd_hunt(args):
     print("\n📓 Obsidian vault hunt report written.")
 
 
+def cmd_create_user(args):
+    """Bootstraps a tenant's first user account (or adds another) —
+    exists specifically because the API's own POST /auth/users route is
+    only reachable unauthenticated for a tenant's very first user; every
+    call after that needs a real admin credential. This command talks
+    directly to utils/user_accounts.py, the same store the API uses, so
+    a user created here logs in through the dashboard/API exactly like
+    one created via the API itself.
+    """
+    from utils.user_accounts import create_user
+
+    try:
+        user = create_user(args.tenant, args.username, args.password, role=args.role)
+    except ValueError as exc:
+        print(_error_text(f"Error: {exc}"))
+        sys.exit(1)
+    print(f"Created user {user['username']!r} (role={user['role']}) for tenant {args.tenant!r}.")
+
+
 _REQUIRES_PROVIDER = {"new", "hunt"}
 
 
@@ -334,6 +353,15 @@ def main():
     )
     p_verify.add_argument("thread_id")
     p_verify.set_defaults(func=cmd_verify_audit)
+
+    p_create_user = sub.add_parser(
+        "create-user",
+        help="Create a dashboard user account for this tenant (bootstraps the first admin, or adds another user)",
+    )
+    p_create_user.add_argument("username")
+    p_create_user.add_argument("password")
+    p_create_user.add_argument("--role", default="analyst", choices=["analyst", "admin"])
+    p_create_user.set_defaults(func=cmd_create_user)
 
     args = parser.parse_args()
     # approve/deny/show are pure state transitions/reads — no LLM call —

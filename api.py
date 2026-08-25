@@ -59,6 +59,17 @@ from utils.incident_events import unsubscribe as unsubscribe_incident_events
 from utils.incident_index import get_incident_stats, list_incidents
 from utils.rate_limit import check_rate_limit
 from utils.tenancy import DEFAULT_TENANT
+from utils.user_accounts import (
+    change_role,
+    create_session,
+    create_user,
+    delete_user,
+    has_any_users,
+    invalidate_session,
+    list_users,
+    validate_session,
+    verify_password,
+)
 from workflows.incident_pipeline import (
     get_incident_state,
     resolve_proposed_actions,
@@ -105,17 +116,52 @@ def _tenant_api_keys() -> dict:
     return {str(k): str(v) for k, v in parsed.items()}
 
 
+def _require_login_when_users_exist() -> bool:
+    return os.getenv("SENTINELOS_REQUIRE_LOGIN", "false").strip().lower() in ("1", "true", "yes")
+
+
 def require_api_key(
     request: Request, credentials: Optional[HTTPAuthorizationCredentials] = Depends(_bearer_scheme)
 ):
     """Bearer-token auth for the unprefixed, default-tenant routes. Uses a
     constant-time comparison so a valid key can't be brute-forced via
     response-time differences on a partial match.
+
+    Also accepts a real per-user session token (see utils/user_accounts.py)
+    as an alternative credential — checked first, since a session token
+    and the static API key are visually indistinguishable bearer strings
+    and only one lookup will ever match. `request.state.session_user` is
+    set to that user's {"username", "role"} for the rest of the request
+    (None for plain API-key auth) — route handlers that want to attribute
+    an action to a real identity (e.g. auto-filling `approved_by`) read
+    it from there.
+
+    Creating a user account never by itself changes whether an
+    unauthenticated caller is admitted — that would silently flip a
+    tenant's security posture for everyone else the moment one analyst
+    sets up a login purely for its accountability benefit (a real
+    identity auto-filling `approved_by`), the exact kind of surprise
+    every other opt-in feature in this project goes out of its way to
+    avoid. `SENTINELOS_REQUIRE_LOGIN=true` opts into treating "this
+    tenant has any real user accounts" as its own reason to require a
+    credential, for an operator who deliberately wants account creation
+    itself to be the access-control switch instead of (or in addition
+    to) SENTINELOS_API_KEY.
     """
+    request.state.session_user = None
+    if credentials is not None:
+        session = validate_session(DEFAULT_TENANT, credentials.credentials)
+        if session is not None:
+            request.state.session_user = session
+            return
+
     expected_key = _global_api_key()
-    if not expected_key:
+    requires_auth = bool(expected_key) or (
+        _require_login_when_users_exist() and has_any_users(DEFAULT_TENANT)
+    )
+    if not requires_auth:
         return
-    if credentials is None or not secrets.compare_digest(credentials.credentials, expected_key):
+    if credentials is None or not (expected_key and secrets.compare_digest(credentials.credentials, expected_key)):
         client_ip = request.client.host if request.client else "unknown"
         record_auth_failure(client_ip, request.url.path)
         raise HTTPException(status_code=401, detail="Invalid or missing API key")
@@ -137,14 +183,42 @@ def require_tenant_api_key(
     no longer authorizes it. A tenant with no entry in that mapping falls
     back to the global key, preserving today's behavior for anyone who
     hasn't configured per-tenant keys.
+
+    Also accepts a real per-user session token scoped to this tenant —
+    see require_api_key's docstring for both that and
+    SENTINELOS_REQUIRE_LOGIN, the reasoning is identical here.
     """
+    request.state.session_user = None
+    if credentials is not None:
+        session = validate_session(tenant_id, credentials.credentials)
+        if session is not None:
+            request.state.session_user = session
+            return
+
     expected_key = _tenant_api_keys().get(tenant_id) or _global_api_key()
-    if not expected_key:
+    requires_auth = bool(expected_key) or (_require_login_when_users_exist() and has_any_users(tenant_id))
+    if not requires_auth:
         return
-    if credentials is None or not secrets.compare_digest(credentials.credentials, expected_key):
+    if credentials is None or not (expected_key and secrets.compare_digest(credentials.credentials, expected_key)):
         client_ip = request.client.host if request.client else "unknown"
         record_auth_failure(client_ip, request.url.path, tenant_id=tenant_id)
         raise HTTPException(status_code=401, detail=f"Invalid or missing API key for tenant '{tenant_id}'")
+
+
+def require_admin(request: Request) -> None:
+    """Gates user-management routes (create/list/delete user, change
+    role). A caller authenticated via a real session must hold the
+    `admin` role. A caller authenticated via the plain API key (no
+    session at all — `request.state.session_user` is None) is allowed
+    through: the API key is already a super-credential that authorizes
+    every other route in this system, so treating it as implicitly
+    admin here is consistent with the existing trust model, and is also
+    the only way to bootstrap a tenant's very first user account (there
+    is, by definition, no admin session yet at that point).
+    """
+    session_user = getattr(request.state, "session_user", None)
+    if session_user is not None and session_user["role"] != "admin":
+        raise HTTPException(status_code=403, detail="Admin role required")
 
 
 def _enforce_rate_limit(key: str) -> None:
@@ -243,14 +317,116 @@ def health():
     return {"status": "ok"}
 
 
-# Every route except /health, /, and /static/* requires auth (when
-# SENTINELOS_API_KEY is set) — enforced once here rather than repeated on
-# each route, so a new route can't accidentally be added unauthenticated.
-# Tenant-scoped routes get their own router below with a dependency that
-# also checks SENTINELOS_TENANT_API_KEYS for the specific tenant in the
-# URL, not just the global key.
+class LoginRequest(BaseModel):
+    username: ShortStr
+    password: ShortStr
+
+
+class CreateUserRequest(BaseModel):
+    username: ShortStr
+    password: ShortStr
+    role: str = "analyst"
+
+
+class ChangeRoleRequest(BaseModel):
+    role: str
+
+
+def _login_rate_limit_per_minute() -> int:
+    try:
+        return int(os.getenv("SENTINELOS_LOGIN_RATE_LIMIT_PER_MINUTE", "5"))
+    except ValueError:
+        return 5
+
+
+def _login(tenant_id: str, payload: LoginRequest, request: Request) -> dict:
+    """Deliberately unauthenticated — logging in is how a caller obtains
+    a credential in the first place, so it can't itself require one.
+    Rate-limited far more tightly than the LLM-triggering routes
+    (SENTINELOS_LOGIN_RATE_LIMIT_PER_MINUTE, default 5/minute per
+    (tenant, client IP)) since this is the one route in the whole API
+    whose entire job is checking a password against a stored hash — the
+    exact kind of endpoint password-brute-forcing targets.
+    """
+    client_ip = request.client.host if request.client else "unknown"
+    retry_after = check_rate_limit(f"login:{tenant_id}:{client_ip}", limit=_login_rate_limit_per_minute())
+    if retry_after is not None:
+        raise HTTPException(
+            status_code=429,
+            detail="Too many login attempts — try again shortly.",
+            headers={"Retry-After": str(int(retry_after))},
+        )
+
+    user = verify_password(tenant_id, payload.username, payload.password)
+    if user is None:
+        record_auth_failure(client_ip, request.url.path, tenant_id=tenant_id)
+        raise HTTPException(status_code=401, detail="Invalid username or password")
+
+    session = create_session(tenant_id, user["username"], user["role"])
+    return {
+        "token": session["token"],
+        "expires_at": session["expires_at"],
+        "username": user["username"],
+        "role": user["role"],
+    }
+
+
+@api.post("/auth/login")
+def login_default(payload: LoginRequest, request: Request):
+    return _login(DEFAULT_TENANT, payload, request)
+
+
+@api.post("/tenants/{tenant_id}/auth/login")
+def login_for_tenant(tenant_id: str, payload: LoginRequest, request: Request):
+    return _login(tenant_id, payload, request)
+
+
+# Every route except /health, /, /static/*, and /auth/login requires auth
+# (when SENTINELOS_API_KEY is set, or when the tenant has any real user
+# accounts — see require_api_key/require_tenant_api_key) — enforced once
+# here rather than repeated on each route, so a new route can't
+# accidentally be added unauthenticated. Tenant-scoped routes get their
+# own router below with a dependency that also checks
+# SENTINELOS_TENANT_API_KEYS for the specific tenant in the URL, not just
+# the global key.
 router = APIRouter(dependencies=[Depends(require_api_key)])
 tenant_router = APIRouter(dependencies=[Depends(require_tenant_api_key)])
+
+
+def _logout(tenant_id: str, credentials: Optional[HTTPAuthorizationCredentials]) -> dict:
+    if credentials is not None:
+        invalidate_session(tenant_id, credentials.credentials)
+    return {"status": "logged_out"}
+
+
+def _me(request: Request) -> dict:
+    session_user = getattr(request.state, "session_user", None)
+    if session_user is None:
+        return {"authenticated_via": "api_key", "username": None, "role": None}
+    return {"authenticated_via": "session", "username": session_user["username"], "role": session_user["role"]}
+
+
+def _create_user_account(tenant_id: str, payload: CreateUserRequest) -> dict:
+    try:
+        return create_user(tenant_id, payload.username, payload.password, role=payload.role)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
+def _delete_user_account(tenant_id: str, username: str) -> dict:
+    if not delete_user(tenant_id, username):
+        raise HTTPException(status_code=404, detail=f"No such user: {username}")
+    return {"status": "deleted", "username": username}
+
+
+def _change_user_role(tenant_id: str, username: str, payload: ChangeRoleRequest) -> dict:
+    try:
+        changed = change_role(tenant_id, username, payload.role)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    if not changed:
+        raise HTTPException(status_code=404, detail=f"No such user: {username}")
+    return {"status": "updated", "username": username, "role": payload.role}
 
 
 # The API's own schema, gated behind the same auth as everything else it
@@ -446,6 +622,20 @@ def _incident_graph(tenant_id: str) -> dict:
     return get_incident_graph(tenant_id)
 
 
+def _effective_actor(request: Request, explicit: Optional[str]) -> Optional[str]:
+    """The name to attribute an approve/deny call to: `explicit` (the
+    request body's own approved_by, if given) always wins, but when a
+    caller didn't supply one and is logged in via a real session, that
+    session's authenticated username is used instead of leaving the
+    field empty — a real identity is strictly better attribution than
+    "unspecified," so prefer it whenever it's actually available.
+    """
+    if explicit:
+        return explicit
+    session_user = getattr(request.state, "session_user", None)
+    return session_user["username"] if session_user else None
+
+
 def _resolve_incident(thread_id: str, approve: bool, tenant_id: str, approved_by: Optional[str] = None):
     try:
         state = resolve_proposed_actions(thread_id, approve=approve, tenant_id=tenant_id, approved_by=approved_by)
@@ -540,6 +730,36 @@ def _incident_events(tenant_id: str) -> StreamingResponse:
 # --- Default-tenant routes (backward-compatible / convenience) ---
 
 
+@router.post("/auth/logout")
+def logout_default(credentials: Optional[HTTPAuthorizationCredentials] = Depends(_bearer_scheme)):
+    return _logout(DEFAULT_TENANT, credentials)
+
+
+@router.get("/auth/me")
+def me_default(request: Request):
+    return _me(request)
+
+
+@router.post("/auth/users", dependencies=[Depends(require_admin)])
+def create_user_default(payload: CreateUserRequest):
+    return _create_user_account(DEFAULT_TENANT, payload)
+
+
+@router.get("/auth/users", dependencies=[Depends(require_admin)])
+def list_users_default():
+    return list_users(DEFAULT_TENANT)
+
+
+@router.delete("/auth/users/{username}", dependencies=[Depends(require_admin)])
+def delete_user_default(username: str):
+    return _delete_user_account(DEFAULT_TENANT, username)
+
+
+@router.patch("/auth/users/{username}/role", dependencies=[Depends(require_admin)])
+def change_user_role_default(username: str, payload: ChangeRoleRequest):
+    return _change_user_role(DEFAULT_TENANT, username, payload)
+
+
 @router.get("/incidents")
 def list_incidents_default(
     limit: int = 100, severity: Optional[str] = None, status: Optional[str] = None, search: Optional[str] = None
@@ -603,13 +823,15 @@ def assign_incident(thread_id: str, payload: Optional[AssignRequest] = None):
 
 
 @router.post("/incidents/{thread_id}/approve")
-def approve_incident(thread_id: str, payload: Optional[ApprovalRequest] = None):
-    return _resolve_incident(thread_id, True, DEFAULT_TENANT, approved_by=payload.approved_by if payload else None)
+def approve_incident(thread_id: str, request: Request, payload: Optional[ApprovalRequest] = None):
+    approved_by = _effective_actor(request, payload.approved_by if payload else None)
+    return _resolve_incident(thread_id, True, DEFAULT_TENANT, approved_by=approved_by)
 
 
 @router.post("/incidents/{thread_id}/deny")
-def deny_incident(thread_id: str, payload: Optional[ApprovalRequest] = None):
-    return _resolve_incident(thread_id, False, DEFAULT_TENANT, approved_by=payload.approved_by if payload else None)
+def deny_incident(thread_id: str, request: Request, payload: Optional[ApprovalRequest] = None):
+    approved_by = _effective_actor(request, payload.approved_by if payload else None)
+    return _resolve_incident(thread_id, False, DEFAULT_TENANT, approved_by=approved_by)
 
 
 @router.post("/hunts", dependencies=[Depends(rate_limit_default)])
@@ -647,6 +869,36 @@ def ingest(source: str, payload: dict):
 
 
 # --- Explicit tenant routes ---
+
+
+@tenant_router.post("/tenants/{tenant_id}/auth/logout")
+def logout_for_tenant(tenant_id: str, credentials: Optional[HTTPAuthorizationCredentials] = Depends(_bearer_scheme)):
+    return _logout(tenant_id, credentials)
+
+
+@tenant_router.get("/tenants/{tenant_id}/auth/me")
+def me_for_tenant(tenant_id: str, request: Request):
+    return _me(request)
+
+
+@tenant_router.post("/tenants/{tenant_id}/auth/users", dependencies=[Depends(require_admin)])
+def create_user_for_tenant(tenant_id: str, payload: CreateUserRequest):
+    return _create_user_account(tenant_id, payload)
+
+
+@tenant_router.get("/tenants/{tenant_id}/auth/users", dependencies=[Depends(require_admin)])
+def list_users_for_tenant(tenant_id: str):
+    return list_users(tenant_id)
+
+
+@tenant_router.delete("/tenants/{tenant_id}/auth/users/{username}", dependencies=[Depends(require_admin)])
+def delete_user_for_tenant(tenant_id: str, username: str):
+    return _delete_user_account(tenant_id, username)
+
+
+@tenant_router.patch("/tenants/{tenant_id}/auth/users/{username}/role", dependencies=[Depends(require_admin)])
+def change_user_role_for_tenant(tenant_id: str, username: str, payload: ChangeRoleRequest):
+    return _change_user_role(tenant_id, username, payload)
 
 
 @tenant_router.get("/tenants/{tenant_id}/incidents")
@@ -716,13 +968,19 @@ def assign_incident_for_tenant(tenant_id: str, thread_id: str, payload: Optional
 
 
 @tenant_router.post("/tenants/{tenant_id}/incidents/{thread_id}/approve")
-def approve_incident_for_tenant(tenant_id: str, thread_id: str, payload: Optional[ApprovalRequest] = None):
-    return _resolve_incident(thread_id, True, tenant_id, approved_by=payload.approved_by if payload else None)
+def approve_incident_for_tenant(
+    tenant_id: str, thread_id: str, request: Request, payload: Optional[ApprovalRequest] = None
+):
+    approved_by = _effective_actor(request, payload.approved_by if payload else None)
+    return _resolve_incident(thread_id, True, tenant_id, approved_by=approved_by)
 
 
 @tenant_router.post("/tenants/{tenant_id}/incidents/{thread_id}/deny")
-def deny_incident_for_tenant(tenant_id: str, thread_id: str, payload: Optional[ApprovalRequest] = None):
-    return _resolve_incident(thread_id, False, tenant_id, approved_by=payload.approved_by if payload else None)
+def deny_incident_for_tenant(
+    tenant_id: str, thread_id: str, request: Request, payload: Optional[ApprovalRequest] = None
+):
+    approved_by = _effective_actor(request, payload.approved_by if payload else None)
+    return _resolve_incident(thread_id, False, tenant_id, approved_by=approved_by)
 
 
 @tenant_router.post("/tenants/{tenant_id}/hunts", dependencies=[Depends(rate_limit_for_tenant)])
