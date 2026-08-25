@@ -533,21 +533,39 @@ function renderAttackTechnique(technique) {
 function renderProposedActions(actions, threadId) {
   if (!actions || !actions.length) return "<p>No actions proposed.</p>";
 
+  // Total step count per playbook_id, computed client-side from sibling
+  // actions rather than carried on each action itself -- the backend
+  // only stamps each action with its own chain_step (see
+  // playbooks/expander.py), not the chain's total length.
+  const chainTotals = {};
+  actions.forEach((a) => {
+    if (a.playbook_id) chainTotals[a.playbook_id] = (chainTotals[a.playbook_id] || 0) + 1;
+  });
+
   const cardsHtml = actions
     .map((a) => {
       const typeBadge =
         a.action_type && a.action_type !== "other"
           ? `<span class="action-type-badge">${escapeHtml(a.action_type.replace(/_/g, " "))}</span>`
           : "";
+      const chainBadge = a.playbook_id
+        ? `<span class="action-type-badge">playbook: ${escapeHtml(a.playbook_id)} · step ${a.chain_step}/${chainTotals[a.playbook_id]}</span>`
+        : "";
       let execHtml = "";
       if (a.executed === true) {
         execHtml = `<div class="action-executed success">⚡ Executed — ${escapeHtml(a.execution_detail || "")}</div>`;
       } else if (a.executed === false) {
         execHtml = `<div class="action-executed failed">⚠ Execution failed — ${escapeHtml(a.execution_detail || "")}</div>`;
+      } else if (a.playbook_id && a.execution_detail) {
+        // executed === null with a real execution_detail only happens for a
+        // playbook chain step skipped after an earlier step's real failure
+        // (see resolve_proposed_actions) -- distinct from the ordinary
+        // "not automatable" case, which never sets execution_detail at all.
+        execHtml = `<div class="action-executed">○ ${escapeHtml(a.execution_detail)}</div>`;
       }
       return `
         <div class="action-card">
-          <div class="action-title">${escapeHtml(a.action)} ${typeBadge}</div>
+          <div class="action-title">${escapeHtml(a.action)} ${typeBadge}${chainBadge}</div>
           <div class="action-target">→ ${escapeHtml(a.target)}</div>
           <div class="action-rationale">${escapeHtml(a.rationale)}</div>
           ${execHtml}

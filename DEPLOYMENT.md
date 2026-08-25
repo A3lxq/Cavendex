@@ -6,7 +6,7 @@ walkthrough — start there if you just want to try it. This file is for
 standing SentinelOS up as a service that watches real logs and stays
 running.
 
-Read **Section 13 (Known Limitations to Plan Around)** before you point
+Read **Section 14 (Known Limitations to Plan Around)** before you point
 this at production infrastructure. Nothing in this project is dishonest
 about what it is: an analyst's assistant with a mandatory human-approval
 gate, not an unattended SOC.
@@ -25,7 +25,7 @@ gate, not an unattended SOC.
   - [Ollama](https://ollama.com) running locally or on a reachable host,
     with a model already pulled (`ollama pull llama3.1`, or similar) —
     free and keeps incident data off third-party APIs entirely, but see
-    the honest performance note in Section 13 before relying on it for
+    the honest performance note in Section 14 before relying on it for
     time-sensitive response.
 - **(Optional) AbuseIPDB and/or VirusTotal API keys** — free tiers exist
   for both — for real IOC reputation lookups instead of LLM recall alone.
@@ -76,7 +76,7 @@ Edit `.env`:
   `OBSIDIAN_VAULT_PATH` at real, persistent paths outside the repo
   checkout if you're deploying to a directory that might get wiped on
   redeploy — e.g. `/var/lib/sentinelos/{data,chroma,vault}`. These three
-  directories are the entire state of the system; see Section 11.
+  directories are the entire state of the system; see Section 12.
 - Optionally set `ABUSEIPDB_API_KEY` / `VIRUSTOTAL_API_KEY` for real
   threat-intel lookups, and tune `SENTINELOS_INGEST_MIN_SEVERITY`,
   `SENTINELOS_DEDUP_WINDOW_SECONDS`, `SENTINELOS_CORRELATION_*` to your
@@ -721,7 +721,48 @@ The default iteration count (roughly OWASP's 2023 PBKDF2-SHA256 guidance) costs 
 
 ---
 
-## 10. Back up the incident vault off-box
+## 10. Set up advanced playbooks (opt-in)
+
+`playbooks/` (see README's "Advanced Playbooks" section for the full design) is a deterministic, non-LLM layer: after a new incident's agent pipeline finishes, it's matched against operator-authored JSON files, and a match's ordered remediation steps get folded into the proposed actions — on top of (never instead of) the real remediation execution in Section 8. Unset, this is completely inert.
+
+**Point at a directory of `*.json` files:**
+
+```env
+SENTINELOS_PLAYBOOKS_DIR=/etc/sentinelos/playbooks
+SENTINELOS_PLAYBOOKS_MODE=append
+```
+
+Each file is one playbook — a match rule plus an ordered list of steps. A minimal example, `/etc/sentinelos/playbooks/ransomware-response.json`:
+
+```json
+{
+  "id": "ransomware-response",
+  "name": "Ransomware Response",
+  "priority": 10,
+  "on_failure": "halt",
+  "match": {"severities": ["critical"], "ioc_contains": ["ransomware"]},
+  "steps": [
+    {"action_type": "isolate_host", "action": "Isolate infected host", "target_template": "{asset}", "rationale": "Contain lateral movement immediately"},
+    {"action_type": "block_ip", "action": "Block C2 IP", "target_template": "{ioc}", "rationale": "Block outbound C2 communication"}
+  ]
+}
+```
+
+**Trust model**: a playbook file is operator-authored local config, the same trust tier as `SENTINELOS_ASSET_INVENTORY_PATH`'s CMDB export or `SENTINELOS_TENANT_API_KEYS` — treat it like any other file that controls what SentinelOS proposes/executes, not like untrusted input. There's no code-execution surface in a playbook file: `target_template` only ever substitutes `{ioc}`/`{asset}` or passes a literal string through unchanged, never `eval` or a general-purpose template language.
+
+**Check what's currently loaded before relying on it:**
+
+```bash
+python cli.py list-playbooks
+```
+
+This prints every valid playbook (id, priority, match summary, step count) and, just as importantly, *why* any file was skipped — a malformed or schema-invalid file is always skipped with a logged warning rather than breaking ingestion, so this is the way to catch a typo before it silently does nothing in production.
+
+**`SENTINELOS_PLAYBOOKS_MODE=append`** (the default) adds a matched playbook's steps alongside whatever the Responder Agent itself proposed; `replace` uses only the playbook's steps. Steps execute in order on approval — a real attempted-and-failed send halts that playbook's remaining steps by default (`on_failure: "halt"`); set `"on_failure": "continue"` per playbook if independent steps should still run regardless of an earlier one failing.
+
+---
+
+## 11. Back up the incident vault off-box
 
 Your `OBSIDIAN_VAULT_PATH` is the durable, human-readable record of
 every incident — worth a copy somewhere other than this one host.
@@ -774,7 +815,7 @@ schedule instead of `--interval-seconds`.
 
 ---
 
-## 11. Persistent data and backups
+## 12. Persistent data and backups
 
 Everything SentinelOS knows lives in three places — back all three up
 together, since a per-tenant incident's checkpoint, vector memory, and
@@ -857,7 +898,7 @@ the real incident, not a 404.
 
 ---
 
-## 12. Security hardening checklist
+## 13. Security hardening checklist
 
 Everything here is already discussed in more depth in README's Security
 Notes — this is the short, do-it-before-go-live version:
@@ -886,7 +927,7 @@ Notes — this is the short, do-it-before-go-live version:
 - [ ] Backups of `SENTINELOS_DATA_DIR` / `CHROMA_PERSIST_DIR` /
       `OBSIDIAN_VAULT_PATH` are actually running, not just planned —
       **and you've actually restored from one at least once** (see
-      "Restoring from backup" in Section 11). An untested backup is a
+      "Restoring from backup" in Section 12). An untested backup is a
       hypothesis.
 - [ ] Whoever gets the analyst-dashboard API key understands it's a
       `localStorage`-held bearer token shared by everyone who has it, not
@@ -944,10 +985,15 @@ Notes — this is the short, do-it-before-go-live version:
       different from `SENTINELOS_WEBHOOK_SIGNING_SECRET` (a remediation
       receiver is a more sensitive trust boundary than a notification
       channel and may reasonably be a different system entirely).
+- [ ] If `SENTINELOS_PLAYBOOKS_DIR` is set: `python cli.py list-playbooks`
+      shows exactly the playbooks you expect, with no unexpectedly-skipped
+      files (Section 10) — a playbook that silently failed to load is a
+      response that silently never fires, which is worse than none at
+      all if you're relying on it.
 
 ---
 
-## 13. Known limitations to plan around
+## 14. Known limitations to plan around
 
 Pulled forward from README's Known Gaps section because they specifically
 affect a live deployment decision, not just a feature-completeness one:
@@ -972,6 +1018,7 @@ affect a live deployment decision, not just a feature-completeness one:
   multi-*host* replicas without shared storage, unrelated to Redis (see
   Section 4 for why Redis isn't the right tool for that specific gap).
 - **Per-user accounts exist now (Section 9) but stay a simple two-role system.** `analyst`/`admin` gates only user-management routes, not a general permission matrix — there's no per-feature access control, no dashboard UI for managing users (CLI/API only), no self-service password reset, and incident assignment/notes still use the older freely-typed-label pattern rather than a real session identity. Without setting up accounts at all, the dashboard's auth remains one shared key for everyone using it, same as always.
+- **Advanced playbooks (Section 10) are deterministic and additive, but deliberately narrow in three ways.** JSON files only, not YAML — a consistency choice, not a technical limit. Exactly one playbook applies per incident (the highest-priority match) — no merging steps from two conceptually-separate playbooks that both happen to match. Template substitution covers only the incident's *first* IOC/affected asset (`{ioc}`/`{asset}`) — there's no per-IOC fan-out yet. Matching also runs once, right after a new incident's pipeline finishes; a later correlated alert merged into that incident does not re-trigger matching.
 - **Cross-tenant authorization needs its own configuration step.**
   `SENTINELOS_TENANT_API_KEYS` lets each tenant require its own key —
   set it for every tenant you actually need isolated from the others.
@@ -1037,7 +1084,7 @@ project's stated goal, not a hedge.
 
 ---
 
-## 14. Day-to-day operation
+## 15. Day-to-day operation
 
 - **Dashboard**: `https://your-host/` — incident queue, detail view,
   approve/deny (enter an analyst name once in the top bar — it's
@@ -1069,7 +1116,7 @@ project's stated goal, not a hedge.
 
 ---
 
-## 15. Upgrading
+## 16. Upgrading
 
 ```bash
 sudo systemctl stop sentinelos-api sentinelos-ingest-*
@@ -1088,7 +1135,7 @@ a backup costs a minute and a bad one costs a lot more.
 
 ---
 
-## 16. Troubleshooting
+## 17. Troubleshooting
 
 - **`/health` doesn't respond**: check `journalctl -u sentinelos-api -e`
   for a Python traceback — usually a missing/misconfigured provider

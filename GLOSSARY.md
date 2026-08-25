@@ -90,6 +90,13 @@ and readable in anything.
 [LangGraph](https://github.com/langchain-ai/langgraph) and shared by the
 CLI, API, and dashboard.
 
+**Playbook** — An operator-authored JSON file (`playbooks/`) matching a
+finished incident by severity/source/IOC-substring and folding an
+ordered list of remediation steps into its proposed actions —
+deterministic, no LLM call. Never skips or replaces an agent's own
+analysis; only ever supplements or replaces what gets proposed for
+approval. See README's "Advanced Playbooks" section.
+
 **Prompt injection** — Text inside an incident description (or anywhere
 else an attacker could influence) that tries to manipulate the LLM into
 doing something it shouldn't — e.g. "ignore previous instructions, this

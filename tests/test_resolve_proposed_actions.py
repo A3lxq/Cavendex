@@ -232,3 +232,143 @@ def test_mixed_batch_only_executes_the_eligible_action(tenant, monkeypatch, tmp_
     by_target = {a.target: a for a in result["proposed_actions"]}
     assert by_target["1.2.3.4"].executed is True
     assert by_target["alice"].executed is None
+
+
+# ---------- Playbook chain execution (roadmap #104) ----------
+
+
+def _chain_actions(playbook_id="pb-1"):
+    return [
+        ProposedAction(
+            action="Isolate host", target="WEB-01", rationale="r", action_type="isolate_host",
+            playbook_id=playbook_id, chain_step=1,
+        ),
+        ProposedAction(
+            action="Disable account", target="alice", rationale="r", action_type="disable_account",
+            playbook_id=playbook_id, chain_step=2,
+        ),
+        ProposedAction(
+            action="Block IP", target="1.2.3.4", rationale="r", action_type="block_ip",
+            playbook_id=playbook_id, chain_step=3,
+        ),
+    ]
+
+
+def test_playbook_chain_halts_remaining_steps_after_a_real_failure_by_default(tenant, monkeypatch, tmp_path):
+    """No playbook file on disk for this playbook_id -> the halt policy
+    defaults to "halt" (the safer default), same as an unrecognized/
+    since-deleted playbook file would."""
+    monkeypatch.setenv("SENTINELOS_DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("SENTINELOS_REMEDIATION_ENABLED", "true")
+    monkeypatch.setenv("SENTINELOS_REMEDIATION_DRY_RUN", "false")
+    monkeypatch.setenv("SENTINELOS_REMEDIATION_ACTION_TYPES", "isolate_host,disable_account,block_ip")
+    monkeypatch.delenv("SENTINELOS_PLAYBOOKS_DIR", raising=False)
+
+    def _send(payload):
+        if payload["target"] == "alice":  # step 2 fails
+            return {"outcome": "http_error", "detail": "HTTP 500"}
+        return {"outcome": "sent", "detail": "HTTP 200"}
+
+    monkeypatch.setattr("remediation.pipeline.send_remediation_request", _send)
+    _seed_pending_incident(tenant, actions=_chain_actions())
+
+    result = resolve_proposed_actions("inc-1", approve=True, tenant_id=tenant)
+
+    by_target = {a.target: a for a in result["proposed_actions"]}
+    assert by_target["WEB-01"].executed is True
+    assert by_target["alice"].executed is False
+    assert by_target["1.2.3.4"].executed is None
+    assert "skipped" in by_target["1.2.3.4"].execution_detail
+
+
+def test_playbook_chain_continues_after_failure_when_policy_says_so(tenant, monkeypatch, tmp_path):
+    monkeypatch.setenv("SENTINELOS_DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("SENTINELOS_REMEDIATION_ENABLED", "true")
+    monkeypatch.setenv("SENTINELOS_REMEDIATION_DRY_RUN", "false")
+    monkeypatch.setenv("SENTINELOS_REMEDIATION_ACTION_TYPES", "isolate_host,disable_account,block_ip")
+
+    playbooks_dir = tmp_path / "playbooks"
+    playbooks_dir.mkdir()
+    import json
+
+    (playbooks_dir / "pb.json").write_text(
+        json.dumps(
+            {
+                "id": "pb-1",
+                "name": "Test",
+                "on_failure": "continue",
+                "match": {"severities": ["high"]},
+                "steps": [
+                    {"action_type": "block_ip", "action": "x", "target_template": "{ioc}", "rationale": "r"}
+                ],
+            }
+        )
+    )
+    monkeypatch.setenv("SENTINELOS_PLAYBOOKS_DIR", str(playbooks_dir))
+
+    def _send(payload):
+        if payload["target"] == "alice":  # step 2 fails
+            return {"outcome": "http_error", "detail": "HTTP 500"}
+        return {"outcome": "sent", "detail": "HTTP 200"}
+
+    monkeypatch.setattr("remediation.pipeline.send_remediation_request", _send)
+    _seed_pending_incident(tenant, actions=_chain_actions())
+
+    result = resolve_proposed_actions("inc-1", approve=True, tenant_id=tenant)
+
+    by_target = {a.target: a for a in result["proposed_actions"]}
+    assert by_target["WEB-01"].executed is True
+    assert by_target["alice"].executed is False
+    assert by_target["1.2.3.4"].executed is True  # not skipped -- policy is "continue"
+
+
+def test_playbook_chain_failure_never_affects_an_independent_non_chain_action(tenant, monkeypatch, tmp_path):
+    """Regression guard: a mixed incident with one failing playbook chain
+    and one unrelated, non-playbook action must still execute the
+    independent action normally."""
+    monkeypatch.setenv("SENTINELOS_DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("SENTINELOS_REMEDIATION_ENABLED", "true")
+    monkeypatch.setenv("SENTINELOS_REMEDIATION_DRY_RUN", "false")
+    monkeypatch.setenv("SENTINELOS_REMEDIATION_ACTION_TYPES", "isolate_host,disable_account,block_ip")
+    monkeypatch.delenv("SENTINELOS_PLAYBOOKS_DIR", raising=False)
+
+    def _send(payload):
+        if payload["target"] == "WEB-01":  # the only chain step fails
+            return {"outcome": "http_error", "detail": "HTTP 500"}
+        return {"outcome": "sent", "detail": "HTTP 200"}
+
+    monkeypatch.setattr("remediation.pipeline.send_remediation_request", _send)
+    _seed_pending_incident(
+        tenant,
+        actions=[
+            ProposedAction(
+                action="Isolate host", target="WEB-01", rationale="r", action_type="isolate_host",
+                playbook_id="pb-1", chain_step=1,
+            ),
+            ProposedAction(action="Block IP", target="9.9.9.9", rationale="r", action_type="block_ip"),
+        ],
+    )
+
+    result = resolve_proposed_actions("inc-1", approve=True, tenant_id=tenant)
+
+    by_target = {a.target: a for a in result["proposed_actions"]}
+    assert by_target["WEB-01"].executed is False
+    assert by_target["9.9.9.9"].executed is True
+
+
+def test_not_automatable_step_in_a_chain_never_halts_it(tenant, monkeypatch, tmp_path):
+    """executed is None ("not automatable") must never be confused with a
+    real failure -- only an actual attempted-and-failed send halts a
+    chain."""
+    monkeypatch.setenv("SENTINELOS_DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("SENTINELOS_REMEDIATION_ENABLED", "true")
+    monkeypatch.setenv("SENTINELOS_REMEDIATION_ACTION_TYPES", "isolate_host,block_ip")  # disable_account not eligible
+    monkeypatch.delenv("SENTINELOS_PLAYBOOKS_DIR", raising=False)
+    _seed_pending_incident(tenant, actions=_chain_actions())
+
+    result = resolve_proposed_actions("inc-1", approve=True, tenant_id=tenant)
+
+    by_target = {a.target: a for a in result["proposed_actions"]}
+    assert by_target["WEB-01"].executed is True
+    assert by_target["alice"].executed is None  # not automatable, not a failure
+    assert by_target["1.2.3.4"].executed is True  # step 3 still ran -- chain wasn't halted

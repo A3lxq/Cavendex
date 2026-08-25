@@ -124,7 +124,8 @@ def _print_state(state):
                 exec_note = " " + _c(f"[executed: {a.execution_detail}]", "cyan")
             elif a.executed is False:
                 exec_note = " " + _c(f"[execution FAILED: {a.execution_detail}]", "bright_red", "bold")
-            print(f"  - {a.action} → {a.target} ({a.rationale}) [{status}]{exec_note}")
+            playbook_note = f" [playbook: {a.playbook_id} step {a.chain_step}]" if a.playbook_id else ""
+            print(f"  - {a.action} → {a.target} ({a.rationale}) [{status}]{exec_note}{playbook_note}")
 
     threat_intel = state.get("threat_intel") or []
     if threat_intel:
@@ -300,6 +301,50 @@ def cmd_create_user(args):
     print(f"Created user {user['username']!r} (role={user['role']}) for tenant {args.tenant!r}.")
 
 
+def cmd_list_playbooks(args):
+    """Loads SENTINELOS_PLAYBOOKS_DIR and prints what's currently valid
+    plus why anything was skipped — playbooks/loader.py itself only logs
+    a warning and silently keeps running for the pipeline's sake, which
+    is correct there but easy to miss without a command like this to
+    check before relying on a playbook file in production.
+    """
+    import logging
+
+    from playbooks.loader import load_playbooks
+
+    if not os.getenv("SENTINELOS_PLAYBOOKS_DIR", "").strip():
+        print("SENTINELOS_PLAYBOOKS_DIR is not set — playbooks are disabled.")
+        return
+
+    warnings = []
+    handler = logging.Handler()
+    handler.emit = lambda record: warnings.append(record.getMessage())
+    logger = logging.getLogger("playbooks.loader")
+    logger.addHandler(handler)
+    try:
+        playbooks = load_playbooks()
+    finally:
+        logger.removeHandler(handler)
+
+    if not playbooks:
+        print("No valid playbooks found in SENTINELOS_PLAYBOOKS_DIR.")
+
+    for p in sorted(playbooks, key=lambda pb: (-pb.priority, pb.id)):
+        match_bits = []
+        if p.match.severities:
+            match_bits.append(f"severity in {p.match.severities}")
+        if p.match.sources:
+            match_bits.append(f"source in {p.match.sources}")
+        if p.match.ioc_contains:
+            match_bits.append(f"IOC contains any of {p.match.ioc_contains}")
+        print(f"- {p.id!r} ({p.name}) priority={p.priority} on_failure={p.on_failure}")
+        print(f"    match: {' AND '.join(match_bits)}")
+        print(f"    steps: {len(p.steps)}")
+
+    for w in warnings:
+        print(_error_text(f"Skipped: {w}"))
+
+
 _REQUIRES_PROVIDER = {"new", "hunt"}
 
 
@@ -362,6 +407,12 @@ def main():
     p_create_user.add_argument("password")
     p_create_user.add_argument("--role", default="analyst", choices=["analyst", "admin"])
     p_create_user.set_defaults(func=cmd_create_user)
+
+    p_list_playbooks = sub.add_parser(
+        "list-playbooks",
+        help="List currently-valid playbooks from SENTINELOS_PLAYBOOKS_DIR and why any file was skipped",
+    )
+    p_list_playbooks.set_defaults(func=cmd_list_playbooks)
 
     args = parser.parse_args()
     # approve/deny/show are pure state transitions/reads — no LLM call —

@@ -30,6 +30,76 @@ def _config(thread_id: str) -> dict:
     return {"configurable": {"thread_id": thread_id}}
 
 
+def _playbooks_mode() -> str:
+    mode = os.getenv("SENTINELOS_PLAYBOOKS_MODE", "append").strip().lower()
+    return mode if mode in ("append", "replace") else "append"
+
+
+def _apply_playbook(app, config: dict, state: SentinelState) -> SentinelState:
+    """Deterministic, non-LLM post-processing step run once after the
+    agent graph finishes (see run_new_incident/run_new_incident_stream):
+    if a configured playbook (playbooks/loader.py) matches this
+    incident (playbooks/matcher.py), its steps are rendered into real
+    ProposedActions (playbooks/expander.py) and folded into
+    proposed_actions per SENTINELOS_PLAYBOOKS_MODE — "append" (default)
+    alongside whatever the Responder Agent already proposed, or
+    "replace" instead of it.
+
+    A standalone function (not inlined into its callers) so a test can
+    call it directly against a state seeded via app.update_state,
+    without needing a real LLM run — the same reason
+    resolve_proposed_actions below is tested that way.
+
+    No playbooks configured, nothing matches, or nothing was renderable
+    for this incident: returns `state` completely unchanged (not even a
+    no-op app.update_state call), so this feature costs nothing when
+    SENTINELOS_PLAYBOOKS_DIR is unset.
+    """
+    incident = state.get("incident")
+    if incident is None:
+        return state
+
+    from playbooks.loader import load_playbooks
+    from playbooks.matcher import match_playbook
+    from playbooks.expander import expand_playbook_actions
+
+    playbooks = load_playbooks()
+    if not playbooks:
+        return state
+
+    playbook = match_playbook(incident, playbooks)
+    if playbook is None:
+        return state
+
+    new_actions, skipped = expand_playbook_actions(playbook, incident)
+    if not new_actions:
+        return state
+
+    existing = state.get("proposed_actions", [])
+    proposed_actions = new_actions if _playbooks_mode() == "replace" else list(existing) + new_actions
+
+    audit_entries = list(state.get("audit_log", []))
+    summary = f"Playbook -> matched '{playbook.name}' ({playbook.id}): added {len(new_actions)} step(s)"
+    if skipped:
+        summary += f", skipped {len(skipped)} unrenderable step(s) ({'; '.join(skipped)})"
+    audit_entries.append(summary)
+
+    # Mirrors agents/responder_agent.py's own "there are now proposed
+    # actions awaiting a human" transition — a playbook match is just
+    # another source of proposed actions, not a different status shape.
+    updated_incident = incident.model_copy(update={"status": "pending_approval"})
+
+    app.update_state(
+        config,
+        {
+            "incident": updated_incident,
+            "proposed_actions": proposed_actions,
+            "audit_log": audit_entries,
+        },
+    )
+    return app.get_state(config).values
+
+
 def _persist(state: SentinelState, report_type: str = "incident") -> None:
     """Write the vault report, update the dashboard's list index, and
     record this audit_log's current tamper-evidence hash into the
@@ -114,7 +184,9 @@ def run_new_incident(
         accumulate_usage(initial_state, "Correlation Judge", seed_usage)
 
     app = get_app(tenant_id)
-    final_state = app.invoke(initial_state, config=_config(thread_id))
+    config = _config(thread_id)
+    final_state = app.invoke(initial_state, config=config)
+    final_state = _apply_playbook(app, config, final_state)
     _persist(final_state)
     notify_if_needed(final_state, reason="new_incident")
     return final_state
@@ -176,6 +248,7 @@ def run_new_incident_stream(
             }
 
     final_state = app.get_state(config).values
+    final_state = _apply_playbook(app, config, final_state)
     _persist(final_state)
     notify_if_needed(final_state, reason="new_incident")
 
@@ -348,13 +421,40 @@ def resolve_proposed_actions(
     # a mixed batch (one automatable, one not) is a real, expected case.
     if approve and incident is not None:
         from remediation.pipeline import execute_if_eligible
+        from playbooks.loader import load_playbooks
+
+        # Keyed by playbook_id, populated only once a real attempted
+        # send for one of that playbook's steps actually fails (not
+        # merely "not automatable" — see the executed is False check
+        # below). A halted chain's remaining steps are skipped rather
+        # than attempted, in the order decided already preserves —
+        # nothing else in this codebase reorders proposed_actions after
+        # playbooks/expander.py assigns chain_step, so a simple
+        # in-order walk is enough for correct halt semantics.
+        playbooks_by_id = {p.id: p for p in load_playbooks()}
+        halted_chains = set()
 
         remediated = []
         for action in decided:
+            if action.playbook_id is not None and action.playbook_id in halted_chains:
+                action = action.model_copy(
+                    update={
+                        "executed": None,
+                        "execution_detail": "skipped: an earlier step in this playbook chain failed",
+                    }
+                )
+                remediated.append(action)
+                continue
+
             executed, detail = execute_if_eligible(incident, action, tenant_id)
             if executed is not None:
                 action = action.model_copy(update={"executed": executed, "execution_detail": detail})
                 audit_entries.append(f"Remediation -> {action.action_type} on {action.target!r}: {detail}")
+            if executed is False and action.playbook_id is not None:
+                playbook = playbooks_by_id.get(action.playbook_id)
+                on_failure = playbook.on_failure if playbook is not None else "halt"
+                if on_failure == "halt":
+                    halted_chains.add(action.playbook_id)
             remediated.append(action)
         decided = remediated
 
