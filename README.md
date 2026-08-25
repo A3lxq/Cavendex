@@ -565,7 +565,6 @@ Every item on the originally-stated priority list (ingestion → threat-intel en
 - Wire a real (opt-in, sandboxed) remediation integration behind the existing approval gate
 - Distributed rate limiting, dedup, and correlation (Redis-backed) for multi-replica deployments
 - Per-tenant user/role accounts, live presence, and server-side sessions for the dashboard
-- An ATT&CK matrix visualization, rather than technique ID/name shown as text
 - Advanced playbooks / strands
 
 ---
