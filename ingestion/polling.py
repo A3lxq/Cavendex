@@ -2,18 +2,33 @@
 own REST API — the pull-based counterpart to /ingest/{source} (push) and
 syslog_listener.py (network-received).
 
-Deliberately not a client for any specific vendor (Splunk, Microsoft
-Sentinel, CrowdStrike, Elastic, ...): this project has no real instance
-of any of those to build and honestly live-verify against, and every
-vendor's alert-query API has a different URL shape, auth scheme, and JSON
-structure anyway. Instead, PollerConfig describes how to talk to *any*
-JSON-returning HTTP endpoint — base URL, auth (a header name plus an env
-var to read the token from, never the token itself), where in the
-response body the list of alerts lives, and how to map each alert
-record's own field names onto NormalizedAlert's fields. Point it at your
-actual SIEM/EDR's alert-listing endpoint and describe its shape in a
-config file; no code changes needed, the same "pluggable, not
-vendor-locked" principle as ingestion/normalizers.py.
+Deliberately not hardcoded to any specific vendor's URL/auth/JSON shape
+by default: PollerConfig describes how to talk to *any* JSON-returning
+HTTP endpoint — base URL, auth (a header name plus an env var to read
+the token from, never the token itself), where in the response body the
+list of alerts lives, and how to map each alert record's own field names
+onto NormalizedAlert's fields. Point it at your actual SIEM/EDR's
+alert-listing endpoint and describe its shape in a config file; no code
+changes needed, the same "pluggable, not vendor-locked" principle as
+ingestion/normalizers.py.
+
+A vendor whose alert schema is flat and whose auth is a single static
+token (most REST-API SIEMs) fits the field_map approach directly — see
+examples/poller_config.example.json. A vendor with a genuinely different
+scheme (nested fields needing real extraction logic, non-standard
+severity naming, or auth that isn't a static bearer token) needs more
+than field-mapping can express; `normalizer` (below) is the escape
+hatch for the first two cases — set it to a name registered in
+ingestion/normalizers.py's NORMALIZERS and every record is handed to
+that function directly instead of the generic field_map (see
+examples/splunk_poller_config.example.json, which uses this for
+Splunk's five-value urgency scale and nested MITRE ATT&CK annotations).
+Auth that isn't a static token at all — CrowdStrike's OAuth2
+client-credentials exchange, for instance — is genuinely outside what
+this module can express; ingestion/crowdstrike_polling.py is a fully
+separate, dedicated connector for that case, the same reason Wazuh has
+its own normalizer and integration script instead of going through this
+generic path.
 """
 
 import hashlib
@@ -52,8 +67,22 @@ class PollerConfig(BaseModel):
     cursor_field: Optional[str] = None
     # Maps NormalizedAlert field names -> a dotted path within one record
     # in *this* API's own shape, e.g. {"description": "title",
-    # "severity": "priority", "iocs": "indicators"}.
+    # "severity": "priority", "iocs": "indicators"}. Ignored if
+    # `normalizer` is set.
     field_map: dict = Field(default_factory=dict)
+    # Remaps this API's own severity string (lowercased) onto our four-
+    # value scale before the field_map path's usual "unrecognized ->
+    # medium" fallback -- e.g. {"informational": "low"} for a vendor
+    # whose scale doesn't line up with ours 1:1. Ignored if `normalizer`
+    # is set (a normalizer function does its own severity mapping).
+    severity_map: dict = Field(default_factory=dict)
+    # Escape hatch for a vendor whose alert shape needs real extraction
+    # logic (nested fields, non-standard severity naming) that flat
+    # field_map/severity_map can't express: the name of a function
+    # registered in ingestion/normalizers.py's NORMALIZERS, called
+    # directly on each raw record instead of normalize_polled_record.
+    # See this module's own docstring for when to reach for this.
+    normalizer: Optional[str] = None
     static_query_params: dict = Field(default_factory=dict)
     poll_interval_seconds: float = 60.0
     tenant: str = DEFAULT_TENANT
@@ -83,7 +112,9 @@ def _get_nested(data, path: Optional[str]):
     return node
 
 
-def normalize_polled_record(record: dict, field_map: dict, source_name: str) -> Optional[NormalizedAlert]:
+def normalize_polled_record(
+    record: dict, field_map: dict, source_name: str, severity_map: Optional[dict] = None
+) -> Optional[NormalizedAlert]:
     """Map one record from a polled API's own JSON shape onto a
     NormalizedAlert, using `field_map` to find each value. Returns None
     only if `record` isn't a dict at all — unlike the fixed-format
@@ -110,6 +141,8 @@ def normalize_polled_record(record: dict, field_map: dict, source_name: str) -> 
 
     severity = get("severity")
     severity = str(severity).lower() if isinstance(severity, str) else None
+    if severity_map and severity in severity_map:
+        severity = severity_map[severity]
     severity = severity if severity in _VALID_SEVERITIES else "medium"
 
     source = get("source")
@@ -212,15 +245,34 @@ def poll_once(config: PollerConfig) -> List[dict]:
     work both the long-running loop and a cron-style single-shot
     invocation share. Returns the list of ingest_normalized_alert()
     outcome dicts, one per record that was actually a dict.
+
+    Uses config.normalizer (a NORMALIZERS-registered function, called
+    directly on each raw record) when set; otherwise the generic
+    field_map/severity_map-driven normalize_polled_record. A
+    config.normalizer name that isn't actually registered skips every
+    record (never ingests anything) rather than silently falling back to
+    the generic path -- a typo'd name should fail loud enough to notice,
+    not quietly start guessing at a completely different field_map that
+    was never configured for it.
     """
     from ingestion.pipeline import ingest_normalized_alert
+
+    normalizer_requested = bool(config.normalizer)
+    normalizer_fn = None
+    if normalizer_requested:
+        from ingestion.normalizers import NORMALIZERS
+
+        normalizer_fn = NORMALIZERS.get(config.normalizer)
 
     cursor = load_cursor(config)
     records, new_cursor = fetch_records(config, cursor)
 
     results = []
     for record in records:
-        alert = normalize_polled_record(record, config.field_map, config.source_name)
+        if normalizer_requested:
+            alert = normalizer_fn(record) if normalizer_fn and isinstance(record, dict) else None
+        else:
+            alert = normalize_polled_record(record, config.field_map, config.source_name, config.severity_map)
         if alert is None:
             continue
         results.append(ingest_normalized_alert(alert, tenant_id=config.tenant))

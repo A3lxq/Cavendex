@@ -6,9 +6,8 @@ raising — e.g. a non-alert event type"). Add a new source by writing one
 function here and registering it in NORMALIZERS — nothing else in the
 ingestion pipeline, the graph, or the vault needs to know it exists.
 
-Four formats are covered as concrete, genuinely different examples of
-"pluggable" rather than committing to one vendor (the deployment target
-here is still exploratory):
+Six formats are covered as concrete, genuinely different examples of
+"pluggable" rather than committing to one vendor:
   - generic: an already-roughly-shaped alert (custom scripts, simple
     webhooks, anything that can be bothered to match our own field names)
   - suricata: Suricata/Zeek-style eve.json alert records (JSON, nested)
@@ -17,6 +16,14 @@ here is still exploratory):
   - wazuh: Wazuh manager alert records (JSON, nested) — the format
     written to /var/ossec/logs/alerts/alerts.json and what a Wazuh
     "integration" script typically forwards as-is
+  - splunk: Splunk Enterprise Security notable-event records (JSON,
+    flat) — pulled via ingestion/polling.py's generic connector (see
+    examples/splunk_poller_config.example.json) or pushed via Splunk's
+    own "Webhook" alert action to POST /ingest/splunk
+  - crowdstrike: CrowdStrike Falcon Detects API detection summaries
+    (JSON, nested) — pulled via the dedicated
+    ingestion/crowdstrike_polling.py connector (OAuth2 + a two-step
+    query/summarize API the generic connector can't express)
 """
 
 import hashlib
@@ -252,9 +259,156 @@ def normalize_wazuh(payload: dict) -> Optional[NormalizedAlert]:
     )
 
 
+# Splunk Enterprise Security's notable-event urgency scale is five
+# values, not our four — "informational" has no exact match, and mapping
+# it to "medium" (the fallback every other normalizer here uses for an
+# unrecognized value) would overstate it; "low" is the honest mapping.
+_SPLUNK_URGENCY_MAP = {
+    "informational": "low",
+    "low": "low",
+    "medium": "medium",
+    "high": "high",
+    "critical": "critical",
+}
+
+
+def normalize_splunk(payload: dict) -> Optional[NormalizedAlert]:
+    """A Splunk Enterprise Security notable-event record — the flat
+    per-event dict shape a `search index=notable | fields ...` search
+    returns in its own JSON `results` array (see
+    examples/splunk_poller_config.example.json), and also what Splunk's
+    built-in "Webhook" alert action POSTs (wrapped in a top-level
+    `result` key) when used as a push alternative — point that webhook
+    at `POST /ingest/splunk` instead of polling. A record with no
+    `rule_name`/`search_name` isn't treated as a real notable event and
+    returns None.
+
+    Field-parsing is built from Splunk ES's documented notable-event
+    field names, not verified against a live Splunk instance — this
+    project has none to honestly test against (the same caveat as any
+    other vendor-specific integration; see README's Known Gaps). If your
+    Splunk alerts don't map cleanly, the fix is almost certainly here,
+    not in the pipeline.
+    """
+    record = payload.get("result") if isinstance(payload.get("result"), dict) else payload
+
+    rule_name = record.get("rule_name") or record.get("search_name")
+    if not rule_name:
+        return None
+
+    urgency = str(record.get("urgency") or "").lower()
+    severity = _SPLUNK_URGENCY_MAP.get(urgency, "medium")
+
+    src = record.get("src")
+    dest = record.get("dest")
+    dvc = record.get("dvc")
+    signature = record.get("signature")
+    event_id = record.get("event_id") or record.get("_time") or "0"
+
+    mitre_raw = record.get("mitre_technique_id") or ""
+    if isinstance(mitre_raw, list):
+        mitre_ids = [str(m) for m in mitre_raw]
+    else:
+        mitre_ids = [m.strip() for m in str(mitre_raw).split(",") if m.strip()]
+    mitre_suffix = f" [ATT&CK: {', '.join(mitre_ids)}]" if mitre_ids else ""
+
+    description = (
+        f"Splunk notable event: {rule_name}"
+        + (f" — {signature}" if signature else "")
+        + (f" (src={src}, dest={dest})" if src or dest else "")
+        + mitre_suffix
+    )
+    iocs = [str(v) for v in (src, dest) if v]
+    assets = [str(v) for v in (dest, dvc) if v]
+
+    return NormalizedAlert(
+        description=description,
+        severity=severity,
+        source="splunk",
+        affected_assets=assets[:50],
+        iocs=iocs[:50],
+        dedup_key=f"splunk:{event_id}:{src or 'na'}:{dest or 'na'}",
+        raw_excerpt=json.dumps(payload, default=str)[:2000],
+    )
+
+
+# CrowdStrike's Detects API reports severity as both a 0-100 numeric
+# score and this five-value display name — the display name maps
+# directly onto our own scale except "informational," the same
+# below-our-floor case Splunk's urgency scale has.
+_CROWDSTRIKE_SEVERITY_MAP = {
+    "critical": "critical",
+    "high": "high",
+    "medium": "medium",
+    "low": "low",
+    "informational": "low",
+}
+
+
+def normalize_crowdstrike(payload: dict) -> Optional[NormalizedAlert]:
+    """A CrowdStrike Falcon Detects API detection-summary record — the
+    JSON shape `POST /detects/entities/summaries/GET/v1` returns per
+    detection (see ingestion/crowdstrike_polling.py, the dedicated
+    connector that fetches these; registered here too so the same shape
+    can also be pushed to `POST /ingest/crowdstrike` if you'd rather
+    forward detections via your own script than run the poller). A
+    record with no `detection_id` isn't a real detection and returns
+    None.
+
+    Field-parsing is built from CrowdStrike's documented Detects API
+    schema, not verified against a live Falcon tenant — this project has
+    none to honestly test against (the same caveat as any other
+    vendor-specific integration; see README's Known Gaps).
+    """
+    detection_id = payload.get("detection_id")
+    if not detection_id:
+        return None
+
+    severity_name = str(payload.get("max_severity_displayname") or "").lower()
+    severity = _CROWDSTRIKE_SEVERITY_MAP.get(severity_name, "medium")
+
+    device = payload.get("device") or {}
+    hostname = device.get("hostname")
+
+    behaviors = payload.get("behaviors") or []
+    technique_ids = []
+    technique_names = []
+    iocs = []
+    for behavior in behaviors:
+        if not isinstance(behavior, dict):
+            continue
+        technique_id = behavior.get("technique_id")
+        if technique_id:
+            technique_ids.append(str(technique_id))
+        technique_name = behavior.get("technique") or technique_id
+        if technique_name:
+            technique_names.append(str(technique_name))
+        ioc_value = behavior.get("ioc_value")
+        if ioc_value:
+            iocs.append(str(ioc_value))
+
+    mitre_suffix = f" [ATT&CK: {', '.join(dict.fromkeys(technique_ids))}]" if technique_ids else ""
+    behavior_suffix = f" — {', '.join(list(dict.fromkeys(technique_names))[:3])}" if technique_names else ""
+
+    description = f"CrowdStrike detection on {hostname or 'unknown host'}{behavior_suffix}{mitre_suffix}"
+    assets = [str(hostname)] if hostname else []
+
+    return NormalizedAlert(
+        description=description,
+        severity=severity,
+        source="crowdstrike",
+        affected_assets=assets,
+        iocs=[str(i) for i in dict.fromkeys(iocs)][:50],
+        dedup_key=f"crowdstrike:{detection_id}",
+        raw_excerpt=json.dumps(payload, default=str)[:2000],
+    )
+
+
 NORMALIZERS = {
     "generic": normalize_generic,
     "suricata": normalize_suricata_eve,
     "syslog_cef": normalize_syslog_cef,
     "wazuh": normalize_wazuh,
+    "splunk": normalize_splunk,
+    "crowdstrike": normalize_crowdstrike,
 }

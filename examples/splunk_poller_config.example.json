@@ -1,0 +1,33 @@
+{
+  "_comment": "Annotated example for poll_connector.py --config, targeting Splunk's own REST Search API in 'oneshot' mode -- a single blocking request that runs an SPL search synchronously and returns real single-JSON results, unlike the usual async create-job-then-poll search flow (which needs multiple requests PollerConfig can't do). Point base_url at YOUR Splunk management port (default 8089) and adjust the search string to your own notable-event index/fields. Delete this _comment field (or leave it; it's ignored) before using.",
+
+  "name": "splunk-es-notable",
+  "base_url": "https://splunk.example.com:8089/services/search/jobs",
+  "method": "POST",
+
+  "_comment_auth": "Splunk's token-auth feature (Settings > Tokens, Splunk 7.3+) issues a long-lived bearer token -- no OAuth2/session dance needed. auth_token_env names an ENVIRONMENT VARIABLE holding the real token; never put the token itself in this file.",
+  "auth_header": "Authorization",
+  "auth_scheme": "Bearer",
+  "auth_token_env": "SPLUNK_API_TOKEN",
+
+  "_comment_search": "exec_mode=oneshot makes Splunk run this search synchronously and return results in this one response. Adjust the SPL to your own ES notable-event index and field names.",
+  "static_query_params": {
+    "search": "search index=notable | fields _time, rule_name, urgency, src, dest, dvc, signature, event_id, mitre_technique_id | sort 0 _time",
+    "exec_mode": "oneshot",
+    "output_mode": "json"
+  },
+
+  "_comment_records_path": "Splunk's oneshot response body is {\"results\": [...]} -- one flat dict per matched event.",
+  "records_path": "results",
+
+  "_comment_cursor": "earliest_time narrows the SPL search to events after the last one seen. Splunk accepts an epoch or ISO8601 string here -- verify which format your Splunk instance actually renders _time as in JSON output and adjust if incremental polling seems to skip or repeat events.",
+  "cursor_query_param": "earliest_time",
+  "cursor_field": "_time",
+
+  "_comment_normalizer": "Uses the real Splunk ES notable-event normalizer (ingestion/normalizers.py:normalize_splunk) instead of a generic field_map -- it understands urgency's five-value scale (including 'informational') and extracts MITRE ATT&CK technique IDs, neither of which a flat field_map alone can do.",
+  "normalizer": "splunk",
+
+  "poll_interval_seconds": 60,
+  "tenant": "default",
+  "source_name": "splunk"
+}

@@ -511,6 +511,53 @@ WantedBy=multi-user.target
 Prefer a cron job over a long-running service? Pass `--once` and let cron
 own the schedule instead of `poll_interval_seconds` in the config.
 
+**Splunk** is a concrete, non-generic example of the same `poll_connector.py`
+entrypoint: `examples/splunk_poller_config.example.json` targets Splunk's
+REST Search API in `exec_mode=oneshot` mode (one blocking request, real
+single-JSON results) with `"normalizer": "splunk"` so
+`ingestion/normalizers.py:normalize_splunk()` handles Splunk ES's real
+notable-event field shape — its five-value urgency scale and MITRE
+ATT&CK annotations — instead of a flat `field_map`. See README's "Splunk
+Integration" for the full config and the Webhook-alert-action push
+alternative. Auth is a long-lived Splunk token (Settings → Tokens);
+`SPLUNK_API_TOKEN` is the environment variable the shipped example
+config expects, set in `/opt/sentinelos/.env` the same as any other
+credential in this project.
+
+### Polling CrowdStrike Falcon's Detects API
+
+CrowdStrike needs a fully separate connector, `crowdstrike_connector.py`
+(not `poll_connector.py`) — its real API requires an OAuth2
+client-credentials exchange and a two-step query-then-summarize call
+sequence that `poll_connector.py`'s generic single-request model can't
+express. See README's "CrowdStrike Integration" for the full
+explanation and `examples/crowdstrike_poller_config.example.json` for
+an annotated config (including the real per-region base URLs).
+
+```ini
+[Unit]
+Description=SentinelOS CrowdStrike Falcon connector
+After=network.target
+
+[Service]
+Type=simple
+User=sentinelos
+WorkingDirectory=/opt/sentinelos
+EnvironmentFile=/opt/sentinelos/.env
+ExecStart=/opt/sentinelos/venv/bin/python crowdstrike_connector.py \
+    --config /etc/sentinelos/crowdstrike.json
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+```
+
+`CROWDSTRIKE_CLIENT_ID`/`CROWDSTRIKE_CLIENT_SECRET` in `.env` hold the
+real OAuth2 credentials — create the API client in the Falcon console
+(Support and resources → API clients and keys) with the "Detections:
+Read" scope. Same `--once` cron alternative as `poll_connector.py`.
+
 ### Pushing from a webhook or forwarder
 
 Point it at `POST https://sentinelos.internal.example.com/ingest/{source}`
@@ -814,16 +861,21 @@ affect a live deployment decision, not just a feature-completeness one:
   including a string-similarity signal that was built, tested, and
   rejected for making things worse, not just noisier.
 - **No vendor-specific SIEM/EDR polling client for most vendors — but a
-  real, generic one, and a real one for Wazuh specifically.**
-  `poll_connector.py`/`ingestion/polling.py` polls any JSON-returning REST
-  API given a config describing that API's shape (auth, pagination
-  cursor, field-mapping) — see Section 6 above. There's still no
-  ready-made config for a specific vendor (Splunk, Sentinel, CrowdStrike,
-  etc.); you write the field-mapping for your own instance's actual API
-  shape once, not code. Wazuh is the one exception with a purpose-built
-  normalizer and integration script (Section 6), though the integration
-  script's actual Wazuh-manager wiring is unverified against a live
-  instance — test it against your own deployment before relying on it.
+  real, generic one, and real ones for Wazuh, Splunk, and CrowdStrike
+  specifically.** `poll_connector.py`/`ingestion/polling.py` polls any
+  JSON-returning REST API given a config describing that API's shape
+  (auth, pagination cursor, field-mapping, or a registered normalizer for
+  a materially different scheme) — see Section 6 above. There's still no
+  ready-made config for most other vendors (Sentinel, Elastic, etc.);
+  you write the field-mapping for your own instance's actual API shape
+  once, not code. Wazuh, Splunk, and CrowdStrike are the three
+  exceptions with purpose-built normalizers (and, for CrowdStrike, a
+  fully dedicated connector for its OAuth2 + two-step Detects API) — but
+  none of the three is verified against a live vendor instance, since
+  this project has none of any of them; each is verified against a real
+  local HTTP server matching that vendor's *documented* API shape
+  instead. Test each against your own deployment before relying on it —
+  a documented shape and a live one can diverge.
 - **The Responder Agent never executes anything against a real system.**
   Every proposed action is data (action/target/rationale) requiring
   human approval — there is no firewall/EDR/IAM integration to wire up

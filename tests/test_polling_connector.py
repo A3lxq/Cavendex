@@ -169,6 +169,25 @@ def test_normalize_polled_record_non_dict_returns_none():
     assert normalize_polled_record(None, {}, "src") is None
 
 
+def test_normalize_polled_record_applies_severity_map():
+    alert = normalize_polled_record(
+        {"sev": "informational"}, {"severity": "sev"}, "src", severity_map={"informational": "low"}
+    )
+    assert alert.severity == "low"
+
+
+def test_normalize_polled_record_severity_map_miss_falls_back_to_medium():
+    alert = normalize_polled_record(
+        {"sev": "unmapped-value"}, {"severity": "sev"}, "src", severity_map={"informational": "low"}
+    )
+    assert alert.severity == "medium"
+
+
+def test_normalize_polled_record_no_severity_map_behaves_as_before():
+    alert = normalize_polled_record({"sev": "high"}, {"severity": "sev"}, "src")
+    assert alert.severity == "high"
+
+
 # ---------- fetch_records against a real HTTP server ----------
 
 
@@ -307,6 +326,75 @@ def test_poll_once_persists_cursor_across_calls(http_server, fake_ingest_normali
     poll_once(config)
     assert http_server.seen[-1]["query"]["since"] == ["100"]
     assert load_cursor(config) == "200"
+
+
+def test_poll_once_uses_registered_normalizer_when_configured(
+    http_server, fake_ingest_normalized_alert, monkeypatch, tmp_path
+):
+    """A config with `normalizer` set must hand each raw record to that
+    NORMALIZERS-registered function directly -- exercising this via the
+    real 'splunk' normalizer to prove it's actually wired through
+    poll_once(), not just unit-testable in isolation."""
+    monkeypatch.setenv("SENTINELOS_DATA_DIR", str(tmp_path))
+    http_server.set_responses(
+        [{"results": [{"rule_name": "Excessive Failed Logins", "urgency": "informational", "src": "1.2.3.4"}]}]
+    )
+    config = PollerConfig(
+        name="normalizer-test", base_url=http_server.url, records_path="results",
+        normalizer="splunk", tenant="normalizer-tenant",
+    )
+
+    results = poll_once(config)
+    assert len(results) == 1
+    alert = fake_ingest_normalized_alert[0]["alert"]
+    assert "Excessive Failed Logins" in alert.description
+    assert alert.severity == "low"  # Splunk's "informational" -> our "low", not the generic default "medium"
+    assert alert.source == "splunk"
+
+
+def test_poll_once_normalizer_skips_non_dict_records(
+    http_server, fake_ingest_normalized_alert, monkeypatch, tmp_path
+):
+    monkeypatch.setenv("SENTINELOS_DATA_DIR", str(tmp_path))
+    http_server.set_responses([{"results": ["not a dict"]}])
+    config = PollerConfig(
+        name="normalizer-skip-test", base_url=http_server.url, records_path="results", normalizer="splunk",
+    )
+
+    results = poll_once(config)
+    assert results == []
+    assert fake_ingest_normalized_alert == []
+
+
+def test_poll_once_unknown_normalizer_name_skips_every_record(
+    http_server, fake_ingest_normalized_alert, monkeypatch, tmp_path
+):
+    """A typo'd normalizer name must degrade to 'nothing ingested,' not
+    raise or silently fall back to the generic field_map path -- fail
+    loud enough to notice (no results at all) rather than guessing what
+    the operator meant."""
+    monkeypatch.setenv("SENTINELOS_DATA_DIR", str(tmp_path))
+    http_server.set_responses([{"results": [{"rule_name": "x"}]}])
+    config = PollerConfig(
+        name="bad-normalizer-test", base_url=http_server.url, records_path="results",
+        normalizer="not-a-real-normalizer",
+    )
+
+    results = poll_once(config)
+    assert results == []
+    assert fake_ingest_normalized_alert == []
+
+
+# ---------- Splunk example config ----------
+
+
+def test_load_splunk_example_config():
+    config = load_config("examples/splunk_poller_config.example.json")
+    assert config.name == "splunk-es-notable"
+    assert config.normalizer == "splunk"
+    assert config.method == "POST"
+    assert config.auth_token_env == "SPLUNK_API_TOKEN"
+    assert config.records_path == "results"
 
 
 def test_save_and_load_cursor_roundtrip(monkeypatch, tmp_path):

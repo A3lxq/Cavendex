@@ -1,0 +1,15 @@
+{
+  "_comment": "Annotated example for crowdstrike_connector.py --config. CrowdStrike's real Falcon API base URL depends on your cloud region: api.crowdstrike.com (US-1), api.us-2.crowdstrike.com (US-2), api.eu-1.crowdstrike.com (EU-1), api.laggar.gcw.crowdstrike.com (US-GOV-1). Delete this _comment field (or leave it; it's ignored) before using.",
+
+  "name": "crowdstrike-detects",
+  "base_url": "https://api.crowdstrike.com",
+
+  "_comment_auth": "OAuth2 client-credentials -- create an API client in the Falcon console (Support and resources > API clients and keys) with the 'Detections: Read' scope. client_id_env/client_secret_env name ENVIRONMENT VARIABLES holding the real credentials; never put them in this file.",
+  "client_id_env": "CROWDSTRIKE_CLIENT_ID",
+  "client_secret_env": "CROWDSTRIKE_CLIENT_SECRET",
+
+  "page_size": 100,
+  "poll_interval_seconds": 60,
+  "tenant": "default",
+  "source_name": "crowdstrike"
+}
