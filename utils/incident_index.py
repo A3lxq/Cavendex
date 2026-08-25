@@ -265,6 +265,70 @@ def list_open_incidents(tenant_id: str = DEFAULT_TENANT) -> List[dict]:
     return rows
 
 
+def get_incident_graph(tenant_id: str = DEFAULT_TENANT, limit: int = 300) -> dict:
+    """Builds the node/edge graph behind the dashboard's "Strand Map" —
+    every incident in this tenant (any status, not just open, since a
+    campaign's full history has real analytical value) plus its IOCs and
+    affected assets, as one connected graph: an IOC or asset referenced
+    by more than one incident becomes a single shared node, visually
+    linking those incidents the same way ingestion/correlation.py's
+    exact-match tier already reasons about them internally.
+
+    IOC/asset node identity is exact-string match, deliberately not
+    normalized (no case-folding) — matching _first_exact_match's own set
+    intersection in ingestion/correlation.py exactly, not a stricter
+    notion of "same indicator" the correlation engine itself doesn't use.
+
+    Capped at `limit` most-recently-updated incidents (default 300, same
+    ceiling style as list_incidents) so one tenant's full history can't
+    make the canvas unusably dense — the response says how many
+    incidents exist in total versus how many are actually included, so a
+    caller can tell whether anything was left out rather than silently
+    assuming a complete picture.
+    """
+    conn = _get_connection(tenant_id)
+    total = conn.execute("SELECT COUNT(*) FROM incidents").fetchone()[0]
+    limit = max(1, min(limit, 1000))
+    cursor = conn.execute(
+        """
+        SELECT thread_id, description, severity, status, iocs, affected_assets, assigned_to
+        FROM incidents ORDER BY updated_at DESC LIMIT ?
+        """,
+        (limit,),
+    )
+    columns = [d[0] for d in cursor.description]
+    rows = [dict(zip(columns, row)) for row in cursor.fetchall()]
+
+    nodes: dict = {}
+    edges: List[dict] = []
+    for row in rows:
+        incident_id = f"incident:{row['thread_id']}"
+        nodes[incident_id] = {
+            "id": incident_id,
+            "type": "incident",
+            "thread_id": row["thread_id"],
+            "label": row["description"][:80],
+            "severity": row["severity"],
+            "status": row["status"],
+            "assigned_to": row["assigned_to"],
+        }
+        for value in json.loads(row["iocs"]) if row["iocs"] else []:
+            ioc_id = f"ioc:{value}"
+            nodes.setdefault(ioc_id, {"id": ioc_id, "type": "ioc", "label": value})
+            edges.append({"source": incident_id, "target": ioc_id})
+        for value in json.loads(row["affected_assets"]) if row["affected_assets"] else []:
+            asset_id = f"asset:{value}"
+            nodes.setdefault(asset_id, {"id": asset_id, "type": "asset", "label": value})
+            edges.append({"source": incident_id, "target": asset_id})
+
+    return {
+        "nodes": list(nodes.values()),
+        "edges": edges,
+        "incidents_included": len(rows),
+        "incidents_total": total,
+    }
+
+
 def reset_for_tests() -> None:
     with _lock:
         for conn in _connections.values():

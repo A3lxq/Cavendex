@@ -157,6 +157,8 @@ async function connectIncidentEvents() {
           loadIncidents();
           loadStats();
           if (selectedThreadId && event.thread_id === selectedThreadId) renderIncidentDetail(selectedThreadId);
+          const strandPanel = document.getElementById("tab-strand-map");
+          if (strandPanel && strandPanel.classList.contains("active")) loadStrandMap();
         }
       }
     }
@@ -200,6 +202,7 @@ function initTabs() {
       btn.classList.add("active");
       document.getElementById(`tab-${btn.dataset.tab}`).classList.add("active");
       if (btn.dataset.tab === "attack-overview") loadAttackOverview();
+      if (btn.dataset.tab === "strand-map") loadStrandMap();
     });
   });
 }
@@ -875,6 +878,368 @@ function renderAttackOverview(tactics) {
     .join("");
 }
 
+/* ---------- Strand Map (graph-canvas view) ----------
+   A hand-rolled force-directed layout, deliberately not a library --
+   this project has a hard no-CDN/no-build-step constraint (see
+   Design Lineage in README), so there's no D3 to reach for. Runs a
+   bounded number of physics steps to let the layout settle, then stops
+   animating rather than spinning every frame forever -- a dashboard
+   tab left open all day shouldn't burn CPU/battery on a static graph. */
+
+function cssVar(name) {
+  return getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+}
+
+const STRAND_SIM = {
+  repulsion: 2600,
+  springLength: 70,
+  springStrength: 0.02,
+  centerStrength: 0.008,
+  damping: 0.82,
+  maxVelocity: 10,
+  maxFrames: 300,
+  settleThreshold: 0.4, // average per-node speed below which the layout is considered settled
+};
+
+function stepStrandSimulation(nodes, edges, width, height) {
+  for (const n of nodes) {
+    n.fx = 0;
+    n.fy = 0;
+  }
+
+  for (let i = 0; i < nodes.length; i++) {
+    for (let j = i + 1; j < nodes.length; j++) {
+      const a = nodes[i], b = nodes[j];
+      const dx = a.x - b.x;
+      const dy = a.y - b.y;
+      let distSq = dx * dx + dy * dy;
+      if (distSq < 1) distSq = 1;
+      const dist = Math.sqrt(distSq);
+      const force = STRAND_SIM.repulsion / distSq;
+      const fx = (dx / dist) * force;
+      const fy = (dy / dist) * force;
+      a.fx += fx;
+      a.fy += fy;
+      b.fx -= fx;
+      b.fy -= fy;
+    }
+  }
+
+  for (const e of edges) {
+    const dx = e.target.x - e.source.x;
+    const dy = e.target.y - e.source.y;
+    const dist = Math.max(1, Math.sqrt(dx * dx + dy * dy));
+    const displacement = dist - STRAND_SIM.springLength;
+    const force = STRAND_SIM.springStrength * displacement;
+    const fx = (dx / dist) * force;
+    const fy = (dy / dist) * force;
+    e.source.fx += fx;
+    e.source.fy += fy;
+    e.target.fx -= fx;
+    e.target.fy -= fy;
+  }
+
+  const cx = width / 2;
+  const cy = height / 2;
+  let totalSpeed = 0;
+  for (const n of nodes) {
+    n.fx += (cx - n.x) * STRAND_SIM.centerStrength;
+    n.fy += (cy - n.y) * STRAND_SIM.centerStrength;
+    n.vx = (n.vx + n.fx) * STRAND_SIM.damping;
+    n.vy = (n.vy + n.fy) * STRAND_SIM.damping;
+    n.vx = Math.max(-STRAND_SIM.maxVelocity, Math.min(STRAND_SIM.maxVelocity, n.vx));
+    n.vy = Math.max(-STRAND_SIM.maxVelocity, Math.min(STRAND_SIM.maxVelocity, n.vy));
+    n.x += n.vx;
+    n.y += n.vy;
+    totalSpeed += Math.abs(n.vx) + Math.abs(n.vy);
+  }
+  return nodes.length ? totalSpeed / nodes.length : 0;
+}
+
+function strandNodeStyle(node) {
+  if (node.type === "incident") {
+    return { radius: 9, fill: cssVar(`--${node.severity}`) || cssVar("--pulse") };
+  }
+  if (node.type === "ioc") {
+    return { radius: 5, fill: cssVar("--pulse") };
+  }
+  return { radius: 5, fill: cssVar("--text-faint") };
+}
+
+function renderStrandMap(ctx, canvas, dpr, view, nodes, edges) {
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  ctx.setTransform(dpr * view.scale, 0, 0, dpr * view.scale, dpr * view.offsetX, dpr * view.offsetY);
+
+  ctx.strokeStyle = cssVar("--border-soft");
+  ctx.lineWidth = 1 / view.scale;
+  ctx.beginPath();
+  for (const e of edges) {
+    ctx.moveTo(e.source.x, e.source.y);
+    ctx.lineTo(e.target.x, e.target.y);
+  }
+  ctx.stroke();
+
+  const fontFamily = cssVar("--font-sans");
+  const textColor = cssVar("--text");
+  const pulse = cssVar("--pulse");
+
+  for (const n of nodes) {
+    const { radius, fill } = strandNodeStyle(n);
+    ctx.beginPath();
+    ctx.arc(n.x, n.y, radius, 0, Math.PI * 2);
+    ctx.fillStyle = fill;
+    ctx.fill();
+    if (n.id === strandSelectedId) {
+      ctx.lineWidth = 2 / view.scale;
+      ctx.strokeStyle = pulse;
+      ctx.stroke();
+    }
+  }
+
+  // Incident labels drawn in a second pass so no dot ever draws over a label.
+  ctx.font = `11px ${fontFamily}`;
+  ctx.fillStyle = textColor;
+  for (const n of nodes) {
+    if (n.type !== "incident") continue;
+    const label = n.label.length > 30 ? `${n.label.slice(0, 30)}…` : n.label;
+    ctx.fillText(label, n.x + 13, n.y + 4);
+  }
+}
+
+let strandMapAnimFrame = null;
+let strandMapSim = null; // { nodes, edges, byId }
+let strandSelectedId = null;
+const strandView = { offsetX: 0, offsetY: 0, scale: 1 };
+let strandDpr = window.devicePixelRatio || 1;
+
+function sizeStrandCanvas(canvas) {
+  const rect = canvas.parentElement.getBoundingClientRect();
+  strandDpr = window.devicePixelRatio || 1;
+  canvas.width = Math.max(1, Math.round(rect.width * strandDpr));
+  canvas.height = Math.max(1, Math.round(rect.height * strandDpr));
+  return { width: rect.width, height: rect.height };
+}
+
+function drawStrandFrame(canvas) {
+  if (!strandMapSim) return;
+  renderStrandMap(canvas.getContext("2d"), canvas, strandDpr, strandView, strandMapSim.nodes, strandMapSim.edges);
+}
+
+function runStrandSimulation(canvas, width, height) {
+  if (strandMapAnimFrame) cancelAnimationFrame(strandMapAnimFrame);
+  const { nodes, edges } = strandMapSim;
+  let frame = 0;
+
+  function tick() {
+    const avgSpeed = nodes.length ? stepStrandSimulation(nodes, edges, width, height) : 0;
+    drawStrandFrame(canvas);
+    frame++;
+    if (frame < STRAND_SIM.maxFrames && avgSpeed > STRAND_SIM.settleThreshold) {
+      strandMapAnimFrame = requestAnimationFrame(tick);
+    } else {
+      strandMapAnimFrame = null;
+    }
+  }
+  tick();
+}
+
+/** Screen (CSS-pixel, canvas-relative) coordinates -> simulation-space
+ * coordinates, inverting the pan/zoom transform applied in
+ * renderStrandMap -- used for both click hit-testing and drag panning. */
+function strandScreenToSim(canvas, clientX, clientY) {
+  const rect = canvas.getBoundingClientRect();
+  const cssX = clientX - rect.left;
+  const cssY = clientY - rect.top;
+  return { x: (cssX - strandView.offsetX) / strandView.scale, y: (cssY - strandView.offsetY) / strandView.scale };
+}
+
+function strandNodeAt(simX, simY) {
+  if (!strandMapSim) return null;
+  let closest = null;
+  let closestDist = Infinity;
+  for (const n of strandMapSim.nodes) {
+    const { radius } = strandNodeStyle(n);
+    const dx = n.x - simX;
+    const dy = n.y - simY;
+    const dist = Math.sqrt(dx * dx + dy * dy);
+    const hitRadius = radius + 4; // a little generous, easier to click a small IOC/asset dot
+    if (dist <= hitRadius && dist < closestDist) {
+      closest = n;
+      closestDist = dist;
+    }
+  }
+  return closest;
+}
+
+function jumpToIncidentFromStrandMap(threadId) {
+  document.querySelector('.tab-btn[data-tab="incidents"]').click();
+  openIncident(threadId);
+}
+
+function showStrandSelection(node) {
+  const panel = document.getElementById("strand-map-selection");
+  if (!node) {
+    panel.hidden = true;
+    panel.innerHTML = "";
+    return;
+  }
+  if (node.type === "incident") {
+    panel.hidden = true; // clicking an incident jumps straight to its detail -- no panel needed
+    return;
+  }
+  const connected = strandMapSim.edges
+    .filter((e) => e.source.id === node.id || e.target.id === node.id)
+    .map((e) => (e.source.id === node.id ? e.target : e.source))
+    .filter((n) => n.type === "incident");
+  panel.hidden = false;
+  panel.innerHTML = `
+    <div class="strand-selection-label">${node.type === "ioc" ? "IOC" : "Affected asset"}: <strong>${escapeHtml(node.label)}</strong></div>
+    <div class="strand-selection-incidents">
+      ${connected
+        .map(
+          (inc) =>
+            `<button class="strand-selection-link" data-thread-id="${escapeHtml(inc.thread_id)}">${escapeHtml(inc.label)}</button>`
+        )
+        .join("") || "<span>No incidents reference this.</span>"}
+    </div>`;
+  panel.querySelectorAll(".strand-selection-link").forEach((btn) => {
+    btn.addEventListener("click", () => jumpToIncidentFromStrandMap(btn.dataset.threadId));
+  });
+}
+
+function handleStrandClick(canvas, clientX, clientY) {
+  const { x, y } = strandScreenToSim(canvas, clientX, clientY);
+  const node = strandNodeAt(x, y);
+  strandSelectedId = node ? node.id : null;
+  drawStrandFrame(canvas);
+  if (node && node.type === "incident") {
+    jumpToIncidentFromStrandMap(node.thread_id);
+    return;
+  }
+  showStrandSelection(node);
+}
+
+function initStrandMapCanvasInteractions(canvas) {
+  let dragging = false;
+  let dragMoved = false;
+  let dragStart = { x: 0, y: 0 };
+  let viewStart = { x: 0, y: 0 };
+
+  canvas.addEventListener("mousedown", (evt) => {
+    dragging = true;
+    dragMoved = false;
+    dragStart = { x: evt.clientX, y: evt.clientY };
+    viewStart = { x: strandView.offsetX, y: strandView.offsetY };
+  });
+
+  window.addEventListener("mousemove", (evt) => {
+    if (!dragging) return;
+    const dx = evt.clientX - dragStart.x;
+    const dy = evt.clientY - dragStart.y;
+    if (Math.abs(dx) > 3 || Math.abs(dy) > 3) dragMoved = true;
+    if (dragMoved) {
+      strandView.offsetX = viewStart.x + dx;
+      strandView.offsetY = viewStart.y + dy;
+      drawStrandFrame(canvas);
+    }
+  });
+
+  window.addEventListener("mouseup", (evt) => {
+    if (!dragging) return;
+    dragging = false;
+    if (!dragMoved) handleStrandClick(canvas, evt.clientX, evt.clientY);
+  });
+
+  canvas.addEventListener(
+    "wheel",
+    (evt) => {
+      evt.preventDefault();
+      const rect = canvas.getBoundingClientRect();
+      const mouseX = evt.clientX - rect.left;
+      const mouseY = evt.clientY - rect.top;
+      const zoomFactor = evt.deltaY < 0 ? 1.1 : 1 / 1.1;
+      const newScale = Math.max(0.2, Math.min(4, strandView.scale * zoomFactor));
+      strandView.offsetX = mouseX - ((mouseX - strandView.offsetX) / strandView.scale) * newScale;
+      strandView.offsetY = mouseY - ((mouseY - strandView.offsetY) / strandView.scale) * newScale;
+      strandView.scale = newScale;
+      drawStrandFrame(canvas);
+    },
+    { passive: false }
+  );
+}
+
+async function loadStrandMap() {
+  const canvas = document.getElementById("strand-map-canvas");
+  const emptyState = document.getElementById("strand-map-empty");
+  const countLabel = document.getElementById("strand-map-count");
+
+  let graph;
+  try {
+    graph = await apiGet(`${tenantPrefix()}/incidents/graph`);
+  } catch (err) {
+    countLabel.textContent = `Error: ${err.message}`;
+    return;
+  }
+
+  emptyState.hidden = graph.nodes.length > 0;
+  countLabel.textContent = graph.nodes.length
+    ? `${graph.incidents_included} of ${graph.incidents_total} incidents shown, ${graph.nodes.length} nodes, ${graph.edges.length} links`
+    : "";
+  showStrandSelection(null);
+  if (!graph.nodes.length) {
+    strandMapSim = null;
+    const ctx = canvas.getContext("2d");
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    return;
+  }
+
+  const { width, height } = sizeStrandCanvas(canvas);
+  const previous = strandMapSim ? strandMapSim.byId : new Map();
+  const byId = new Map();
+  const nodes = graph.nodes.map((n) => {
+    const prior = previous.get(n.id);
+    let x, y;
+    if (prior) {
+      x = prior.x;
+      y = prior.y;
+    } else {
+      const angle = Math.random() * Math.PI * 2;
+      const radius = Math.random() * Math.min(width, height) * 0.3;
+      x = width / 2 + Math.cos(angle) * radius;
+      y = height / 2 + Math.sin(angle) * radius;
+    }
+    const node = { ...n, x, y, vx: prior ? prior.vx : 0, vy: prior ? prior.vy : 0 };
+    byId.set(n.id, node);
+    return node;
+  });
+  const edges = graph.edges
+    .map((e) => ({ source: byId.get(e.source), target: byId.get(e.target) }))
+    .filter((e) => e.source && e.target);
+
+  strandMapSim = { nodes, edges, byId };
+  runStrandSimulation(canvas, width, height);
+}
+
+function initStrandMap() {
+  const canvas = document.getElementById("strand-map-canvas");
+  document.getElementById("strand-map-refresh-btn").addEventListener("click", () => {
+    strandView.offsetX = 0;
+    strandView.offsetY = 0;
+    strandView.scale = 1;
+    loadStrandMap();
+  });
+  initStrandMapCanvasInteractions(canvas);
+  window.addEventListener("resize", () => {
+    const panel = document.getElementById("tab-strand-map");
+    if (panel.classList.contains("active") && strandMapSim) {
+      const { width, height } = sizeStrandCanvas(canvas);
+      runStrandSimulation(canvas, width, height);
+    }
+  });
+}
+
 /* ---------- Wiring ---------- */
 
 function initSettingsForm() {
@@ -918,6 +1283,7 @@ document.addEventListener("DOMContentLoaded", () => {
   initKeyboardShortcuts();
   initBulkActions();
   initOnboardingBanner();
+  initStrandMap();
   document.getElementById("new-incident-form").addEventListener("submit", submitNewIncident);
   document.getElementById("hunt-form").addEventListener("submit", submitHunt);
   document.getElementById("ioc-lookup-form").addEventListener("submit", submitIocLookup);

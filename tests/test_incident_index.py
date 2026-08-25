@@ -1,6 +1,7 @@
 from state import Incident
 from utils.incident_index import (
     get_attack_technique_stats,
+    get_incident_graph,
     get_incident_stats,
     list_incidents,
     list_open_incidents,
@@ -355,3 +356,95 @@ def test_attack_stats_scoped_per_tenant(monkeypatch, tmp_path):
 
     assert len(get_attack_technique_stats("t1")) == 1
     assert len(get_attack_technique_stats("t2")) == 1
+
+
+# ---------- get_incident_graph ----------
+
+
+def test_graph_on_an_empty_tenant_has_no_nodes_or_edges(monkeypatch, tmp_path):
+    monkeypatch.setenv("SENTINELOS_DATA_DIR", str(tmp_path))
+    graph = get_incident_graph("t1")
+    assert graph == {"nodes": [], "edges": [], "incidents_included": 0, "incidents_total": 0}
+
+
+def test_a_single_incident_produces_an_incident_node_plus_its_iocs_and_assets(monkeypatch, tmp_path):
+    monkeypatch.setenv("SENTINELOS_DATA_DIR", str(tmp_path))
+    upsert_incident_summary(
+        "t1",
+        _state("inc-1", "brute force against DC-01", severity="high", iocs=["1.2.3.4"], affected_assets=["DC-01"]),
+    )
+
+    graph = get_incident_graph("t1")
+
+    node_ids = {n["id"] for n in graph["nodes"]}
+    assert node_ids == {"incident:inc-1", "ioc:1.2.3.4", "asset:DC-01"}
+    incident_node = next(n for n in graph["nodes"] if n["id"] == "incident:inc-1")
+    assert incident_node["severity"] == "high"
+    assert incident_node["thread_id"] == "inc-1"
+    edge_targets = {(e["source"], e["target"]) for e in graph["edges"]}
+    assert edge_targets == {("incident:inc-1", "ioc:1.2.3.4"), ("incident:inc-1", "asset:DC-01")}
+
+
+def test_two_incidents_sharing_an_ioc_share_one_node(monkeypatch, tmp_path):
+    monkeypatch.setenv("SENTINELOS_DATA_DIR", str(tmp_path))
+    upsert_incident_summary("t1", _state("inc-1", "x", iocs=["1.2.3.4"]))
+    upsert_incident_summary("t1", _state("inc-2", "y", iocs=["1.2.3.4"]))
+
+    graph = get_incident_graph("t1")
+
+    ioc_nodes = [n for n in graph["nodes"] if n["id"] == "ioc:1.2.3.4"]
+    assert len(ioc_nodes) == 1
+    edges_to_shared_ioc = [e for e in graph["edges"] if e["target"] == "ioc:1.2.3.4"]
+    assert {e["source"] for e in edges_to_shared_ioc} == {"incident:inc-1", "incident:inc-2"}
+
+
+def test_ioc_matching_is_exact_string_not_case_folded(monkeypatch, tmp_path):
+    monkeypatch.setenv("SENTINELOS_DATA_DIR", str(tmp_path))
+    upsert_incident_summary("t1", _state("inc-1", "x", iocs=["evil.example.com"]))
+    upsert_incident_summary("t1", _state("inc-2", "y", iocs=["EVIL.example.com"]))
+
+    graph = get_incident_graph("t1")
+
+    ioc_ids = {n["id"] for n in graph["nodes"] if n["type"] == "ioc"}
+    assert ioc_ids == {"ioc:evil.example.com", "ioc:EVIL.example.com"}
+
+
+def test_graph_is_scoped_per_tenant(monkeypatch, tmp_path):
+    monkeypatch.setenv("SENTINELOS_DATA_DIR", str(tmp_path))
+    upsert_incident_summary("t1", _state("inc-1", "x", iocs=["1.2.3.4"]))
+    upsert_incident_summary("t2", _state("inc-2", "y", iocs=["1.2.3.4"]))
+
+    graph_t1 = get_incident_graph("t1")
+    assert graph_t1["incidents_included"] == 1
+    assert {n["id"] for n in graph_t1["nodes"]} == {"incident:inc-1", "ioc:1.2.3.4"}
+
+
+def test_limit_caps_included_incidents_but_reports_the_true_total(monkeypatch, tmp_path):
+    monkeypatch.setenv("SENTINELOS_DATA_DIR", str(tmp_path))
+    for i in range(5):
+        upsert_incident_summary("t1", _state(f"inc-{i}", "x"))
+
+    graph = get_incident_graph("t1", limit=2)
+
+    assert graph["incidents_included"] == 2
+    assert graph["incidents_total"] == 5
+
+
+def test_incident_with_no_iocs_or_assets_still_gets_its_own_node(monkeypatch, tmp_path):
+    monkeypatch.setenv("SENTINELOS_DATA_DIR", str(tmp_path))
+    upsert_incident_summary("t1", _state("inc-1", "x"))
+
+    graph = get_incident_graph("t1")
+
+    assert graph["nodes"] == [
+        {
+            "id": "incident:inc-1",
+            "type": "incident",
+            "thread_id": "inc-1",
+            "label": "x",
+            "severity": "medium",
+            "status": "open",
+            "assigned_to": None,
+        }
+    ]
+    assert graph["edges"] == []

@@ -439,6 +439,12 @@ def _attack_overview(tenant_id: str) -> dict:
     }
 
 
+def _incident_graph(tenant_id: str) -> dict:
+    from utils.incident_index import get_incident_graph
+
+    return get_incident_graph(tenant_id)
+
+
 def _resolve_incident(thread_id: str, approve: bool, tenant_id: str, approved_by: Optional[str] = None):
     try:
         state = resolve_proposed_actions(thread_id, approve=approve, tenant_id=tenant_id, approved_by=approved_by)
@@ -550,6 +556,11 @@ def attack_overview_default():
     return _attack_overview(DEFAULT_TENANT)
 
 
+@router.get("/incidents/graph")
+def incident_graph_default():
+    return _incident_graph(DEFAULT_TENANT)
+
+
 @router.get("/incidents/events")
 def incident_events_default():
     return _incident_events(DEFAULT_TENANT)
@@ -656,6 +667,11 @@ def incident_stats_for_tenant(tenant_id: str):
 @tenant_router.get("/tenants/{tenant_id}/incidents/attack-overview")
 def attack_overview_for_tenant(tenant_id: str):
     return _attack_overview(tenant_id)
+
+
+@tenant_router.get("/tenants/{tenant_id}/incidents/graph")
+def incident_graph_for_tenant(tenant_id: str):
+    return _incident_graph(tenant_id)
 
 
 @tenant_router.get("/tenants/{tenant_id}/incidents/events")

@@ -31,6 +31,7 @@
   <button class="tab-btn" data-tab="hunt">Threat Hunt</button>
   <button class="tab-btn" data-tab="ioc-lookup">IOC Lookup</button>
   <button class="tab-btn" data-tab="attack-overview">ATT&amp;CK Overview</button>
+  <button class="tab-btn" data-tab="strand-map">Strand Map</button>
 </nav>
 
 <main>
@@ -182,6 +183,34 @@
       </p>
       <div id="attack-overview-body">
         <div class="empty-state">Loading…</div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Strand Map tab -->
+  <section id="tab-strand-map" class="tab-panel">
+    <div class="strand-map-card">
+      <div class="strand-map-header">
+        <h2>Strand Map</h2>
+        <p class="form-hint">
+          Every incident in this tenant, connected through the IOCs and affected assets they share — a shared
+          indicator is one node linking every incident that cites it. Drag to pan, scroll to zoom, click a node
+          for detail.
+        </p>
+        <div class="strand-map-toolbar">
+          <button id="strand-map-refresh-btn">↻ Refresh</button>
+          <span id="strand-map-count" class="strand-map-count"></span>
+        </div>
+      </div>
+      <div class="strand-map-canvas-wrap">
+        <canvas id="strand-map-canvas"></canvas>
+        <div id="strand-map-empty" class="empty-state" hidden>No incidents yet for this tenant.</div>
+      </div>
+      <div id="strand-map-selection" class="strand-map-selection" hidden></div>
+      <div class="strand-map-legend">
+        <span><i class="strand-legend-dot strand-legend-incident"></i> Incident (color = severity)</span>
+        <span><i class="strand-legend-dot strand-legend-ioc"></i> IOC</span>
+        <span><i class="strand-legend-dot strand-legend-asset"></i> Affected asset</span>
       </div>
     </div>
   </section>
