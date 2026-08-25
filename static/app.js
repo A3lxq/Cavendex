@@ -511,14 +511,25 @@ function renderProposedActions(actions, threadId) {
   if (!actions || !actions.length) return "<p>No actions proposed.</p>";
 
   const cardsHtml = actions
-    .map(
-      (a) => `
+    .map((a) => {
+      const typeBadge =
+        a.action_type && a.action_type !== "other"
+          ? `<span class="action-type-badge">${escapeHtml(a.action_type.replace(/_/g, " "))}</span>`
+          : "";
+      let execHtml = "";
+      if (a.executed === true) {
+        execHtml = `<div class="action-executed success">⚡ Executed — ${escapeHtml(a.execution_detail || "")}</div>`;
+      } else if (a.executed === false) {
+        execHtml = `<div class="action-executed failed">⚠ Execution failed — ${escapeHtml(a.execution_detail || "")}</div>`;
+      }
+      return `
         <div class="action-card">
-          <div class="action-title">${escapeHtml(a.action)}</div>
+          <div class="action-title">${escapeHtml(a.action)} ${typeBadge}</div>
           <div class="action-target">→ ${escapeHtml(a.target)}</div>
           <div class="action-rationale">${escapeHtml(a.rationale)}</div>
-        </div>`
-    )
+          ${execHtml}
+        </div>`;
+    })
     .join("");
 
   // Approval is all-or-nothing per incident -- resolve_proposed_actions

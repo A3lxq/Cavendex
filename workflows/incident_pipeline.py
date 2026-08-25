@@ -295,7 +295,11 @@ def resolve_proposed_actions(
     This is the human-in-the-loop gate: the Responder Agent only ever
     *proposes* actions and always stops (see graph.py). Nothing is marked
     approved/executed until this function is called by a human via the CLI
-    or API.
+    or API. On approval, an action whose action_type is currently eligible
+    (see remediation/executor.py — opt-in, disabled by default, and
+    "other" is never eligible regardless of configuration) is handed to
+    remediation/pipeline.py:execute_if_eligible for real execution; a
+    denial never reaches that at all.
 
     `approved_by` is an analyst-supplied identifier — the CLI's `--by`
     flag (or SENTINELOS_ANALYST_NAME), the API's `approved_by` request
@@ -336,6 +340,23 @@ def resolve_proposed_actions(
     audit_entries.append(
         f"{reviewer_label} -> {verb} {len(decided)} proposed action(s) for incident {thread_id}"
     )
+
+    # Real remediation execution only ever runs on approval, and only
+    # for an action whose type is currently eligible (see
+    # remediation/executor.py:is_automatable) — a denial never reaches
+    # this at all. Attempted per action rather than per incident, since
+    # a mixed batch (one automatable, one not) is a real, expected case.
+    if approve and incident is not None:
+        from remediation.pipeline import execute_if_eligible
+
+        remediated = []
+        for action in decided:
+            executed, detail = execute_if_eligible(incident, action, tenant_id)
+            if executed is not None:
+                action = action.model_copy(update={"executed": executed, "execution_detail": detail})
+                audit_entries.append(f"Remediation -> {action.action_type} on {action.target!r}: {detail}")
+            remediated.append(action)
+        decided = remediated
 
     if incident is not None:
         incident = incident.model_copy(update={"status": "contained" if approve else "closed"})

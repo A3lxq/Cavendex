@@ -40,6 +40,27 @@ def test_proposed_action_approval_does_not_mutate_original():
     assert action.approved is None
 
 
+def test_proposed_action_action_type_defaults_to_other():
+    action = ProposedAction(action="Block IP", target="1.2.3.4", rationale="malicious")
+    assert action.action_type == "other"
+
+
+def test_proposed_action_accepts_a_real_action_type():
+    action = ProposedAction(action="Block IP", target="1.2.3.4", rationale="malicious", action_type="block_ip")
+    assert action.action_type == "block_ip"
+
+
+def test_proposed_action_rejects_an_invalid_action_type():
+    with pytest.raises(ValidationError):
+        ProposedAction(action="x", target="y", rationale="z", action_type="launch_nukes")
+
+
+def test_proposed_action_executed_defaults_to_none():
+    action = ProposedAction(action="Block IP", target="1.2.3.4", rationale="malicious")
+    assert action.executed is None
+    assert action.execution_detail is None
+
+
 def test_incident_rejects_invalid_severity():
     with pytest.raises(ValidationError):
         Incident(id="abc123", description="test", severity="nuke-everything")

@@ -119,7 +119,12 @@ def _print_state(state):
                 status = _c("denied", "red", "bold")
             else:
                 status = _c("PENDING APPROVAL", "yellow", "bold")
-            print(f"  - {a.action} → {a.target} ({a.rationale}) [{status}]")
+            exec_note = ""
+            if a.executed is True:
+                exec_note = " " + _c(f"[executed: {a.execution_detail}]", "cyan")
+            elif a.executed is False:
+                exec_note = " " + _c(f"[execution FAILED: {a.execution_detail}]", "bright_red", "bold")
+            print(f"  - {a.action} → {a.target} ({a.rationale}) [{status}]{exec_note}")
 
     threat_intel = state.get("threat_intel") or []
     if threat_intel:

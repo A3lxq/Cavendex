@@ -10,6 +10,8 @@ from typing import List, Literal, Optional
 
 from pydantic import BaseModel, Field
 
+from state import ActionType
+
 _ATTACK_TECHNIQUE_DESCRIPTION = (
     "A MITRE ATT&CK technique ID (e.g. 'T1110' or 'T1110.001') that best matches "
     "this incident's behavior, if one clearly applies — leave this null/empty if "
@@ -68,6 +70,20 @@ class ProposedActionDraft(BaseModel):
     action: str
     target: str
     rationale: str
+    action_type: ActionType = Field(
+        default="other",
+        description=(
+            "Classify `action` into one of these categories so an approved action can "
+            "potentially be executed automatically (see remediation/executor.py) instead "
+            "of only ever being a text description a human has to act on by hand. Use "
+            "'other' whenever no category clearly fits — that's the safe default, not a "
+            "failure: an 'other' action is never eligible for automated execution "
+            "regardless of configuration, so guessing wrong toward 'other' costs nothing "
+            "except the analyst doing that one step manually, while guessing wrong toward "
+            "a specific category could mean the wrong kind of action gets attempted "
+            "automatically."
+        ),
+    )
 
 
 class ResponsePlan(BaseModel):

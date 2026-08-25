@@ -20,7 +20,7 @@ Conversation History:
 
 Propose the minimal set of remediation actions needed (e.g. block an IP,
 isolate a host, reset credentials, disable an account). For each action give
-the action, its target, and your rationale."""
+the action, its target, your rationale, and its action_type category."""
 )
 
 
@@ -65,7 +65,7 @@ def responder_agent(state: SentinelState) -> SentinelState:
     # always starts unset (None) here; only resolve_proposed_actions can
     # set it, once a human has actually decided.
     proposed_actions = [
-        ProposedAction(action=a.action, target=a.target, rationale=a.rationale)
+        ProposedAction(action=a.action, target=a.target, rationale=a.rationale, action_type=a.action_type)
         for a in result.proposed_actions
     ]
     state["proposed_actions"] = proposed_actions

@@ -330,7 +330,8 @@ def _serialize_state(state):
     proposed_actions = [
         {
             "action": a.action, "target": a.target, "rationale": a.rationale,
-            "approved": a.approved, "approved_by": a.approved_by,
+            "action_type": a.action_type, "approved": a.approved, "approved_by": a.approved_by,
+            "executed": a.executed, "execution_detail": a.execution_detail,
         }
         for a in (state.get("proposed_actions", []) or [])
     ]

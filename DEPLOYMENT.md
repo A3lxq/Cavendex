@@ -6,7 +6,7 @@ walkthrough — start there if you just want to try it. This file is for
 standing SentinelOS up as a service that watches real logs and stays
 running.
 
-Read **Section 11 (Known Limitations to Plan Around)** before you point
+Read **Section 12 (Known Limitations to Plan Around)** before you point
 this at production infrastructure. Nothing in this project is dishonest
 about what it is: an analyst's assistant with a mandatory human-approval
 gate, not an unattended SOC.
@@ -25,7 +25,7 @@ gate, not an unattended SOC.
   - [Ollama](https://ollama.com) running locally or on a reachable host,
     with a model already pulled (`ollama pull llama3.1`, or similar) —
     free and keeps incident data off third-party APIs entirely, but see
-    the honest performance note in Section 11 before relying on it for
+    the honest performance note in Section 12 before relying on it for
     time-sensitive response.
 - **(Optional) AbuseIPDB and/or VirusTotal API keys** — free tiers exist
   for both — for real IOC reputation lookups instead of LLM recall alone.
@@ -76,7 +76,7 @@ Edit `.env`:
   `OBSIDIAN_VAULT_PATH` at real, persistent paths outside the repo
   checkout if you're deploying to a directory that might get wiped on
   redeploy — e.g. `/var/lib/sentinelos/{data,chroma,vault}`. These three
-  directories are the entire state of the system; see Section 9.
+  directories are the entire state of the system; see Section 10.
 - Optionally set `ABUSEIPDB_API_KEY` / `VIRUSTOTAL_API_KEY` for real
   threat-intel lookups, and tune `SENTINELOS_INGEST_MIN_SEVERITY`,
   `SENTINELOS_DEDUP_WINDOW_SECONDS`, `SENTINELOS_CORRELATION_*` to your
@@ -617,7 +617,38 @@ the pipeline is broken.
 
 ---
 
-## 8. Back up the incident vault off-box
+## 8. Enable real remediation execution (opt-in, sandboxed)
+
+By default, an approved proposed action stays exactly what it's always
+been: data (action/target/rationale) an analyst reads, not something
+SentinelOS acts on. `remediation/` (see README's "Remediation" section
+for the full design) can go one step further — POSTing an already-
+approved, eligible action to your own webhook so your own SOAR
+platform, firewall API gateway, or custom script can actually carry it
+out. SentinelOS never runs a local command or calls one specific
+vendor's API itself; it only ever asks whatever's on the other end of
+this webhook.
+
+**Two independent switches, both required, plus a literal sandbox mode:**
+
+```env
+SENTINELOS_REMEDIATION_ENABLED=true
+SENTINELOS_REMEDIATION_ACTION_TYPES=block_ip,isolate_host
+SENTINELOS_REMEDIATION_WEBHOOK_URL=https://your-soar.internal.example.com/hooks/sentinelos
+SENTINELOS_REMEDIATION_WEBHOOK_SIGNING_SECRET=a-different-secret-than-the-alert-webhook
+# Leave this at its default (true) until you've confirmed the wiring below.
+SENTINELOS_REMEDIATION_DRY_RUN=true
+```
+
+**Verify the wiring before it's live.** With `SENTINELOS_REMEDIATION_DRY_RUN=true` (the default whenever `SENTINELOS_REMEDIATION_ENABLED` is set at all), nothing is ever sent over the network — approve a test incident's eligible action and check `data/{tenant}/remediation_log.jsonl` for a `"outcome": "dry_run"` record showing exactly what *would* have been sent, and the incident's audit log for the matching `Remediation -> ...` line. Only once that looks right should you set `SENTINELOS_REMEDIATION_DRY_RUN=false` to actually start sending requests.
+
+`action_type` is the Responder Agent's own structured classification of what it proposed (`block_ip`/`isolate_host`/`disable_account`/`reset_credentials`/`other`) — not guessed from the free-text action description afterward. `SENTINELOS_REMEDIATION_ACTION_TYPES` is the allowlist of which of those are actually eligible for automated execution; `"other"` (the Responder's fallback when nothing cleaner fits) is never eligible no matter what you put here. The shipped default (`block_ip,isolate_host`) deliberately excludes `disable_account`/`reset_credentials` — those two typically need more receiver-side context (which identity system, what "reset" actually means there) than a firewall block does, so they're left as manual-approval-only categories until you've confirmed your receiver can handle them safely.
+
+A broken or unreachable remediation receiver never blocks the approve call itself — the same "never block real processing" contract every other external call in this project follows — but the failure is real and visible: `executed: false` on the action, the failure detail in both the audit log and `remediation_log.jsonl`. Test the webhook directly the same way Section 7 recommends for the alert webhook if executions seem to be silently failing.
+
+---
+
+## 9. Back up the incident vault off-box
 
 Your `OBSIDIAN_VAULT_PATH` is the durable, human-readable record of
 every incident — worth a copy somewhere other than this one host.
@@ -670,7 +701,7 @@ schedule instead of `--interval-seconds`.
 
 ---
 
-## 9. Persistent data and backups
+## 10. Persistent data and backups
 
 Everything SentinelOS knows lives in three places — back all three up
 together, since a per-tenant incident's checkpoint, vector memory, and
@@ -678,7 +709,7 @@ vault report are meant to stay in sync:
 
 | Path (via env var)     | What's in it                                                          |
 |-------------------------|------------------------------------------------------------------------|
-| `SENTINELOS_DATA_DIR`   | Per-tenant SQLite: incident checkpoints (`sentinelos.db`), the dashboard/correlation index (`incident_index.db`), `ingestion_log.jsonl`, `audit_chain_ledger.jsonl`, polling-connector cursor state (`poller_state/`); tenant-independent `auth_failures.jsonl` at the root |
+| `SENTINELOS_DATA_DIR`   | Per-tenant SQLite: incident checkpoints (`sentinelos.db`), the dashboard/correlation index (`incident_index.db`), `ingestion_log.jsonl`, `audit_chain_ledger.jsonl`, `remediation_log.jsonl`, polling-connector cursor state (`poller_state/`); tenant-independent `auth_failures.jsonl` at the root |
 | `CHROMA_PERSIST_DIR`    | Per-tenant ChromaDB collections — long-term incident memory used for recall |
 | `OBSIDIAN_VAULT_PATH`   | Markdown incident/hunt reports with wikilinks — the durable, human-readable audit trail |
 
@@ -689,8 +720,8 @@ for a live system, prefer a backup window during low alert volume, or
 use `sqlite3 <file> ".backup <dest>"` per database if you need a
 guaranteed-consistent copy while the service is running.
 
-The three JSONL logs above (`ingestion_log.jsonl`, `audit_chain_ledger.jsonl`,
-`auth_failures.jsonl`) rotate automatically once they cross
+The JSONL logs above (`ingestion_log.jsonl`, `audit_chain_ledger.jsonl`,
+`remediation_log.jsonl`, `auth_failures.jsonl`) rotate automatically once they cross
 `SENTINELOS_LOG_MAX_BYTES` (default 10MB), keeping up to
 `SENTINELOS_LOG_BACKUP_COUNT` (default 3) old copies as `.1`, `.2`, etc.
 — back those up too if you rely on historical ingestion/audit data
@@ -753,7 +784,7 @@ the real incident, not a 404.
 
 ---
 
-## 10. Security hardening checklist
+## 11. Security hardening checklist
 
 Everything here is already discussed in more depth in README's Security
 Notes — this is the short, do-it-before-go-live version:
@@ -779,7 +810,7 @@ Notes — this is the short, do-it-before-go-live version:
 - [ ] Backups of `SENTINELOS_DATA_DIR` / `CHROMA_PERSIST_DIR` /
       `OBSIDIAN_VAULT_PATH` are actually running, not just planned —
       **and you've actually restored from one at least once** (see
-      "Restoring from backup" in Section 9). An untested backup is a
+      "Restoring from backup" in Section 10). An untested backup is a
       hypothesis.
 - [ ] Whoever gets the analyst-dashboard API key understands it's a
       `localStorage`-held bearer token, not a per-user login — treat
@@ -820,10 +851,19 @@ Notes — this is the short, do-it-before-go-live version:
       it: `SENTINELOS_WEBHOOK_SIGNING_SECRET` is also set, so a forged
       notification (from anyone who obtains the webhook URL) can be told
       apart from a real one.
+- [ ] If `SENTINELOS_REMEDIATION_ENABLED=true`: you've confirmed the
+      wiring under `SENTINELOS_REMEDIATION_DRY_RUN=true` first (Section 8)
+      before setting it to `false`, `SENTINELOS_REMEDIATION_ACTION_TYPES`
+      only lists categories your receiver actually knows how to act on
+      safely, and — if the receiver supports it —
+      `SENTINELOS_REMEDIATION_WEBHOOK_SIGNING_SECRET` is set to a value
+      different from `SENTINELOS_WEBHOOK_SIGNING_SECRET` (a remediation
+      receiver is a more sensitive trust boundary than a notification
+      channel and may reasonably be a different system entirely).
 
 ---
 
-## 11. Known limitations to plan around
+## 12. Known limitations to plan around
 
 Pulled forward from README's Known Gaps section because they specifically
 affect a live deployment decision, not just a feature-completeness one:
@@ -876,19 +916,24 @@ affect a live deployment decision, not just a feature-completeness one:
   local HTTP server matching that vendor's *documented* API shape
   instead. Test each against your own deployment before relying on it —
   a documented shape and a live one can diverge.
-- **The Responder Agent never executes anything against a real system.**
-  Every proposed action is data (action/target/rationale) requiring
-  human approval — there is no firewall/EDR/IAM integration to wire up
-  yet. This is a deliberate scope boundary, not an oversight, and
-  wiring one up is real future work that should keep the same approval
-  gate.
-- **The audit trail has no tamper-evidence.** Approve/deny decisions are
-  now attributed to a named analyst (`approved_by`), but nothing
-  cryptographically signs or hash-chains `audit_log` entries or the
-  vault's Markdown files — anyone with filesystem or git-remote access
-  can edit history with no detectable trace. If your compliance
-  requirements need a provably-unaltered record, this doesn't provide
-  one yet.
+- **Real remediation execution exists (Section 8) but only reaches as
+  far as your own webhook.** SentinelOS still never calls a firewall/
+  EDR/IAM API directly, or runs a local command — an approved, eligible
+  action is POSTed to an operator-configured receiver, off by default
+  and dry-run by default even when enabled. Whatever real action
+  actually happens is entirely up to what your receiver does with that
+  request; this project has no way to verify that from here.
+- **The audit trail's tamper-evidence detects, it doesn't prevent.**
+  `utils/audit_chain.py` hash-chains each incident's `audit_log` into a
+  per-tenant append-only ledger (`audit_chain_ledger.jsonl`) and
+  `cli.py verify-audit`/`GET /incidents/{id}/verify-audit` will flag a
+  `MISMATCH` if it's been altered since — live-verified against a real
+  simulated tampering attempt. An attacker with the same filesystem
+  access needed to edit `audit_log` in the first place could, in
+  principle, also rewrite the ledger to match, since both live on the
+  same host with no external immutable anchor backing them. Back the
+  ledger up alongside `SENTINELOS_DATA_DIR` and treat a `MISMATCH` as a
+  serious signal, not "no detected tampering" as an absolute guarantee.
 - **"Air-gapped" doesn't extend to enrichment or alerting.** The
   dashboard's own assets have no CDN dependency, but `enrichment/`
   (AbuseIPDB/VirusTotal/Shodan) and `notifications/webhook.py` make real
@@ -903,7 +948,7 @@ project's stated goal, not a hedge.
 
 ---
 
-## 12. Day-to-day operation
+## 13. Day-to-day operation
 
 - **Dashboard**: `https://your-host/` — incident queue, detail view,
   approve/deny (enter an analyst name once in the top bar — it's
@@ -935,7 +980,7 @@ project's stated goal, not a hedge.
 
 ---
 
-## 13. Upgrading
+## 14. Upgrading
 
 ```bash
 sudo systemctl stop sentinelos-api sentinelos-ingest-*
@@ -954,7 +999,7 @@ a backup costs a minute and a bad one costs a lot more.
 
 ---
 
-## 14. Troubleshooting
+## 15. Troubleshooting
 
 - **`/health` doesn't respond**: check `journalctl -u sentinelos-api -e`
   for a Python traceback — usually a missing/misconfigured provider

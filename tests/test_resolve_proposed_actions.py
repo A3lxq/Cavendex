@@ -22,7 +22,7 @@ def tenant():
     return f"resolve-test-{next(_tenant_counter)}"
 
 
-def _seed_pending_incident(tenant_id, thread_id="inc-1", n_actions=1):
+def _seed_pending_incident(tenant_id, thread_id="inc-1", n_actions=1, actions=None):
     app = get_app(tenant_id)
     config = {"configurable": {"thread_id": thread_id}}
     app.update_state(
@@ -33,9 +33,9 @@ def _seed_pending_incident(tenant_id, thread_id="inc-1", n_actions=1):
             "long_term_summary": "",
             "audit_log": ["Responder Agent -> proposed action(s), awaiting human approval"],
             "next_agent": None,
-            "proposed_actions": [
-                ProposedAction(action=f"block-{i}", target=f"1.2.3.{i}", rationale="r") for i in range(n_actions)
-            ],
+            "proposed_actions": actions
+            if actions is not None
+            else [ProposedAction(action=f"block-{i}", target=f"1.2.3.{i}", rationale="r") for i in range(n_actions)],
             "token_usage": {},
             "tenant_id": tenant_id,
             "threat_intel": [],
@@ -157,3 +157,78 @@ def test_deny_does_not_mark_actions_approved_by_accident(tenant):
 
     assert not any(a.approved is True for a in result["proposed_actions"])
     assert all(a.approved_by == "j.smith" for a in result["proposed_actions"])
+
+
+# ---------- Remediation execution on approval ----------
+
+
+def test_default_action_type_is_never_executed(tenant, monkeypatch, tmp_path):
+    """A plain ProposedAction() defaults to action_type='other' -- must
+    never be executed even with remediation fully enabled, since 'other'
+    carries no machine-actionable shape."""
+    monkeypatch.setenv("SENTINELOS_DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("SENTINELOS_REMEDIATION_ENABLED", "true")
+    _seed_pending_incident(tenant)
+
+    result = resolve_proposed_actions("inc-1", approve=True, tenant_id=tenant)
+
+    assert all(a.executed is None for a in result["proposed_actions"])
+
+
+def test_remediation_disabled_by_default_leaves_executed_none(tenant, monkeypatch, tmp_path):
+    monkeypatch.setenv("SENTINELOS_DATA_DIR", str(tmp_path))
+    monkeypatch.delenv("SENTINELOS_REMEDIATION_ENABLED", raising=False)
+    _seed_pending_incident(
+        tenant, actions=[ProposedAction(action="Block IP", target="1.2.3.4", rationale="r", action_type="block_ip")]
+    )
+
+    result = resolve_proposed_actions("inc-1", approve=True, tenant_id=tenant)
+
+    assert result["proposed_actions"][0].executed is None
+
+
+def test_eligible_action_type_executed_true_under_dry_run_when_approved(tenant, monkeypatch, tmp_path):
+    monkeypatch.setenv("SENTINELOS_DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("SENTINELOS_REMEDIATION_ENABLED", "true")
+    monkeypatch.delenv("SENTINELOS_REMEDIATION_DRY_RUN", raising=False)  # defaults to true
+    _seed_pending_incident(
+        tenant, actions=[ProposedAction(action="Block IP", target="1.2.3.4", rationale="r", action_type="block_ip")]
+    )
+
+    result = resolve_proposed_actions("inc-1", approve=True, tenant_id=tenant, approved_by="j.smith")
+
+    action = result["proposed_actions"][0]
+    assert action.executed is True
+    assert "dry_run" in action.execution_detail
+    assert any("Remediation" in entry for entry in result["audit_log"])
+
+
+def test_denial_never_attempts_remediation(tenant, monkeypatch, tmp_path):
+    monkeypatch.setenv("SENTINELOS_DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("SENTINELOS_REMEDIATION_ENABLED", "true")
+    _seed_pending_incident(
+        tenant, actions=[ProposedAction(action="Block IP", target="1.2.3.4", rationale="r", action_type="block_ip")]
+    )
+
+    result = resolve_proposed_actions("inc-1", approve=False, tenant_id=tenant)
+
+    assert result["proposed_actions"][0].executed is None
+    assert not any("Remediation" in entry for entry in result["audit_log"])
+
+
+def test_mixed_batch_only_executes_the_eligible_action(tenant, monkeypatch, tmp_path):
+    monkeypatch.setenv("SENTINELOS_DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("SENTINELOS_REMEDIATION_ENABLED", "true")
+    _seed_pending_incident(
+        tenant,
+        actions=[
+            ProposedAction(action="Block IP", target="1.2.3.4", rationale="r", action_type="block_ip"),
+            ProposedAction(action="Reset password", target="alice", rationale="r", action_type="reset_credentials"),
+        ],
+    )
+
+    result = resolve_proposed_actions("inc-1", approve=True, tenant_id=tenant)
+
+    by_target = {a.target: a for a in result["proposed_actions"]}
+    assert by_target["1.2.3.4"].executed is True
+    assert by_target["alice"].executed is None

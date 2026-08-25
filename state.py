@@ -33,10 +33,24 @@ class Incident(BaseModel):
     source: Optional[ShortStr] = None
 
 
+# What kind of remediation this is, structured rather than guessed from
+# free text — see remediation/executor.py, which only ever automates a
+# request whose action_type is one of these (never "other", regardless
+# of configuration, since it carries no machine-actionable shape).
+ActionType = Literal["block_ip", "isolate_host", "disable_account", "reset_credentials", "other"]
+
+
 class ProposedAction(BaseModel):
     action: str = Field(max_length=500)
     target: str = Field(max_length=500)
     rationale: str = Field(max_length=1000)
+    # The Responder Agent's own structured classification of `action` —
+    # forced through this Literal via structured output the same way
+    # TriageAssessment.severity/decision are, rather than string-matched
+    # out of the free-text `action` field afterward. Defaults to "other"
+    # so an older checkpoint (persisted before this field existed) still
+    # deserializes cleanly, correctly landing on "never automatable."
+    action_type: ActionType = "other"
     # None = awaiting human decision, True = approved, False = denied
     approved: Optional[bool] = None
     # Who made that decision — an analyst-supplied identifier (CLI --by,
@@ -47,6 +61,14 @@ class ProposedAction(BaseModel):
     # accountability gap in the vault/audit log, not silently hidden as
     # "Human Reviewer" the way it used to be for every decision.
     approved_by: Optional[ShortStr] = None
+    # Set only when approve=True AND action_type was eligible for
+    # automated remediation given current config (see
+    # remediation/executor.py:is_automatable) — None means "never
+    # attempted" (still pending, denied, or not automatable), not
+    # "attempted with an unknown result." True/False is a real send (or
+    # dry run) that succeeded/failed, not just "was eligible."
+    executed: Optional[bool] = None
+    execution_detail: Optional[ShortStr] = None
 
 
 class SentinelState(TypedDict):

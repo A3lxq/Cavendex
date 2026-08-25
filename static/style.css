@@ -335,6 +335,16 @@ main { padding: 22px; }
 .action-decided { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.03em; font-family: var(--font-mono); }
 .action-decided.approved { color: var(--ok); }
 .action-decided.denied { color: var(--critical); }
+.action-type-badge {
+  display: inline-block; margin-left: 6px; padding: 1px 7px; border-radius: 10px;
+  background: var(--bg-elevated-2); border: 1px solid var(--border-soft);
+  font-family: var(--font-mono); font-size: 10px; font-weight: 600;
+  text-transform: uppercase; letter-spacing: 0.03em; color: var(--text-dim);
+  vertical-align: middle;
+}
+.action-executed { margin-top: 8px; font-size: 12px; font-family: var(--font-mono); }
+.action-executed.success { color: var(--ok); }
+.action-executed.failed { color: var(--critical); font-weight: 700; }
 
 /* ---------- Audit log timeline ---------- */
 
