@@ -40,3 +40,36 @@ def test_agent_degrades_gracefully_without_provider(monkeypatch, agent_fn):
     result = agent_fn(_state())  # must not raise
     assert result["next_agent"] is None
     assert any("ERROR" in entry for entry in result["audit_log"])
+
+
+@pytest.mark.parametrize(
+    "agent_fn", [triage_agent, investigator_agent, threat_hunter_agent, responder_agent]
+)
+def test_provider_exception_text_never_reaches_audit_log_or_messages(monkeypatch, agent_fn):
+    """Security regression: a raw LLM SDK exception (which can embed a
+    truncated form of the API key itself -- a real, documented OpenAI
+    "Incorrect API key provided: sk-..." error shape) must never be
+    interpolated verbatim into state["audit_log"]/state["messages"],
+    which are durable, widely-visible records (vault report, dashboard,
+    API responses) -- unlike server-side logs, which are the appropriate
+    place for the full detail. See utils.llm.safe_error_message."""
+    _clear_all(monkeypatch)
+    monkeypatch.setenv("GROQ_API_KEY", "fake-key-for-this-test")
+    secret_looking_text = "Incorrect API key provided: gsk_ABCDEF1234567890SECRETSUFFIX"
+
+    def _raise(*a, **kw):
+        raise RuntimeError(secret_looking_text)
+
+    # get_llm is imported by name into each agent module (`from utils.llm
+    # import ... get_llm ...`), so it must be patched on that module, not
+    # on utils.llm itself, to actually take effect.
+    monkeypatch.setattr(f"{agent_fn.__module__}.get_llm", _raise)
+
+    result = agent_fn(_state())
+
+    all_text = " ".join(result["audit_log"]) + " ".join(
+        m.get("content", "") if isinstance(m, dict) else str(m) for m in result["messages"]
+    )
+    assert secret_looking_text not in all_text
+    assert "SECRETSUFFIX" not in all_text
+    assert "RuntimeError" in all_text  # the exception TYPE is fine to surface, just not its text

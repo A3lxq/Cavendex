@@ -20,10 +20,16 @@ class MatchRule(BaseModel):
     intended.
     """
 
-    severities: Optional[List[Severity]] = None
-    sources: Optional[List[ShortStr]] = None
+    # List-length bounds mirror Incident.iocs/affected_assets' own
+    # max_length=50 (state.py) — consistency with how every other
+    # externally-influenced list field in this project is bounded, even
+    # though a playbook file is local operator config, not attacker-
+    # reachable, so this is defense-in-depth/hardening rather than a
+    # response to a real exploit path.
+    severities: Optional[List[Severity]] = Field(default=None, max_length=50)
+    sources: Optional[List[ShortStr]] = Field(default=None, max_length=50)
     # Case-insensitive substring match against any of the incident's IOCs.
-    ioc_contains: Optional[List[ShortStr]] = None
+    ioc_contains: Optional[List[ShortStr]] = Field(default=None, max_length=50)
 
     @model_validator(mode="after")
     def _at_least_one_condition(self):
@@ -44,7 +50,12 @@ class PlaybookStep(BaseModel):
     # playbooks/expander.py for the fixed-whitelist substitution. Never
     # eval'd or interpreted as a format string beyond that whitelist.
     target_template: ShortStr
-    rationale: ShortStr = Field(max_length=1000)
+    # Plain str, not ShortStr -- ShortStr already carries its own
+    # Field(max_length=300); Pydantic merges an Annotated type's own
+    # constraint with a field-level override by taking the STRICTER of
+    # the two, so `ShortStr = Field(max_length=1000)` was silently still
+    # enforcing 300, not the 1000 this declaration claimed.
+    rationale: str = Field(max_length=1000)
 
 
 class Playbook(BaseModel):
@@ -56,7 +67,7 @@ class Playbook(BaseModel):
     # deterministic result regardless of file load order.
     priority: int = 0
     match: MatchRule
-    steps: List[PlaybookStep] = Field(min_length=1)
+    steps: List[PlaybookStep] = Field(min_length=1, max_length=50)
     # Whether a real attempted-and-failed remediation send for one step
     # skips the rest of this playbook's remaining steps ("halt", the
     # safer default) or lets them proceed independently ("continue") —

@@ -176,6 +176,45 @@ def test_no_shared_resolution_does_not_correlate(monkeypatch, tmp_path):
     assert match is None
 
 
+def test_domain_lookup_count_is_bounded_by_a_configurable_budget(monkeypatch, tmp_path):
+    """Security regression: one alert with many domain IOCs matched
+    against many candidates (each with their own domain IOCs) must never
+    turn into an unbounded number of real VirusTotal calls -- see
+    SENTINELOS_IDENTITY_DNS_MAX_LOOKUPS in ingestion/identity_correlation.py."""
+    monkeypatch.setenv("SENTINELOS_CORRELATION_IDENTITY_DNS_ENABLED", "true")
+    monkeypatch.setenv("VIRUSTOTAL_API_KEY", "fake-key")
+    monkeypatch.setenv("SENTINELOS_IDENTITY_DNS_MAX_LOOKUPS", "3")
+
+    call_count = {"n": 0}
+
+    def _fake_get(url, headers=None, params=None, timeout=None):
+        call_count["n"] += 1
+
+        class _FakeResponse:
+            status_code = 200
+
+            def json(self_inner):
+                # Every domain resolves to a DIFFERENT IP, so nothing
+                # ever matches -- isolates the call-count assertion from
+                # match-found early-return behavior.
+                return {"data": [{"attributes": {"ip_address": f"203.0.113.{call_count['n']}"}}]}
+
+        return _FakeResponse()
+
+    monkeypatch.setattr("requests.get", _fake_get)
+
+    # 10 distinct alert domains, 10 candidates each with 10 distinct
+    # domains -- without a budget this would attempt up to 110 real calls.
+    alert_domains = [f"alert-{i}.example" for i in range(10)]
+    candidates = [
+        _candidate(f"inc-{c}", iocs=[f"cand-{c}-{i}.example" for i in range(10)]) for c in range(10)
+    ]
+    match = find_identity_correlation("t1", _alert(iocs=alert_domains), candidates=candidates)
+
+    assert match is None
+    assert call_count["n"] == 3
+
+
 def test_non_domain_iocs_are_ignored_by_domain_identity_tier(monkeypatch, tmp_path):
     monkeypatch.setenv("SENTINELOS_CORRELATION_IDENTITY_DNS_ENABLED", "true")
     monkeypatch.setenv("VIRUSTOTAL_API_KEY", "fake-key")

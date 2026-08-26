@@ -81,6 +81,20 @@ def test_schema_invalid_file_is_skipped_valid_ones_still_load(monkeypatch, tmp_p
     assert playbooks[0].id == "pb-good"
 
 
+def test_colliding_id_across_files_is_rejected_not_last_file_wins(monkeypatch, tmp_path):
+    """Security regression: `id` is relied on as a stable key elsewhere
+    (matcher tie-break, resolve_proposed_actions' halt/continue lookup)
+    -- a second file silently reusing an id must be rejected, not
+    silently let "last-listed file wins" happen."""
+    _write_playbook(tmp_path / "a-first.json", id="dup-id", priority=1)
+    _write_playbook(tmp_path / "b-second.json", id="dup-id", priority=99)
+    monkeypatch.setenv("SENTINELOS_PLAYBOOKS_DIR", str(tmp_path))
+
+    playbooks = load_playbooks()
+    assert len(playbooks) == 1
+    assert playbooks[0].priority == 1  # the first-loaded (alphabetically) file wins, not silently the second
+
+
 def test_reload_picks_up_a_new_file_via_mtime(monkeypatch, tmp_path):
     _write_playbook(tmp_path / "a.json", id="pb-a")
     monkeypatch.setenv("SENTINELOS_PLAYBOOKS_DIR", str(tmp_path))

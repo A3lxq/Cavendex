@@ -37,6 +37,44 @@ def test_incident_creation_is_rate_limited(monkeypatch):
     assert "Retry-After" in r3.headers
 
 
+def test_tenant_global_limit_catches_what_per_ip_limit_cannot(monkeypatch):
+    """Security regression: the per-(tenant, client IP) limit alone does
+    nothing to stop the SAME tenant being hit from many different source
+    IPs at once (each individually staying under its own per-IP limit
+    while collectively exceeding what the tenant's LLM pipeline budget
+    was ever meant to absorb). Simulated directly against
+    _enforce_tenant_rate_limit rather than through TestClient, since
+    TestClient doesn't offer a supported way to vary the simulated
+    client IP per request -- this is the same function every real
+    request (regardless of source IP) funnels through."""
+    from fastapi import HTTPException
+
+    from api import _enforce_tenant_rate_limit
+
+    monkeypatch.setenv("SENTINELOS_TENANT_RATE_LIMIT_PER_MINUTE", "3")
+
+    # Three calls succeed (simulating three different client IPs, each
+    # well under its own per-IP limit) -- the fourth is rejected because
+    # the tenant-wide ceiling, not any single IP's, has been reached.
+    for _ in range(3):
+        _enforce_tenant_rate_limit("global-limit-test-tenant")
+
+    with pytest.raises(HTTPException) as exc_info:
+        _enforce_tenant_rate_limit("global-limit-test-tenant")
+    assert exc_info.value.status_code == 429
+    assert "Tenant-wide" in exc_info.value.detail
+
+
+def test_tenant_global_limit_is_scoped_per_tenant(monkeypatch):
+    from api import _enforce_tenant_rate_limit
+
+    monkeypatch.setenv("SENTINELOS_TENANT_RATE_LIMIT_PER_MINUTE", "1")
+
+    _enforce_tenant_rate_limit("tenant-a-global-test")
+    # A different tenant's own budget is untouched by tenant-a's usage.
+    _enforce_tenant_rate_limit("tenant-b-global-test")
+
+
 def test_reads_are_never_rate_limited(monkeypatch):
     monkeypatch.setenv("SENTINELOS_RATE_LIMIT_PER_MINUTE", "1")
     # Burn through the limit on a *different* key namespace (tenant "reads-test")

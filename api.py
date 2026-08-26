@@ -234,6 +234,38 @@ def _enforce_rate_limit(key: str) -> None:
         )
 
 
+def _tenant_rate_limit_per_minute() -> int:
+    try:
+        return int(os.getenv("SENTINELOS_TENANT_RATE_LIMIT_PER_MINUTE", "50"))
+    except ValueError:
+        return 50
+
+
+def _enforce_tenant_rate_limit(tenant_id: str) -> None:
+    """A SECOND, tenant-wide ceiling on top of the per-(tenant, client IP)
+    check above — that one alone only ever punishes one noisy client; it
+    does nothing to stop the same tenant being hit from many source IPs
+    at once (a real botnet/distributed-abuse case, or just many analysts
+    all working the same tenant), each individually staying under its
+    own per-IP limit while collectively far exceeding what the per-
+    incident enrichment cap and the LLM pipeline were ever meant to
+    absorb for one tenant. Mirrors the same two-tier shape
+    ingestion/pipeline.py already uses (a tenant-keyed limit alongside
+    a narrower one) for exactly this reason.
+    """
+    limit = _tenant_rate_limit_per_minute()
+    retry_after = check_rate_limit(f"tenant-global:{tenant_id}", limit=limit)
+    if retry_after is not None:
+        raise HTTPException(
+            status_code=429,
+            detail=(
+                f"Tenant-wide rate limit exceeded ({limit} requests/minute across all "
+                "clients) — this endpoint runs a full LLM pipeline per call."
+            ),
+            headers={"Retry-After": str(int(retry_after))},
+        )
+
+
 def rate_limit_default(request: Request) -> None:
     """Applied to the LLM-triggering default-tenant routes only — reads
     (show/get) and human approve/deny decisions never call an LLM, so
@@ -241,11 +273,13 @@ def rate_limit_default(request: Request) -> None:
     """
     client_ip = request.client.host if request.client else "unknown"
     _enforce_rate_limit(f"{DEFAULT_TENANT}:{client_ip}")
+    _enforce_tenant_rate_limit(DEFAULT_TENANT)
 
 
 def rate_limit_for_tenant(tenant_id: str, request: Request) -> None:
     client_ip = request.client.host if request.client else "unknown"
     _enforce_rate_limit(f"{tenant_id}:{client_ip}")
+    _enforce_tenant_rate_limit(tenant_id)
 
 
 _MAX_INGEST_BODY_BYTES = 65536

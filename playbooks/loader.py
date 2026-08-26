@@ -46,6 +46,7 @@ def _fingerprint(directory: str) -> Optional[Tuple[Tuple[str, float], ...]]:
 
 def _load_all(directory: str, names: Tuple[str, ...]) -> List[Playbook]:
     playbooks: List[Playbook] = []
+    seen_ids = set()
     for name in names:
         path = os.path.join(directory, name)
         try:
@@ -55,10 +56,25 @@ def _load_all(directory: str, names: Tuple[str, ...]) -> List[Playbook]:
             logger.warning("Skipping playbook file %s: could not parse JSON (%s)", path, exc)
             continue
         try:
-            playbooks.append(Playbook.model_validate(raw))
+            playbook = Playbook.model_validate(raw)
         except ValidationError as exc:
             logger.warning("Skipping playbook file %s: failed validation (%s)", path, exc)
             continue
+        # `id` is relied on as a stable key elsewhere (matcher tie-break,
+        # resolve_proposed_actions' playbooks_by_id lookup) -- a second
+        # file silently reusing an id already loaded (from an earlier
+        # file, alphabetically) would let one playbook's on_failure
+        # policy or steps be silently attributed to another's id. Reject
+        # the collider rather than letting "last file wins" happen
+        # implicitly.
+        if playbook.id in seen_ids:
+            logger.warning(
+                "Skipping playbook file %s: id %r is already used by another loaded playbook file",
+                path, playbook.id,
+            )
+            continue
+        seen_ids.add(playbook.id)
+        playbooks.append(playbook)
     return playbooks
 
 

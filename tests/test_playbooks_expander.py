@@ -105,6 +105,36 @@ def test_skipped_step_preserves_original_chain_step_numbering_for_later_steps():
     assert actions[0].chain_step == 2  # not renumbered to 1
 
 
+def test_on_failure_is_pinned_onto_each_action(monkeypatch=None):
+    playbook = _playbook(on_failure="continue", steps=[_step(target_template="{ioc}")])
+    incident = _incident(iocs=["1.2.3.4"])
+
+    actions, _ = expand_playbook_actions(playbook, incident)
+
+    assert actions[0].on_failure == "continue"
+
+
+def test_positional_target_selection_is_noted_in_rationale():
+    """Security-adjacent UX fix: a reviewer approving an action rendered
+    from {ioc}/{asset} should see that the target was picked by list
+    position, not by relevance -- a beaconing incident's first-reported
+    IOC can be the victim's own address, not the actual malicious one."""
+    playbook = _playbook(steps=[_step(target_template="{ioc}", action="Block IP")])
+    incident = _incident(iocs=["1.2.3.4", "5.6.7.8"])
+
+    actions, _ = expand_playbook_actions(playbook, incident)
+
+    assert "first reported" in actions[0].rationale
+
+
+def test_literal_target_is_not_flagged_as_positional():
+    playbook = _playbook(steps=[_step(target_template="quarantine-vlan-99", action="Isolate")])
+
+    actions, _ = expand_playbook_actions(playbook, _incident())
+
+    assert "first reported" not in actions[0].rationale
+
+
 def test_no_renderable_steps_returns_empty_actions():
     playbook = _playbook(steps=[_step(target_template="{ioc}")])
     actions, skipped = expand_playbook_actions(playbook, _incident(iocs=[]))

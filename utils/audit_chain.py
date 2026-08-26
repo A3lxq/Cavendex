@@ -32,6 +32,7 @@ from datetime import datetime, timezone
 from typing import List, Optional
 
 from utils.log_rotation import append_line
+from utils.tenancy import sanitize_tenant_id
 
 _GENESIS = "sentinelos-audit-chain-v1"
 
@@ -48,7 +49,15 @@ def compute_chain_hash(entries: List[str]) -> str:
 
 
 def _ledger_path(tenant_id: str) -> str:
-    return os.path.join(os.getenv("SENTINELOS_DATA_DIR", "data"), tenant_id, "audit_chain_ledger.jsonl")
+    # Every other tenant-scoped module (graph.tenant_data_dir,
+    # utils/user_accounts.py, ingestion/pipeline.py, ...) funnels
+    # tenant_id through sanitize_tenant_id before it becomes a
+    # filesystem path component; this was the one place that didn't,
+    # letting an unsanitized tenant_id (e.g. "..") escape the intended
+    # per-tenant data directory by one level. Sanitizing here, the sole
+    # chokepoint every function in this module already goes through,
+    # closes it regardless of what any current or future caller passes.
+    return os.path.join(os.getenv("SENTINELOS_DATA_DIR", "data"), sanitize_tenant_id(tenant_id), "audit_chain_ledger.jsonl")
 
 
 def _ledger_paths_oldest_first(tenant_id: str) -> List[str]:

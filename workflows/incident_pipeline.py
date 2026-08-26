@@ -12,6 +12,7 @@ collection (memory.vector_store), and its own Obsidian vault subfolder
 """
 
 import os
+import threading
 import uuid
 from typing import List, Optional
 
@@ -24,6 +25,32 @@ from utils.incident_index import upsert_incident_summary
 from utils.llm import accumulate_usage
 from utils.obsidian import write_incident_report
 from utils.tenancy import DEFAULT_TENANT, sanitize_tenant_id
+
+# Per-(tenant_id, thread_id) locks guarding every read-modify-write cycle
+# against a single incident's checkpoint (app.get_state -> compute ->
+# app.update_state). LangGraph's SqliteSaver has no compare-and-swap —
+# two concurrent calls (e.g. a double-submitted Approve click, or two
+# analysts approving the same incident at once) would otherwise race:
+# the loser's update_state silently overwrites the winner's already-
+# committed state, erasing whichever audit_log entries/decisions/
+# remediation results were written in between. Scoped to this one
+# process, matching this project's default single-uvicorn-process
+# deployment model (see README's "Distributed Rate Limiting and Dedup"
+# for the same in-process-by-default framing) — a multi-worker/multi-
+# replica deployment needs a real distributed lock instead, the same
+# honest limitation already documented for the in-process SSE pub/sub.
+_incident_locks: dict = {}
+_incident_locks_registry_lock = threading.Lock()
+
+
+def _incident_lock(tenant_id: str, thread_id: str) -> threading.Lock:
+    key = (tenant_id, thread_id)
+    with _incident_locks_registry_lock:
+        lock = _incident_locks.get(key)
+        if lock is None:
+            lock = threading.Lock()
+            _incident_locks[key] = lock
+        return lock
 
 
 def _config(thread_id: str) -> dict:
@@ -75,29 +102,36 @@ def _apply_playbook(app, config: dict, state: SentinelState) -> SentinelState:
     if not new_actions:
         return state
 
-    existing = state.get("proposed_actions", [])
-    proposed_actions = new_actions if _playbooks_mode() == "replace" else list(existing) + new_actions
+    tenant_id = state.get("tenant_id") or DEFAULT_TENANT
+    with _incident_lock(tenant_id, incident.id):
+        # Re-read state under the lock — it may have changed since the
+        # snapshot passed in (e.g. a concurrent merge_correlated_alert)
+        # — and re-derive proposed_actions/audit_log from that current
+        # state, not the possibly-stale copy captured before the lock.
+        current = app.get_state(config).values or state
+        existing = current.get("proposed_actions", [])
+        proposed_actions = new_actions if _playbooks_mode() == "replace" else list(existing) + new_actions
 
-    audit_entries = list(state.get("audit_log", []))
-    summary = f"Playbook -> matched '{playbook.name}' ({playbook.id}): added {len(new_actions)} step(s)"
-    if skipped:
-        summary += f", skipped {len(skipped)} unrenderable step(s) ({'; '.join(skipped)})"
-    audit_entries.append(summary)
+        audit_entries = list(current.get("audit_log", []))
+        summary = f"Playbook -> matched '{playbook.name}' ({playbook.id}): added {len(new_actions)} step(s)"
+        if skipped:
+            summary += f", skipped {len(skipped)} unrenderable step(s) ({'; '.join(skipped)})"
+        audit_entries.append(summary)
 
-    # Mirrors agents/responder_agent.py's own "there are now proposed
-    # actions awaiting a human" transition — a playbook match is just
-    # another source of proposed actions, not a different status shape.
-    updated_incident = incident.model_copy(update={"status": "pending_approval"})
+        # Mirrors agents/responder_agent.py's own "there are now proposed
+        # actions awaiting a human" transition — a playbook match is just
+        # another source of proposed actions, not a different status shape.
+        updated_incident = (current.get("incident") or incident).model_copy(update={"status": "pending_approval"})
 
-    app.update_state(
-        config,
-        {
-            "incident": updated_incident,
-            "proposed_actions": proposed_actions,
-            "audit_log": audit_entries,
-        },
-    )
-    return app.get_state(config).values
+        app.update_state(
+            config,
+            {
+                "incident": updated_incident,
+                "proposed_actions": proposed_actions,
+                "audit_log": audit_entries,
+            },
+        )
+        return app.get_state(config).values
 
 
 def _persist(state: SentinelState, report_type: str = "incident") -> None:
@@ -298,53 +332,61 @@ def merge_correlated_alert(
     tenant_id = sanitize_tenant_id(tenant_id)
     app = get_app(tenant_id)
     config = _config(thread_id)
-    state = app.get_state(config).values
-    if not state:
-        raise ValueError(f"No incident found for thread_id={thread_id}")
 
-    incident = state.get("incident")
-    if incident is None:
-        raise ValueError(f"Incident {thread_id} has no incident record")
+    # Locked: a busy ingestion pipeline can plausibly deliver several
+    # alerts that all correlate into the SAME open incident at nearly
+    # the same time (e.g. a burst of related events) — without this,
+    # two concurrent merges could race on the same read-modify-write
+    # cycle and one's merged IOCs/audit entry would silently overwrite
+    # the other's (LangGraph's SqliteSaver has no compare-and-swap).
+    with _incident_lock(tenant_id, thread_id):
+        state = app.get_state(config).values
+        if not state:
+            raise ValueError(f"No incident found for thread_id={thread_id}")
 
-    merged_iocs = list(dict.fromkeys(list(incident.iocs) + list(iocs or [])))[:50]
-    merged_assets = list(dict.fromkeys(list(incident.affected_assets) + list(affected_assets or [])))[:50]
-    merged_severity = incident.severity
-    if SEVERITY_RANK.get(severity, 1) > SEVERITY_RANK.get(incident.severity, 1):
-        merged_severity = severity
+        incident = state.get("incident")
+        if incident is None:
+            raise ValueError(f"Incident {thread_id} has no incident record")
 
-    incident = incident.model_copy(
-        update={"iocs": merged_iocs, "affected_assets": merged_assets, "severity": merged_severity}
-    )
+        merged_iocs = list(dict.fromkeys(list(incident.iocs) + list(iocs or [])))[:50]
+        merged_assets = list(dict.fromkeys(list(incident.affected_assets) + list(affected_assets or [])))[:50]
+        merged_severity = incident.severity
+        if SEVERITY_RANK.get(severity, 1) > SEVERITY_RANK.get(incident.severity, 1):
+            merged_severity = severity
 
-    audit_entries = list(state.get("audit_log", []))
-    audit_entries.append(
-        f"Correlation -> merged related alert from {source or 'ingestion'} into incident {thread_id} "
-        f"({match_reason}): {description[:200]}"
-    )
+        incident = incident.model_copy(
+            update={"iocs": merged_iocs, "affected_assets": merged_assets, "severity": merged_severity}
+        )
 
-    # `messages` uses add_messages — pass only the new message, never the
-    # full accumulated list, or the prior history gets double-counted.
-    new_message = {
-        "role": "system",
-        "name": "Correlation",
-        "content": (
-            f"Correlated alert merged from {source or 'ingestion'} (severity: {severity}) — {match_reason}:\n"
-            f"{description}"
-        ),
-    }
+        audit_entries = list(state.get("audit_log", []))
+        audit_entries.append(
+            f"Correlation -> merged related alert from {source or 'ingestion'} into incident {thread_id} "
+            f"({match_reason}): {description[:200]}"
+        )
 
-    update = {
-        "incident": incident,
-        "audit_log": audit_entries,
-        "messages": [new_message],
-    }
-    if usage:
-        accumulate_usage(state, "Correlation Judge", usage)
-        update["token_usage"] = state["token_usage"]
+        # `messages` uses add_messages — pass only the new message, never the
+        # full accumulated list, or the prior history gets double-counted.
+        new_message = {
+            "role": "system",
+            "name": "Correlation",
+            "content": (
+                f"Correlated alert merged from {source or 'ingestion'} (severity: {severity}) — {match_reason}:\n"
+                f"{description}"
+            ),
+        }
 
-    app.update_state(config, update)
+        update = {
+            "incident": incident,
+            "audit_log": audit_entries,
+            "messages": [new_message],
+        }
+        if usage:
+            accumulate_usage(state, "Correlation Judge", usage)
+            update["token_usage"] = state["token_usage"]
 
-    final_state = app.get_state(config).values
+        app.update_state(config, update)
+        final_state = app.get_state(config).values
+
     _persist(final_state)
     notify_if_needed(final_state, reason="correlated_merge")
     return final_state
@@ -385,102 +427,120 @@ def resolve_proposed_actions(
     consequential action in this whole system could never say who took it.
     """
     app = get_app(tenant_id)
-    snapshot = app.get_state(_config(thread_id))
-    state = snapshot.values
-    if not state:
-        raise ValueError(f"No incident found for thread_id={thread_id}")
 
-    incident = state.get("incident")
-    proposed_actions = state.get("proposed_actions", [])
-    if not proposed_actions:
-        raise ValueError(f"Incident {thread_id} has no pending proposed actions")
+    # Locked for the whole read-modify-write cycle: two concurrent
+    # approve/deny calls on the same incident (a double-submitted click,
+    # two analysts, or a retried request) would otherwise race — the
+    # loser's app.update_state silently overwrites the winner's already-
+    # committed decision/audit entries/remediation results, since
+    # LangGraph's SqliteSaver has no compare-and-swap.
+    with _incident_lock(tenant_id, thread_id):
+        snapshot = app.get_state(_config(thread_id))
+        state = snapshot.values
+        if not state:
+            raise ValueError(f"No incident found for thread_id={thread_id}")
 
-    if _require_approved_by() and not approved_by:
-        raise ValueError(
-            "SENTINELOS_REQUIRE_APPROVED_BY is set — this approve/deny call must include "
-            "an analyst name (CLI --by, the API's approved_by field, or the dashboard's "
-            "Analyst name field)."
+        incident = state.get("incident")
+        proposed_actions = state.get("proposed_actions", [])
+        if not proposed_actions:
+            raise ValueError(f"Incident {thread_id} has no pending proposed actions")
+
+        if _require_approved_by() and not approved_by:
+            raise ValueError(
+                "SENTINELOS_REQUIRE_APPROVED_BY is set — this approve/deny call must include "
+                "an analyst name (CLI --by, the API's approved_by field, or the dashboard's "
+                "Analyst name field)."
+            )
+
+        decided = [
+            action.model_copy(update={"approved": approve, "approved_by": approved_by})
+            for action in proposed_actions
+        ]
+
+        verb = "approved" if approve else "denied"
+        reviewer_label = f"Human Reviewer ({approved_by})" if approved_by else "Human Reviewer (unspecified)"
+        audit_entries = list(state.get("audit_log", []))
+        audit_entries.append(
+            f"{reviewer_label} -> {verb} {len(decided)} proposed action(s) for incident {thread_id}"
         )
 
-    decided = [
-        action.model_copy(update={"approved": approve, "approved_by": approved_by})
-        for action in proposed_actions
-    ]
+        # Real remediation execution only ever runs on approval, and only
+        # for an action whose type is currently eligible (see
+        # remediation/executor.py:is_automatable) — a denial never reaches
+        # this at all. Attempted per action rather than per incident, since
+        # a mixed batch (one automatable, one not) is a real, expected case.
+        if approve and incident is not None:
+            from remediation.pipeline import execute_if_eligible
 
-    verb = "approved" if approve else "denied"
-    reviewer_label = f"Human Reviewer ({approved_by})" if approved_by else "Human Reviewer (unspecified)"
-    audit_entries = list(state.get("audit_log", []))
-    audit_entries.append(
-        f"{reviewer_label} -> {verb} {len(decided)} proposed action(s) for incident {thread_id}"
-    )
+            # Keyed by playbook_id, populated only once a real attempted
+            # send for one of that playbook's steps actually fails (not
+            # merely "not automatable" — see the executed is False check
+            # below). A halted chain's remaining steps are skipped rather
+            # than attempted, in the order decided already preserves —
+            # nothing else in this codebase reorders proposed_actions after
+            # playbooks/expander.py assigns chain_step, so a simple
+            # in-order walk is enough for correct halt semantics.
+            #
+            # on_failure is read from the action itself (pinned by
+            # playbooks/expander.py at the time the chain was generated),
+            # never by re-resolving playbook_id against a fresh
+            # load_playbooks() call here — an incident can sit
+            # pending_approval for minutes to days, and re-reading the
+            # policy from current disk state at approval time would let a
+            # playbook file edited (or a colliding id introduced) during
+            # that window silently change the safety semantics an analyst
+            # already reviewed and approved. Falls back to "halt" (the safe
+            # default) only for an old checkpoint persisted before this
+            # field existed.
+            halted_chains = set()
 
-    # Real remediation execution only ever runs on approval, and only
-    # for an action whose type is currently eligible (see
-    # remediation/executor.py:is_automatable) — a denial never reaches
-    # this at all. Attempted per action rather than per incident, since
-    # a mixed batch (one automatable, one not) is a real, expected case.
-    if approve and incident is not None:
-        from remediation.pipeline import execute_if_eligible
-        from playbooks.loader import load_playbooks
+            remediated = []
+            for action in decided:
+                if action.playbook_id is not None and action.playbook_id in halted_chains:
+                    action = action.model_copy(
+                        update={
+                            "executed": None,
+                            "execution_detail": "skipped: an earlier step in this playbook chain failed",
+                        }
+                    )
+                    remediated.append(action)
+                    continue
 
-        # Keyed by playbook_id, populated only once a real attempted
-        # send for one of that playbook's steps actually fails (not
-        # merely "not automatable" — see the executed is False check
-        # below). A halted chain's remaining steps are skipped rather
-        # than attempted, in the order decided already preserves —
-        # nothing else in this codebase reorders proposed_actions after
-        # playbooks/expander.py assigns chain_step, so a simple
-        # in-order walk is enough for correct halt semantics.
-        playbooks_by_id = {p.id: p for p in load_playbooks()}
-        halted_chains = set()
-
-        remediated = []
-        for action in decided:
-            if action.playbook_id is not None and action.playbook_id in halted_chains:
-                action = action.model_copy(
-                    update={
-                        "executed": None,
-                        "execution_detail": "skipped: an earlier step in this playbook chain failed",
-                    }
-                )
+                executed, detail = execute_if_eligible(incident, action, tenant_id)
+                if executed is not None:
+                    action = action.model_copy(update={"executed": executed, "execution_detail": detail})
+                    audit_entries.append(f"Remediation -> {action.action_type} on {action.target!r}: {detail}")
+                if executed is False and action.playbook_id is not None:
+                    on_failure = action.on_failure or "halt"
+                    if on_failure == "halt":
+                        halted_chains.add(action.playbook_id)
                 remediated.append(action)
-                continue
+            decided = remediated
 
-            executed, detail = execute_if_eligible(incident, action, tenant_id)
-            if executed is not None:
-                action = action.model_copy(update={"executed": executed, "execution_detail": detail})
-                audit_entries.append(f"Remediation -> {action.action_type} on {action.target!r}: {detail}")
-            if executed is False and action.playbook_id is not None:
-                playbook = playbooks_by_id.get(action.playbook_id)
-                on_failure = playbook.on_failure if playbook is not None else "halt"
-                if on_failure == "halt":
-                    halted_chains.add(action.playbook_id)
-            remediated.append(action)
-        decided = remediated
+        if incident is not None:
+            incident = incident.model_copy(update={"status": "contained" if approve else "closed"})
 
-    if incident is not None:
-        incident = incident.model_copy(update={"status": "contained" if approve else "closed"})
+        action_lines = "\n".join(f"- {a.action} → {a.target} [{verb}]" for a in decided)
+        # `messages` uses add_messages — pass only the new message, never the
+        # full accumulated list, or the prior history gets double-counted.
+        new_message = {
+            "role": "human",
+            "name": reviewer_label,
+            "content": f"Reviewer {verb} the proposed actions:\n{action_lines}",
+        }
 
-    action_lines = "\n".join(f"- {a.action} → {a.target} [{verb}]" for a in decided)
-    # `messages` uses add_messages — pass only the new message, never the
-    # full accumulated list, or the prior history gets double-counted.
-    new_message = {
-        "role": "human",
-        "name": reviewer_label,
-        "content": f"Reviewer {verb} the proposed actions:\n{action_lines}",
-    }
+        app.update_state(
+            _config(thread_id),
+            {
+                "incident": incident,
+                "proposed_actions": decided,
+                "audit_log": audit_entries,
+                "messages": [new_message],
+            },
+        )
 
-    app.update_state(
-        _config(thread_id),
-        {
-            "incident": incident,
-            "proposed_actions": decided,
-            "audit_log": audit_entries,
-            "messages": [new_message],
-        },
-    )
+        final_state = app.get_state(_config(thread_id)).values
 
-    final_state = app.get_state(_config(thread_id)).values
     _persist(final_state)
     return final_state
 

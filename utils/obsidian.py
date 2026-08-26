@@ -41,6 +41,9 @@ def _slugify(text: str) -> str:
     return slug
 
 
+_CONTROL_CHARS_RE = re.compile(r"[\x00-\x1f]")
+
+
 def _escape(text) -> str:
     """Neutralize raw HTML in content that ultimately originates from an
     incident description (external input) or an LLM completion (which a
@@ -51,8 +54,20 @@ def _escape(text) -> str:
     whoever opens it. quote=False keeps normal quote characters readable in
     prose; only angle brackets and bare ampersands actually trigger HTML
     parsing.
+
+    Also strips C0 control characters (including newlines/carriage
+    returns) before escaping — content that's meant to render as one
+    Markdown line (an audit_log entry, an analyst name, an ingested
+    alert's description/source) but contains an embedded newline could
+    otherwise break out of its intended single bullet/line and inject
+    arbitrary new Markdown structure (a fake bullet, a fake heading, a
+    misleading "approved by" line) into the vault report — the same
+    untrusted-input class this project already treats carefully for
+    prompt injection, applied here to Markdown structure instead of an
+    LLM prompt.
     """
-    return html.escape(str(text), quote=False)
+    text = _CONTROL_CHARS_RE.sub(" ", str(text))
+    return html.escape(text, quote=False)
 
 
 def _format_usage(token_usage) -> str:

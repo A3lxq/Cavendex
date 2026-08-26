@@ -31,6 +31,7 @@ against the documented shape, not a live vendor tenant"). All three are
 inert without a key either way, same as everything else here.
 """
 
+import logging
 import os
 import threading
 import time
@@ -38,6 +39,8 @@ import urllib.parse
 from typing import List, Optional
 
 from enrichment.schemas import EnrichmentResult
+
+logger = logging.getLogger(__name__)
 
 # Security note (applies to every provider function below, not just the
 # new ones): an IOC's value ultimately traces back to ingested alert
@@ -65,6 +68,16 @@ from enrichment.schemas import EnrichmentResult
 # provider fan-out into an unbounded number of real third-party requests.
 
 _CACHE_TTL_SECONDS = 3600.0
+# Bounds the cache's total memory growth over the process's lifetime —
+# without this, an indicator looked up exactly once (never again, so its
+# own lazy per-key expiry in _cache_get never fires) stayed cached
+# forever. A sustained stream of distinct classifiable indicators (via
+# POST /enrichment/lookup, or ordinary incident volume) could otherwise
+# grow this dict without bound. 5000 entries is generous for realistic
+# usage (a real SOC revisits the same handful of hot indicators far more
+# than it sees fresh ones within any given hour) while still capping
+# worst-case memory at a small, fixed size.
+_CACHE_MAX_ENTRIES = 5000
 _cache_lock = threading.Lock()
 _cache: dict = {}
 
@@ -87,6 +100,50 @@ def _cache_get(key) -> Optional[object]:
 def _cache_set(key, result: object) -> None:
     with _cache_lock:
         _cache[key] = (result, time.monotonic())
+        if len(_cache) <= _CACHE_MAX_ENTRIES:
+            return
+        now = time.monotonic()
+        expired = [k for k, (_, cached_at) in _cache.items() if now - cached_at > _CACHE_TTL_SECONDS]
+        for k in expired:
+            del _cache[k]
+        if len(_cache) > _CACHE_MAX_ENTRIES:
+            # Still over budget after sweeping expired entries -- evict
+            # the oldest-cached ones first (a simple, adequate policy
+            # for a cache this size; not a true LRU, since a cache hit
+            # doesn't refresh an entry's position).
+            oldest_first = sorted(_cache.items(), key=lambda kv: kv[1][1])
+            for k, _ in oldest_first[: len(_cache) - _CACHE_MAX_ENTRIES]:
+                del _cache[k]
+
+
+def _error_detail(response) -> str:
+    """A non-200 response's detail, safe to put in a durable
+    EnrichmentResult (the vault report, the dashboard, an API response)
+    — never echoes the raw third-party response body, which can contain
+    anything (an HTML error/maintenance page, a WAF/CDN challenge page,
+    occasionally reflected request data) with no guarantee it's safe to
+    display verbatim. The full body is still logged server-side (an
+    already-trusted vantage point, same tier as `.env`) for whoever
+    needs to actually debug a broken integration.
+    """
+    logger.warning("Provider returned HTTP %s: %s", response.status_code, response.text[:2000])
+    return f"HTTP {response.status_code} (see server logs for the response body)."
+
+
+def _parse_json(response):
+    """response.json(), or None if the body isn't valid JSON. A 200
+    response with a non-JSON body (a captive portal, a WAF/proxy
+    injecting an error page, a provider outage serving HTML with a 200
+    status) must never raise past this point — every call site checks
+    for None explicitly and returns an "error" EnrichmentResult, rather
+    than letting response.json() raise straight out of this module and
+    violate its own "never raise into the caller" contract.
+    """
+    try:
+        return response.json()
+    except ValueError:
+        logger.warning("Provider returned a non-JSON body on HTTP %s", response.status_code)
+        return None
 
 
 def lookup_ip_abuseipdb(ip: str) -> Optional[EnrichmentResult]:
@@ -123,10 +180,16 @@ def lookup_ip_abuseipdb(ip: str) -> Optional[EnrichmentResult]:
     if response.status_code != 200:
         return EnrichmentResult(
             indicator=ip, indicator_type="ip", source="abuseipdb", verdict="error",
-            detail=f"HTTP {response.status_code}: {response.text[:300]}",
+            detail=_error_detail(response),
         )
 
-    data = (response.json() or {}).get("data") or {}
+    raw = _parse_json(response)
+    if raw is None:
+        return EnrichmentResult(
+            indicator=ip, indicator_type="ip", source="abuseipdb",
+            verdict="error", detail="AbuseIPDB returned a non-JSON response body.",
+        )
+    data = raw.get("data") or {}
     score = data.get("abuseConfidenceScore", 0)
     total_reports = data.get("totalReports", 0)
     verdict = "malicious" if score >= 75 else "suspicious" if score >= 25 else "harmless"
@@ -140,7 +203,7 @@ def lookup_ip_abuseipdb(ip: str) -> Optional[EnrichmentResult]:
             f"Abuse confidence score {score}/100 across {total_reports} report(s). "
             f"Country: {data.get('countryCode', 'unknown')}. "
             f"ISP: {data.get('isp', 'unknown')}."
-        ),
+        )[:1000],
         link=f"https://www.abuseipdb.com/check/{ip}",
     )
     _cache_set(cache_key, result)
@@ -186,10 +249,16 @@ def _lookup_virustotal(indicator: str, indicator_type: str) -> Optional[Enrichme
     if response.status_code != 200:
         return EnrichmentResult(
             indicator=indicator, indicator_type=indicator_type, source="virustotal",
-            verdict="error", detail=f"HTTP {response.status_code}: {response.text[:300]}",
+            verdict="error", detail=_error_detail(response),
         )
 
-    attributes = ((response.json() or {}).get("data") or {}).get("attributes") or {}
+    raw = _parse_json(response)
+    if raw is None:
+        return EnrichmentResult(
+            indicator=indicator, indicator_type=indicator_type, source="virustotal",
+            verdict="error", detail="VirusTotal returned a non-JSON response body.",
+        )
+    attributes = (raw.get("data") or {}).get("attributes") or {}
     stats = attributes.get("last_analysis_stats") or {}
     malicious = stats.get("malicious", 0)
     suspicious = stats.get("suspicious", 0)
@@ -266,7 +335,10 @@ def lookup_domain_resolutions_virustotal(domain: str, limit: int = 10) -> Option
     if response.status_code != 200:
         return None
 
-    entries = (response.json() or {}).get("data") or []
+    raw = _parse_json(response)
+    if raw is None:
+        return None
+    entries = raw.get("data") or []
     ips = [
         entry["attributes"]["ip_address"]
         for entry in entries
@@ -333,10 +405,16 @@ def lookup_ip_shodan(ip: str) -> Optional[EnrichmentResult]:
     if response.status_code != 200:
         return EnrichmentResult(
             indicator=ip, indicator_type="ip", source="shodan",
-            verdict="error", detail=f"HTTP {response.status_code}: {response.text[:300]}",
+            verdict="error", detail=_error_detail(response),
         )
 
-    data = response.json() or {}
+    raw = _parse_json(response)
+    if raw is None:
+        return EnrichmentResult(
+            indicator=ip, indicator_type="ip", source="shodan",
+            verdict="error", detail="Shodan returned a non-JSON response body.",
+        )
+    data = raw
     ports = sorted(data.get("ports") or [])
     vulns = data.get("vulns") or []
     hostnames = data.get("hostnames") or []
@@ -419,10 +497,16 @@ def _lookup_otx(indicator: str, indicator_type: str) -> Optional[EnrichmentResul
     if response.status_code != 200:
         return EnrichmentResult(
             indicator=indicator, indicator_type=indicator_type, source="alienvault_otx",
-            verdict="error", detail=f"HTTP {response.status_code}: {response.text[:300]}",
+            verdict="error", detail=_error_detail(response),
         )
 
-    data = response.json() or {}
+    raw = _parse_json(response)
+    if raw is None:
+        return EnrichmentResult(
+            indicator=indicator, indicator_type=indicator_type, source="alienvault_otx",
+            verdict="error", detail="AlienVault OTX returned a non-JSON response body.",
+        )
+    data = raw
     pulse_info = data.get("pulse_info") or {}
     count = pulse_info.get("count", 0)
     pulses = pulse_info.get("pulses") or []
@@ -500,10 +584,16 @@ def lookup_ip_greynoise(ip: str) -> Optional[EnrichmentResult]:
     if response.status_code != 200:
         return EnrichmentResult(
             indicator=ip, indicator_type="ip", source="greynoise",
-            verdict="error", detail=f"HTTP {response.status_code}: {response.text[:300]}",
+            verdict="error", detail=_error_detail(response),
         )
 
-    data = response.json() or {}
+    raw = _parse_json(response)
+    if raw is None:
+        return EnrichmentResult(
+            indicator=ip, indicator_type="ip", source="greynoise",
+            verdict="error", detail="GreyNoise returned a non-JSON response body.",
+        )
+    data = raw
     classification = data.get("classification", "unknown")
     noise = bool(data.get("noise", False))
     riot = bool(data.get("riot", False))
@@ -574,10 +664,16 @@ def lookup_hash_malwarebazaar(file_hash: str) -> Optional[EnrichmentResult]:
     if response.status_code != 200:
         return EnrichmentResult(
             indicator=file_hash, indicator_type="hash", source="malwarebazaar",
-            verdict="error", detail=f"HTTP {response.status_code}: {response.text[:300]}",
+            verdict="error", detail=_error_detail(response),
         )
 
-    body = response.json() or {}
+    raw = _parse_json(response)
+    if raw is None:
+        return EnrichmentResult(
+            indicator=file_hash, indicator_type="hash", source="malwarebazaar",
+            verdict="error", detail="MalwareBazaar returned a non-JSON response body.",
+        )
+    body = raw
     status = body.get("query_status")
 
     if status != "ok":
@@ -641,10 +737,16 @@ def _lookup_threatfox(indicator: str, indicator_type: str) -> Optional[Enrichmen
     if response.status_code != 200:
         return EnrichmentResult(
             indicator=indicator, indicator_type=indicator_type, source="threatfox",
-            verdict="error", detail=f"HTTP {response.status_code}: {response.text[:300]}",
+            verdict="error", detail=_error_detail(response),
         )
 
-    body = response.json() or {}
+    raw = _parse_json(response)
+    if raw is None:
+        return EnrichmentResult(
+            indicator=indicator, indicator_type=indicator_type, source="threatfox",
+            verdict="error", detail="ThreatFox returned a non-JSON response body.",
+        )
+    body = raw
     status = body.get("query_status")
 
     if status != "ok":
@@ -723,10 +825,16 @@ def lookup_url_urlhaus(url: str) -> Optional[EnrichmentResult]:
     if response.status_code != 200:
         return EnrichmentResult(
             indicator=url, indicator_type="url", source="urlhaus",
-            verdict="error", detail=f"HTTP {response.status_code}: {response.text[:300]}",
+            verdict="error", detail=_error_detail(response),
         )
 
-    body = response.json() or {}
+    raw = _parse_json(response)
+    if raw is None:
+        return EnrichmentResult(
+            indicator=url, indicator_type="url", source="urlhaus",
+            verdict="error", detail="URLhaus returned a non-JSON response body.",
+        )
+    body = raw
     status = body.get("query_status")
 
     if status != "ok":
@@ -808,10 +916,16 @@ def _lookup_xforce(
     if response.status_code != 200:
         return EnrichmentResult(
             indicator=indicator, indicator_type=indicator_type, source="ibm_xforce",
-            verdict="error", detail=f"HTTP {response.status_code}: {response.text[:300]}",
+            verdict="error", detail=_error_detail(response),
         )
 
-    data = response.json() or {}
+    raw = _parse_json(response)
+    if raw is None:
+        return EnrichmentResult(
+            indicator=indicator, indicator_type=indicator_type, source="ibm_xforce",
+            verdict="error", detail="IBM X-Force Exchange returned a non-JSON response body.",
+        )
+    data = raw
     # Response shape genuinely varies by indicator type in X-Force's real
     # API, and this project could not verify a real successful response
     # (see module docstring) — parsed defensively rather than assuming
@@ -903,10 +1017,16 @@ def _lookup_metadefender(indicator: str, indicator_type: str) -> Optional[Enrich
     if response.status_code != 200:
         return EnrichmentResult(
             indicator=indicator, indicator_type=indicator_type, source="metadefender",
-            verdict="error", detail=f"HTTP {response.status_code}: {response.text[:300]}",
+            verdict="error", detail=_error_detail(response),
         )
 
-    body = response.json() or []
+    raw = _parse_json(response)
+    if raw is None:
+        return EnrichmentResult(
+            indicator=indicator, indicator_type=indicator_type, source="metadefender",
+            verdict="error", detail="Metadefender Cloud returned a non-JSON response body.",
+        )
+    body = raw
     entry = body[0] if isinstance(body, list) and body and isinstance(body[0], dict) else None
 
     if entry is None:
@@ -999,10 +1119,16 @@ def lookup_ip_censys(ip: str) -> Optional[EnrichmentResult]:
     if response.status_code != 200:
         return EnrichmentResult(
             indicator=ip, indicator_type="ip", source="censys",
-            verdict="error", detail=f"HTTP {response.status_code}: {response.text[:300]}",
+            verdict="error", detail=_error_detail(response),
         )
 
-    data = response.json() or {}
+    raw = _parse_json(response)
+    if raw is None:
+        return EnrichmentResult(
+            indicator=ip, indicator_type="ip", source="censys",
+            verdict="error", detail="Censys returned a non-JSON response body.",
+        )
+    data = raw
     result_data = data.get("result") if isinstance(data.get("result"), dict) else data
     services = [s for s in (result_data.get("services") or []) if isinstance(s, dict)]
     ports = sorted({s["port"] for s in services if isinstance(s.get("port"), int)})

@@ -237,7 +237,7 @@ def get_incident_stats(tenant_id: str = DEFAULT_TENANT) -> dict:
     }
 
 
-def list_open_incidents(tenant_id: str = DEFAULT_TENANT) -> List[dict]:
+def list_open_incidents(tenant_id: str = DEFAULT_TENANT, limit: int = 1000) -> List[dict]:
     """Every incident in this tenant that isn't contained/closed, with its
     IOCs and affected assets decoded, plus its verified MITRE ATT&CK
     technique (id/name, or None if none was cited or it wasn't verified)
@@ -245,6 +245,16 @@ def list_open_incidents(tenant_id: str = DEFAULT_TENANT) -> List[dict]:
     ingestion/semantic_correlation.py check a new alert against. Small
     enough at realistic open-incident counts to filter in Python rather
     than push IOC/asset matching into SQL.
+
+    Capped at `limit` most-recently-updated incidents (default 1000,
+    same ceiling style as get_incident_graph) — this query previously had
+    no LIMIT at all, unlike every sibling query in this file, letting a
+    tenant with an unusually large number of open incidents make the
+    correlation candidate pool (and, transitively, identity
+    correlation's real per-candidate VirusTotal lookups) grow without
+    bound. Ordered by updated_at DESC, so only the *oldest*-updated
+    incidents — the ones least likely to still be within any
+    correlation window — are ever the ones dropped.
     """
     conn = _get_connection(tenant_id)
     placeholders = ",".join("?" for _ in OPEN_STATUSES)
@@ -254,8 +264,9 @@ def list_open_incidents(tenant_id: str = DEFAULT_TENANT) -> List[dict]:
                attack_technique_id, attack_technique_name, created_at, updated_at
         FROM incidents WHERE status IN ({placeholders})
         ORDER BY updated_at DESC
+        LIMIT ?
         """,
-        OPEN_STATUSES,
+        (*OPEN_STATUSES, max(1, min(limit, 5000))),
     )
     columns = [d[0] for d in cursor.description]
     rows = [dict(zip(columns, row)) for row in cursor.fetchall()]

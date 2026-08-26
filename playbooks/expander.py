@@ -18,16 +18,25 @@ from state import Incident, ProposedAction
 from playbooks.schema import Playbook
 
 
-def _render_target(template: str, incident: Incident) -> Tuple[bool, str]:
+def _render_target(template: str, incident: Incident) -> Tuple[bool, str, bool]:
+    """Returns (ok, target, positional) — `positional` is True when the
+    target was picked by list position ({ioc}/{asset} always resolve to
+    the incident's *first* entry, not necessarily the most relevant one
+    — e.g. a beaconing incident's iocs[0] can be the victim's own
+    address from the first, lowest-confidence alert, not the actual
+    malicious endpoint a later correlated alert identified). Callers use
+    this to flag the rationale so a reviewer isn't left assuming the
+    target was chosen for relevance.
+    """
     if template == "{ioc}":
         if not incident.iocs:
-            return False, template
-        return True, incident.iocs[0]
+            return False, template, False
+        return True, incident.iocs[0], True
     if template == "{asset}":
         if not incident.affected_assets:
-            return False, template
-        return True, incident.affected_assets[0]
-    return True, template
+            return False, template, False
+        return True, incident.affected_assets[0], True
+    return True, template, False
 
 
 def expand_playbook_actions(
@@ -44,18 +53,26 @@ def expand_playbook_actions(
     chain_step = 0
     for step in playbook.steps:
         chain_step += 1
-        ok, target = _render_target(step.target_template, incident)
+        ok, target, positional = _render_target(step.target_template, incident)
         if not ok:
             skipped.append(f"step {chain_step} ({step.action}): could not render {target!r} for this incident")
             continue
+        rationale = step.rationale
+        if positional:
+            rationale = f"{rationale} (target: first reported {step.target_template.strip('{}')} on this incident)"
         actions.append(
             ProposedAction(
                 action=step.action,
                 target=target,
-                rationale=step.rationale,
+                rationale=rationale[:1000],
                 action_type=step.action_type,
                 playbook_id=playbook.id,
                 chain_step=chain_step,
+                # Pinned now, not re-resolved by id against a fresh
+                # load_playbooks() call at approval time -- see
+                # ProposedAction.on_failure's docstring in state.py for
+                # the TOCTOU this closes.
+                on_failure=playbook.on_failure,
             )
         )
     return actions, skipped

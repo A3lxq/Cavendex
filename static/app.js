@@ -42,7 +42,15 @@ function clearSession() {
 function escapeHtml(value) {
   const div = document.createElement("div");
   div.textContent = value === null || value === undefined ? "" : String(value);
-  return div.innerHTML;
+  // The DOM's own text-node serialization (div.innerHTML above) escapes
+  // & < > but NOT quote characters -- quotes have no special meaning in
+  // text-node content, only inside an HTML attribute value. Every call
+  // site in this file uses escapeHtml() output in both contexts (plain
+  // text AND inside title="..."/class="..." attributes), so this must
+  // be attribute-safe too, or a value containing a literal " breaks out
+  // of the attribute and lets arbitrary attributes/handlers be injected
+  // (a real, confirmed stored-XSS via incident description/assigned_to).
+  return div.innerHTML.replace(/"/g, "&quot;").replace(/'/g, "&#39;");
 }
 
 // Only ever called AFTER escapeHtml — the regexes below only add safe tags

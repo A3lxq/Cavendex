@@ -1131,6 +1131,124 @@ def test_path_segments_are_url_encoded_not_interpolated_raw(monkeypatch):
     assert "%2F" in seen["url"] or "%2E%2E" in seen["url"].upper()
 
 
+# ---------- Security audit fixes: malformed-JSON handling, truncation,
+# and non-leaky error messages (applies across all 11 providers; a
+# representative sample is exercised directly here) ----------
+
+
+def test_malformed_json_200_response_degrades_to_error_not_a_crash(monkeypatch):
+    """Security regression: a 200 response with a non-JSON body (a
+    captive portal, a WAF/proxy error page, a provider outage serving
+    HTML with a 200 status) must degrade to an "error" EnrichmentResult,
+    never raise past this module -- see enrichment/providers.py's
+    _parse_json. Exercised against AbuseIPDB as a representative case;
+    every other provider follows the identical pattern."""
+    monkeypatch.setenv("ABUSEIPDB_API_KEY", "fake-key")
+
+    class _FakeResponse:
+        status_code = 200
+        text = "<html>not json</html>"
+
+        def json(self):
+            raise ValueError("Expecting value: line 1 column 1 (char 0)")
+
+    monkeypatch.setattr("requests.get", lambda *a, **kw: _FakeResponse())
+    result = lookup_ip_abuseipdb("8.8.8.8")
+    assert result is not None
+    assert result.verdict == "error"
+
+
+def test_malformed_json_never_raises_across_a_post_based_provider(monkeypatch):
+    """Same guard, for a POST-based provider (different request/response
+    shape than AbuseIPDB's GET) -- MalwareBazaar."""
+    monkeypatch.setenv("ABUSECH_API_KEY", "fake-key")
+
+    class _FakeResponse:
+        status_code = 200
+        text = "not json at all"
+
+        def json(self):
+            raise ValueError("boom")
+
+    monkeypatch.setattr("requests.post", lambda *a, **kw: _FakeResponse())
+    result = lookup_hash_malwarebazaar("d41d8cd98f00b204e9800998ecf8427e")
+    assert result is not None
+    assert result.verdict == "error"
+
+
+def test_abuseipdb_detail_is_truncated_even_with_an_oversized_field(monkeypatch):
+    """Security regression: EnrichmentResult.detail is
+    Field(max_length=1000) -- Pydantic RAISES on overflow rather than
+    truncating, so every provider must manually truncate before
+    construction. AbuseIPDB's isp/countryCode fields (real WHOIS/RIR
+    data an attacker can influence by choosing which IP block to use)
+    were the one function missing this truncation."""
+    monkeypatch.setenv("ABUSEIPDB_API_KEY", "fake-key")
+
+    class _FakeResponse:
+        status_code = 200
+
+        def json(self):
+            return {
+                "data": {
+                    "abuseConfidenceScore": 10,
+                    "totalReports": 1,
+                    "countryCode": "US",
+                    "isp": "X" * 2000,  # far past EnrichmentResult.detail's 1000-char cap
+                }
+            }
+
+    monkeypatch.setattr("requests.get", lambda *a, **kw: _FakeResponse())
+    result = lookup_ip_abuseipdb("8.8.8.8")  # must not raise a pydantic ValidationError
+    assert result is not None
+    assert len(result.detail) <= 1000
+
+
+def test_error_detail_never_echoes_the_raw_response_body(monkeypatch):
+    """Security regression: a non-200 provider response's raw body (which
+    can contain anything -- an HTML error page, a WAF challenge,
+    occasionally reflected request data) must never be echoed verbatim
+    into a durable EnrichmentResult.detail. Only the status code is
+    surfaced; the full body is logged server-side instead."""
+    monkeypatch.setenv("ABUSEIPDB_API_KEY", "fake-key")
+    secret_looking_body = "<html>Internal error: debug-token=SUPERSECRET123</html>"
+
+    class _FakeResponse:
+        status_code = 500
+        text = secret_looking_body
+
+    monkeypatch.setattr("requests.get", lambda *a, **kw: _FakeResponse())
+    result = lookup_ip_abuseipdb("8.8.8.8")
+    assert result is not None
+    assert result.verdict == "error"
+    assert "SUPERSECRET123" not in result.detail
+    assert "500" in result.detail
+
+
+def test_cache_size_is_bounded_not_unbounded(monkeypatch):
+    """Security regression: a sustained stream of distinct classifiable
+    indicators (each looked up exactly once, never triggering its own
+    lazy per-key TTL expiry) must not grow the module-level cache
+    without bound."""
+    import enrichment.providers as providers
+
+    monkeypatch.setenv("ABUSEIPDB_API_KEY", "fake-key")
+    monkeypatch.setattr(providers, "_CACHE_MAX_ENTRIES", 10)
+
+    class _FakeResponse:
+        status_code = 200
+
+        def json(self):
+            return {"data": {"abuseConfidenceScore": 0, "totalReports": 0}}
+
+    monkeypatch.setattr("requests.get", lambda *a, **kw: _FakeResponse())
+
+    for i in range(25):
+        lookup_ip_abuseipdb(f"10.0.0.{i}")
+
+    assert len(providers._cache) <= 10
+
+
 def test_results_are_cached_to_avoid_repeat_calls(monkeypatch):
     monkeypatch.setenv("ABUSEIPDB_API_KEY", "fake-key")
 

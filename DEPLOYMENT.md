@@ -46,17 +46,21 @@ cd /opt/sentinelos
 
 python3 -m venv venv
 source venv/bin/activate
-pip install -r requirements.lock.txt
+pip install --require-hashes -r requirements.lock.txt
 
 cp .env.example .env
 ```
 
-Use `requirements.lock.txt` (exact-pinned) here, not `requirements.txt`
-(floor-pinned `>=`, meant for development) — a production install
-shouldn't silently pull a newer, not-yet-audited dependency version just
-because `pip` resolved one. See the comment at the top of
-`requirements.lock.txt` for how to regenerate it when you deliberately
-want to bump something.
+Use `requirements.lock.txt` (exact-pinned, hash-verified) here, not
+`requirements.txt` (floor-pinned `>=`, meant for development) — a
+production install shouldn't silently pull a newer, not-yet-audited
+dependency version just because `pip` resolved one. `--require-hashes`
+goes one step further than version-pinning alone: it refuses to install
+anything whose downloaded wheel/sdist doesn't match the SHA-256 recorded
+in the lock file, so a compromised index/mirror or a MITM'd download
+can't swap in a different artifact under the same version number. See
+the comment at the top of `requirements.lock.txt` for how to regenerate
+it (including its hashes) when you deliberately want to bump something.
 
 Edit `.env`:
 
@@ -1143,7 +1147,7 @@ sudo systemctl stop sentinelos-api sentinelos-ingest-*
 cd /opt/sentinelos
 git pull
 source venv/bin/activate
-pip install -r requirements.lock.txt
+pip install --require-hashes -r requirements.lock.txt
 pytest   # confirm the upgrade didn't break anything before restarting
 sudo systemctl start sentinelos-api sentinelos-ingest-*
 ```

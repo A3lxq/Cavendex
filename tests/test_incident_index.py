@@ -118,6 +118,20 @@ def test_list_open_incidents_scoped_by_tenant(monkeypatch, tmp_path):
     assert [r["thread_id"] for r in list_open_incidents("tenant-b")] == ["inc-2"]
 
 
+def test_list_open_incidents_is_capped_not_unbounded(monkeypatch, tmp_path):
+    """Security regression: this query previously had no LIMIT at all,
+    unlike every sibling query in this file -- a tenant with an unusually
+    large number of open incidents could make the correlation candidate
+    pool (and identity correlation's real per-candidate lookups)
+    grow without bound."""
+    monkeypatch.setenv("SENTINELOS_DATA_DIR", str(tmp_path))
+    for i in range(5):
+        upsert_incident_summary("t1", _state(f"inc-{i}", "x"))
+
+    rows = list_open_incidents("t1", limit=3)
+    assert len(rows) == 3
+
+
 def test_created_at_is_preserved_across_updates(monkeypatch, tmp_path):
     monkeypatch.setenv("SENTINELOS_DATA_DIR", str(tmp_path))
     upsert_incident_summary("t1", _state("inc-1", "x", status="open"))

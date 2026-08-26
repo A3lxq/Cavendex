@@ -51,6 +51,27 @@ def _dns_identity_enabled() -> bool:
     )
 
 
+_DEFAULT_MAX_DNS_LOOKUPS = 20
+
+
+def _max_dns_lookups() -> int:
+    # Bounds the TOTAL number of real, synchronous
+    # lookup_domain_resolutions_virustotal() calls one
+    # _first_domain_identity_match() invocation can make (alert-domain
+    # lookups + candidate-domain lookups combined) — mirroring
+    # enrichment/pipeline.py's SENTINELOS_ENRICHMENT_MAX_LOOKUPS_PER_INCIDENT
+    # pattern. Without this, one ingested alert with many domain IOCs,
+    # matched against many open-incident candidates (each with their own
+    # domain IOCs), could turn into an unbounded burst of real outbound
+    # HTTPS calls on a single synchronous ingestion request — exhausting
+    # VirusTotal's free-tier quota in one shot and blocking the
+    # ingestion worker handling it.
+    try:
+        return int(os.getenv("SENTINELOS_IDENTITY_DNS_MAX_LOOKUPS", str(_DEFAULT_MAX_DNS_LOOKUPS)))
+    except ValueError:
+        return _DEFAULT_MAX_DNS_LOOKUPS
+
+
 def _first_asset_identity_match(alert_assets: List[str], candidates: List[dict]) -> Optional[dict]:
     alert_identities = {}
     for name in alert_assets:
@@ -85,18 +106,35 @@ def _first_domain_identity_match(alert_iocs: List[str], candidates: List[dict]) 
     if not alert_domains:
         return None
 
+    # Every lookup_domain_resolutions_virustotal() call below is a real,
+    # synchronous outbound HTTPS request (10s timeout on failure) — this
+    # budget bounds the total across BOTH loops (alert-domain lookups +
+    # candidate-domain lookups), not just one or the other, so a wide
+    # candidate pool times a wide domain list can't multiply into an
+    # unbounded burst of real third-party requests on one ingestion
+    # request. See _max_dns_lookups()'s docstring for why this matters.
+    budget = _max_dns_lookups()
+
     alert_ip_sets = {}
     for domain in alert_domains:
+        if budget <= 0:
+            break
         ips = lookup_domain_resolutions_virustotal(domain)
+        budget -= 1
         if ips:
             alert_ip_sets[domain] = set(ips)
     if not alert_ip_sets:
         return None
 
     for candidate in candidates:
+        if budget <= 0:
+            break
         candidate_domains = [v for v in (candidate.get("iocs") or []) if classify_ioc(v) == "domain"]
         for c_domain in candidate_domains:
+            if budget <= 0:
+                break
             c_ips = lookup_domain_resolutions_virustotal(c_domain)
+            budget -= 1
             if not c_ips:
                 continue
             c_ip_set = set(c_ips)

@@ -3,7 +3,7 @@ import os
 import yaml
 
 from state import Incident, ProposedAction
-from utils.obsidian import _slugify, write_incident_report
+from utils.obsidian import _escape, _slugify, write_incident_report
 
 
 def test_slugify_replaces_unsafe_chars():
@@ -88,6 +88,40 @@ def test_write_incident_report_isolates_tenants(tmp_path, monkeypatch):
 def test_write_incident_report_handles_missing_incident():
     assert write_incident_report({"incident": None}) == ""
     assert write_incident_report(None) == ""
+
+
+def test_escape_neutralizes_embedded_newlines():
+    """Security regression: content meant to render as one Markdown
+    line (an audit_log entry, a name, a description) must not be able
+    to break out of it via an embedded newline and inject new Markdown
+    structure (a fake bullet, a fake heading, a misleading line)."""
+    assert "\n" not in _escape("line one\nline two")
+    assert "\r" not in _escape("line one\r\nline two")
+
+
+def test_escape_still_neutralizes_html():
+    assert "<script>" not in _escape("<script>alert(1)</script>")
+
+
+def test_audit_log_entry_with_embedded_newline_cannot_inject_a_fake_bullet(tmp_path, monkeypatch):
+    """Security regression: an audit_log entry containing a newline
+    (e.g. from an externally-influenced approved_by/description/source
+    value folded into it) must render as a single bullet line in the
+    vault report, never as multiple lines -- which would let it inject
+    an arbitrary extra Markdown line (a fake bullet, a fake heading)
+    that reads as if it came from SentinelOS itself."""
+    monkeypatch.setenv("OBSIDIAN_VAULT_PATH", str(tmp_path))
+
+    state = _fake_state()
+    state["audit_log"] = [
+        "Human Reviewer (j.smith) -> approved 1 proposed action(s)\n- **FAKE INJECTED BULLET** — not a real entry"
+    ]
+    path = write_incident_report(state)
+    content = open(path, encoding="utf-8").read()
+
+    # The injected content must appear (harmlessly, as literal text within
+    # the one legitimate bullet), but never as its OWN separate bullet line.
+    assert "\n- **FAKE INJECTED BULLET**" not in content
 
 
 def test_path_traversal_in_incident_id_is_contained(tmp_path, monkeypatch):

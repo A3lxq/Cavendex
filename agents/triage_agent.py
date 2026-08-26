@@ -4,7 +4,7 @@ from agents.schemas import TriageAssessment
 from enrichment.pipeline import enrich_iocs, format_for_prompt
 from memory.vector_store import recall_similar_incidents, remember_incident
 from state import SentinelState
-from utils.llm import accumulate_usage, get_llm, invoke_structured, usage_from_exception
+from utils.llm import accumulate_usage, get_llm, invoke_structured, safe_error_message, usage_from_exception
 from utils.tenancy import DEFAULT_TENANT
 
 prompt = ChatPromptTemplate.from_template(
@@ -75,13 +75,13 @@ def triage_agent(state: SentinelState) -> SentinelState:
         accumulate_usage(state, "Triage Agent", usage)
     except Exception as exc:
         accumulate_usage(state, "Triage Agent", usage_from_exception(exc))
-        error_message = f"Triage Agent failed to reach the LLM provider: {exc}"
+        error_message = safe_error_message("Triage Agent", exc)
         # `messages` uses LangGraph's add_messages reducer, which merges
         # whatever we return here on top of the existing history — return
         # only the new message(s), never the full accumulated list, or the
         # prior history gets double-counted.
         state["messages"] = [{"role": "assistant", "name": "Triage Agent", "content": error_message}]
-        state["audit_log"].append(f"Triage Agent -> ERROR: {exc}")
+        state["audit_log"].append(f"Triage Agent -> ERROR: {error_message}")
         state["next_agent"] = None
         return state
 

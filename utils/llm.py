@@ -7,7 +7,10 @@ place makes it easy to swap providers later without touching agent
 code.
 """
 
+import logging
 import os
+
+logger = logging.getLogger(__name__)
 
 
 def get_llm(temperature: float = 0):
@@ -119,6 +122,31 @@ def invoke_structured(chain, payload: dict, retries: int = 1):
 
         return parsed, total_usage
     raise StructuredOutputError(last_exc, total_usage)
+
+
+def safe_error_message(agent_name: str, exc: Exception) -> str:
+    """A provider-call failure message safe to put in state["audit_log"]/
+    state["messages"] — durable, widely-visible records (the vault
+    report, the dashboard, API responses), unlike server-side logs.
+
+    Never embeds the raw exception text. Provider SDK error messages
+    routinely echo back request details, and several (a real, documented
+    OpenAI behavior, for one) include a truncated form of the API key
+    itself in "invalid API key" errors — e.g. "Incorrect API key
+    provided: sk-abc1...xyz9". Interpolating that straight into an
+    audit-trail entry would leak a credential into exactly the kind of
+    record this project already treats as durable and potentially
+    shared (Obsidian vault git history, a dashboard viewer, an API
+    response body).
+
+    The full exception is still logged via the standard `logging` module
+    here — an operator watching server logs (already a trusted vantage
+    point, the same tier as reading `.env`) can fully diagnose the real
+    problem; only the durable, more-widely-visible audit trail is kept
+    generic.
+    """
+    logger.error("%s failed to reach the LLM provider", agent_name, exc_info=exc)
+    return f"{agent_name} failed to reach the LLM provider ({type(exc).__name__} — see server logs for details)."
 
 
 def usage_from_exception(exc: Exception) -> dict:

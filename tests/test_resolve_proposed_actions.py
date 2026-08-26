@@ -7,6 +7,8 @@ accountability field added after a live review found that the audit
 trail could never say *who* approved a proposed action."""
 
 import itertools
+import threading
+import time
 
 import pytest
 
@@ -118,6 +120,56 @@ def test_missing_approved_by_still_allowed_when_flag_not_set(tenant, monkeypatch
     result = resolve_proposed_actions("inc-1", approve=True, tenant_id=tenant)
 
     assert result["incident"].status == "contained"
+
+
+def test_concurrent_approve_calls_on_same_incident_never_overlap(tenant, monkeypatch, tmp_path):
+    """Security regression: resolve_proposed_actions' read-modify-write
+    cycle against a single incident's checkpoint must be serialized --
+    two concurrent calls (a double-submitted click, two analysts, a
+    retried request) must never actually execute their critical
+    sections at the same time, or the loser's app.update_state would
+    silently overwrite the winner's already-committed decision/audit
+    entries (LangGraph's SqliteSaver has no compare-and-swap). Proven
+    directly by instrumenting app.update_state to record how many
+    threads are ever inside it concurrently, with an artificial delay
+    long enough that an actual race would reliably be caught."""
+    monkeypatch.setenv("SENTINELOS_DATA_DIR", str(tmp_path))
+    _seed_pending_incident(tenant, n_actions=1)
+
+    app = get_app(tenant)
+    original_update_state = app.update_state
+    concurrency = {"current": 0, "max_seen": 0}
+    counter_lock = threading.Lock()
+
+    def _instrumented_update_state(*args, **kwargs):
+        with counter_lock:
+            concurrency["current"] += 1
+            concurrency["max_seen"] = max(concurrency["max_seen"], concurrency["current"])
+        time.sleep(0.05)  # long enough that a real race would overlap
+        try:
+            return original_update_state(*args, **kwargs)
+        finally:
+            with counter_lock:
+                concurrency["current"] -= 1
+
+    monkeypatch.setattr(app, "update_state", _instrumented_update_state)
+
+    errors = []
+
+    def _call(name):
+        try:
+            resolve_proposed_actions("inc-1", approve=True, tenant_id=tenant, approved_by=name)
+        except Exception as exc:
+            errors.append(exc)
+
+    threads = [threading.Thread(target=_call, args=(f"analyst-{i}",)) for i in range(5)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join(timeout=5)
+
+    assert not errors
+    assert concurrency["max_seen"] == 1
 
 
 def test_raises_for_unknown_thread(tenant):
@@ -237,19 +289,19 @@ def test_mixed_batch_only_executes_the_eligible_action(tenant, monkeypatch, tmp_
 # ---------- Playbook chain execution (roadmap #104) ----------
 
 
-def _chain_actions(playbook_id="pb-1"):
+def _chain_actions(playbook_id="pb-1", on_failure=None):
     return [
         ProposedAction(
             action="Isolate host", target="WEB-01", rationale="r", action_type="isolate_host",
-            playbook_id=playbook_id, chain_step=1,
+            playbook_id=playbook_id, chain_step=1, on_failure=on_failure,
         ),
         ProposedAction(
             action="Disable account", target="alice", rationale="r", action_type="disable_account",
-            playbook_id=playbook_id, chain_step=2,
+            playbook_id=playbook_id, chain_step=2, on_failure=on_failure,
         ),
         ProposedAction(
             action="Block IP", target="1.2.3.4", rationale="r", action_type="block_ip",
-            playbook_id=playbook_id, chain_step=3,
+            playbook_id=playbook_id, chain_step=3, on_failure=on_failure,
         ),
     ]
 
@@ -282,6 +334,42 @@ def test_playbook_chain_halts_remaining_steps_after_a_real_failure_by_default(te
 
 
 def test_playbook_chain_continues_after_failure_when_policy_says_so(tenant, monkeypatch, tmp_path):
+    """on_failure is pinned onto each ProposedAction at expansion time
+    (playbooks/expander.py), not re-resolved from a playbook file on
+    disk at approval time -- see the TOCTOU this closes in
+    ProposedAction.on_failure's docstring. So this test sets on_failure
+    directly on the seeded actions rather than writing a playbook file
+    SENTINELOS_PLAYBOOKS_DIR would need to point at."""
+    monkeypatch.setenv("SENTINELOS_DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("SENTINELOS_REMEDIATION_ENABLED", "true")
+    monkeypatch.setenv("SENTINELOS_REMEDIATION_DRY_RUN", "false")
+    monkeypatch.setenv("SENTINELOS_REMEDIATION_ACTION_TYPES", "isolate_host,disable_account,block_ip")
+    monkeypatch.delenv("SENTINELOS_PLAYBOOKS_DIR", raising=False)
+
+    def _send(payload):
+        if payload["target"] == "alice":  # step 2 fails
+            return {"outcome": "http_error", "detail": "HTTP 500"}
+        return {"outcome": "sent", "detail": "HTTP 200"}
+
+    monkeypatch.setattr("remediation.pipeline.send_remediation_request", _send)
+    _seed_pending_incident(tenant, actions=_chain_actions(on_failure="continue"))
+
+    result = resolve_proposed_actions("inc-1", approve=True, tenant_id=tenant)
+
+    by_target = {a.target: a for a in result["proposed_actions"]}
+    assert by_target["WEB-01"].executed is True
+    assert by_target["alice"].executed is False
+    assert by_target["1.2.3.4"].executed is True  # not skipped -- policy is "continue"
+
+
+def test_playbook_chain_policy_edit_on_disk_after_generation_has_no_effect(tenant, monkeypatch, tmp_path):
+    """Security regression: editing (or deleting/recreating with a
+    colliding id) the playbook file on disk after a chain was already
+    generated must NOT change which policy governs that chain at
+    approval time -- the policy pinned at generation time (here,
+    "halt", via ProposedAction.on_failure) always wins, even if a file
+    named the same playbook_id and declaring "continue" exists on disk
+    when resolve_proposed_actions actually runs."""
     monkeypatch.setenv("SENTINELOS_DATA_DIR", str(tmp_path))
     monkeypatch.setenv("SENTINELOS_REMEDIATION_ENABLED", "true")
     monkeypatch.setenv("SENTINELOS_REMEDIATION_DRY_RUN", "false")
@@ -294,32 +382,30 @@ def test_playbook_chain_continues_after_failure_when_policy_says_so(tenant, monk
     (playbooks_dir / "pb.json").write_text(
         json.dumps(
             {
-                "id": "pb-1",
-                "name": "Test",
-                "on_failure": "continue",
+                "id": "pb-1", "name": "Test", "on_failure": "continue",
                 "match": {"severities": ["high"]},
-                "steps": [
-                    {"action_type": "block_ip", "action": "x", "target_template": "{ioc}", "rationale": "r"}
-                ],
+                "steps": [{"action_type": "block_ip", "action": "x", "target_template": "{ioc}", "rationale": "r"}],
             }
         )
     )
     monkeypatch.setenv("SENTINELOS_PLAYBOOKS_DIR", str(playbooks_dir))
 
     def _send(payload):
-        if payload["target"] == "alice":  # step 2 fails
+        if payload["target"] == "alice":
             return {"outcome": "http_error", "detail": "HTTP 500"}
         return {"outcome": "sent", "detail": "HTTP 200"}
 
     monkeypatch.setattr("remediation.pipeline.send_remediation_request", _send)
-    _seed_pending_incident(tenant, actions=_chain_actions())
+    # The chain was generated with on_failure="halt" pinned (e.g. from an
+    # earlier version of the file, before it was edited to "continue").
+    _seed_pending_incident(tenant, actions=_chain_actions(on_failure="halt"))
 
     result = resolve_proposed_actions("inc-1", approve=True, tenant_id=tenant)
 
     by_target = {a.target: a for a in result["proposed_actions"]}
-    assert by_target["WEB-01"].executed is True
     assert by_target["alice"].executed is False
-    assert by_target["1.2.3.4"].executed is True  # not skipped -- policy is "continue"
+    assert by_target["1.2.3.4"].executed is None  # halted, per the PINNED policy -- disk says "continue" and is ignored
+    assert "skipped" in by_target["1.2.3.4"].execution_detail
 
 
 def test_playbook_chain_failure_never_affects_an_independent_non_chain_action(tenant, monkeypatch, tmp_path):

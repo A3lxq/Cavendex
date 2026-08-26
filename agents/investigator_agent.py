@@ -3,7 +3,7 @@ from langchain_core.prompts import ChatPromptTemplate
 from agents.schemas import InvestigationFindings
 from enrichment.mitre_attack import validate_technique_citation
 from state import SentinelState
-from utils.llm import accumulate_usage, get_llm, invoke_structured, usage_from_exception
+from utils.llm import accumulate_usage, get_llm, invoke_structured, safe_error_message, usage_from_exception
 
 prompt = ChatPromptTemplate.from_template(
     """You are the Sentinel Investigator Agent — you perform deeper analysis on
@@ -46,11 +46,11 @@ def investigator_agent(state: SentinelState) -> SentinelState:
         accumulate_usage(state, "Investigator Agent", usage)
     except Exception as exc:
         accumulate_usage(state, "Investigator Agent", usage_from_exception(exc))
-        error_message = f"Investigator Agent failed to reach the LLM provider: {exc}"
+        error_message = safe_error_message("Investigator Agent", exc)
         # `messages` uses add_messages — return only the new message(s),
         # never the full accumulated list, or history double-counts.
         state["messages"] = [{"role": "assistant", "name": "Investigator Agent", "content": error_message}]
-        state["audit_log"].append(f"Investigator Agent -> ERROR: {exc}")
+        state["audit_log"].append(f"Investigator Agent -> ERROR: {error_message}")
         state["next_agent"] = None
         return state
 

@@ -2,7 +2,7 @@ from langchain_core.prompts import ChatPromptTemplate
 
 from agents.schemas import ResponsePlan
 from state import ProposedAction, SentinelState
-from utils.llm import accumulate_usage, get_llm, invoke_structured, usage_from_exception
+from utils.llm import accumulate_usage, get_llm, invoke_structured, safe_error_message, usage_from_exception
 
 prompt = ChatPromptTemplate.from_template(
     """You are the Sentinel Responder Agent — you propose concrete remediation
@@ -43,11 +43,11 @@ def responder_agent(state: SentinelState) -> SentinelState:
         accumulate_usage(state, "Responder Agent", usage)
     except Exception as exc:
         accumulate_usage(state, "Responder Agent", usage_from_exception(exc))
-        error_message = f"Responder Agent failed to reach the LLM provider: {exc}"
+        error_message = safe_error_message("Responder Agent", exc)
         # `messages` uses add_messages — return only the new message(s),
         # never the full accumulated list, or history double-counts.
         state["messages"] = [{"role": "assistant", "name": "Responder Agent", "content": error_message}]
-        state["audit_log"].append(f"Responder Agent -> ERROR: {exc}")
+        state["audit_log"].append(f"Responder Agent -> ERROR: {error_message}")
         state["next_agent"] = None
         return state
 

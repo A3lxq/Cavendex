@@ -80,6 +80,16 @@ class ProposedAction(BaseModel):
     # its remaining steps if an earlier one's real send fails (see
     # playbooks/schema.py:Playbook.on_failure).
     chain_step: Optional[int] = None
+    # The matched playbook's on_failure policy, pinned onto the action at
+    # expansion time (playbooks/expander.py) rather than re-resolved by
+    # playbook_id against a fresh load_playbooks() call at approval time.
+    # Security-relevant: an incident can sit pending_approval for minutes
+    # to days: if the policy were re-looked-up at approval time instead,
+    # an operator editing the playbook file (or a second file colliding
+    # on the same id) during that window could silently change whether a
+    # real step failure halts the rest of the chain the analyst already
+    # reviewed and approved. None for a non-playbook action.
+    on_failure: Optional[str] = None
 
 
 class SentinelState(TypedDict):

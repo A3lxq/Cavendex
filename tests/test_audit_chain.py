@@ -10,11 +10,24 @@ import os
 import pytest
 
 from utils.audit_chain import (
+    _ledger_path,
     compute_chain_hash,
     latest_recorded_entry,
     record_chain,
     verify_incident_audit_log,
 )
+
+
+def test_ledger_path_sanitizes_a_path_traversal_tenant_id(monkeypatch, tmp_path):
+    """Security regression: an unsanitized tenant_id (e.g. reaching here
+    from an API caller who supplies ".." in a /tenants/{tenant_id}/...
+    URL segment) must never escape SENTINELOS_DATA_DIR by one directory
+    level -- every other tenant-scoped module already sanitizes; this
+    one didn't."""
+    monkeypatch.setenv("SENTINELOS_DATA_DIR", str(tmp_path / "data"))
+    path = _ledger_path("..")
+    assert ".." not in path.split(os.sep)
+    assert path == str(tmp_path / "data" / "default" / "audit_chain_ledger.jsonl")
 
 
 def test_chain_hash_is_deterministic():
