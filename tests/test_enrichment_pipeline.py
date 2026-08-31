@@ -139,3 +139,76 @@ def test_format_for_prompt_includes_verdict_and_source():
     assert "abuseipdb" in text
     assert "malicious" in text
     assert "1.2.3.4" in text
+
+
+def test_dispatch_table_widths_after_round_2_expansion():
+    """Locks in the fan-out width per IOC type after the 9-provider
+    round-2 expansion -- a regression guard against silently dropping a
+    provider from dispatch when it's still exported from providers.py."""
+    from enrichment.pipeline import _DISPATCH_NAMES
+
+    assert len(_DISPATCH_NAMES["ip"]) == 11
+    assert len(_DISPATCH_NAMES["domain"]) == 9
+    assert len(_DISPATCH_NAMES["hash"]) == 9
+    assert len(_DISPATCH_NAMES["url"]) == 7
+    assert len(_DISPATCH_NAMES["cve"]) == 1
+
+
+def test_cve_iocs_are_routed_to_nvd(monkeypatch):
+    monkeypatch.setattr(
+        "enrichment.pipeline.lookup_cve_nvd",
+        lambda cve: _fake_result(cve, "cve", "nvd"),
+    )
+
+    results = enrich_iocs(["CVE-2021-44228"])
+    assert len(results) == 1
+    assert results[0].source == "nvd"
+    assert results[0].indicator_type == "cve"
+
+
+def test_cve_disabled_by_default_returns_no_results(monkeypatch):
+    """lookup_cve_nvd itself is left unmocked here -- with
+    CAVENDEX_NVD_ENABLED unset (the default), it must return None
+    without making any network call, same as every other disabled
+    keyless provider."""
+    monkeypatch.delenv("CAVENDEX_NVD_ENABLED", raising=False)
+
+    def _fail(*a, **kw):
+        raise AssertionError("must not call the network when NVD is disabled")
+
+    monkeypatch.setattr("requests.get", _fail)
+    results = enrich_iocs(["CVE-2021-44228"])
+    assert results == []
+
+
+def test_default_lookup_cap_raised_to_50(monkeypatch):
+    from enrichment.pipeline import _max_lookups_per_incident
+
+    monkeypatch.delenv("CAVENDEX_ENRICHMENT_MAX_LOOKUPS_PER_INCIDENT", raising=False)
+    assert _max_lookups_per_incident() == 50
+
+
+def test_wider_ip_fan_out_still_bounded_by_the_cap(monkeypatch):
+    """Same invariant as test_lookup_cap_bounds_attempts_not_just_appended_results
+    above, re-asserted at the new, wider 11-provider ip dispatch width --
+    the cap must still bound real attempts, not just appended results,
+    now that a single IP can fan out to more providers than before."""
+    monkeypatch.setenv("CAVENDEX_ENRICHMENT_MAX_LOOKUPS_PER_INCIDENT", "7")
+    attempts = []
+
+    def _tracked(source):
+        def _inner(ip):
+            attempts.append((source, ip))
+            return _fake_result(ip, "ip", source)
+        return _inner
+
+    from enrichment.pipeline import _DISPATCH_NAMES
+
+    for name in _DISPATCH_NAMES["ip"]:
+        source = name.replace("lookup_ip_", "")
+        monkeypatch.setattr(f"enrichment.pipeline.{name}", _tracked(source))
+
+    many_ips = [f"10.0.0.{i}" for i in range(1, 5)]
+    results = enrich_iocs(many_ips)
+    assert len(results) == 7
+    assert len(attempts) == 7

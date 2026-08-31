@@ -39,3 +39,15 @@ def test_rejects_descriptive_phrases():
     assert classify_ioc("Suricata rule ID and payload signature indicating banner-grabbing") == "unknown"
     assert classify_ioc("DC-01") == "unknown"
     assert classify_ioc("") == "unknown"
+
+
+def test_classifies_cve():
+    assert classify_ioc("CVE-2021-44228") == "cve"
+    assert classify_ioc("cve-2014-0160") == "cve"  # case-insensitive
+    assert classify_ioc("CVE-2023-1234567") == "cve"  # 7-digit sequence number
+
+
+def test_rejects_malformed_cve_looking_strings():
+    assert classify_ioc("CVE-21-1234") == "unknown"  # 2-digit year
+    assert classify_ioc("NOTCVE-2021-1234") == "unknown"
+    assert classify_ioc("CVE-2021-123") == "unknown"  # sequence too short

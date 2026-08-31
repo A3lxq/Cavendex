@@ -14,28 +14,43 @@ from typing import List
 
 from enrichment.ioc_classifier import classify_ioc
 from enrichment.providers import (
+    lookup_cve_nvd,
     lookup_domain_metadefender,
     lookup_domain_otx,
+    lookup_domain_pulsedive,
+    lookup_domain_safebrowsing,
+    lookup_domain_securitytrails,
     lookup_domain_threatfox,
+    lookup_domain_threatminer,
+    lookup_domain_urlscan,
     lookup_domain_virustotal,
+    lookup_hash_hybridanalysis,
+    lookup_hash_intezer,
     lookup_hash_malwarebazaar,
     lookup_hash_metadefender,
     lookup_hash_otx,
     lookup_hash_threatfox,
+    lookup_hash_threatminer,
     lookup_hash_virustotal,
     lookup_hash_xforce,
     lookup_ip_abuseipdb,
+    lookup_ip_blocklistde,
     lookup_ip_censys,
     lookup_ip_greynoise,
     lookup_ip_metadefender,
     lookup_ip_otx,
+    lookup_ip_pulsedive,
     lookup_ip_shodan,
     lookup_ip_threatfox,
+    lookup_ip_threatminer,
     lookup_ip_virustotal,
     lookup_ip_xforce,
     lookup_url_metadefender,
+    lookup_url_pulsedive,
+    lookup_url_safebrowsing,
     lookup_url_threatfox,
     lookup_url_urlhaus,
+    lookup_url_urlscan,
     lookup_url_xforce,
 )
 from enrichment.schemas import EnrichmentResult
@@ -52,14 +67,25 @@ _DISPATCH_NAMES = {
     "ip": (
         "lookup_ip_abuseipdb", "lookup_ip_virustotal", "lookup_ip_shodan",
         "lookup_ip_otx", "lookup_ip_greynoise", "lookup_ip_xforce",
-        "lookup_ip_metadefender", "lookup_ip_censys",
+        "lookup_ip_metadefender", "lookup_ip_censys", "lookup_ip_pulsedive",
+        "lookup_ip_threatminer", "lookup_ip_blocklistde",
     ),
-    "domain": ("lookup_domain_virustotal", "lookup_domain_otx", "lookup_domain_threatfox", "lookup_domain_metadefender"),
+    "domain": (
+        "lookup_domain_virustotal", "lookup_domain_otx", "lookup_domain_threatfox",
+        "lookup_domain_metadefender", "lookup_domain_pulsedive", "lookup_domain_threatminer",
+        "lookup_domain_urlscan", "lookup_domain_securitytrails", "lookup_domain_safebrowsing",
+    ),
     "hash": (
         "lookup_hash_virustotal", "lookup_hash_otx", "lookup_hash_malwarebazaar",
         "lookup_hash_threatfox", "lookup_hash_xforce", "lookup_hash_metadefender",
+        "lookup_hash_threatminer", "lookup_hash_hybridanalysis", "lookup_hash_intezer",
     ),
-    "url": ("lookup_url_threatfox", "lookup_url_urlhaus", "lookup_url_xforce", "lookup_url_metadefender"),
+    "url": (
+        "lookup_url_threatfox", "lookup_url_urlhaus", "lookup_url_xforce",
+        "lookup_url_metadefender", "lookup_url_pulsedive", "lookup_url_urlscan",
+        "lookup_url_safebrowsing",
+    ),
+    "cve": ("lookup_cve_nvd",),
 }
 
 # Widest fan-out any single IOC type can trigger today — bounds the
@@ -74,7 +100,7 @@ def _dispatch_for(kind: str):
         return None
     return [globals()[name] for name in names]
 
-_DEFAULT_MAX_LOOKUPS_PER_INCIDENT = 30
+_DEFAULT_MAX_LOOKUPS_PER_INCIDENT = 50
 
 
 def _max_lookups_per_incident() -> int:
@@ -87,11 +113,11 @@ def _max_lookups_per_incident() -> int:
 def enrich_iocs(iocs: List[str]) -> List[EnrichmentResult]:
     """Real, verified evidence for every lookupable IOC in `iocs`, fanned
     out to every provider that supports its type in parallel (a wider
-    fan-out — up to 8 providers for one IP — would otherwise multiply
+    fan-out — up to 11 providers for one IP — would otherwise multiply
     Triage's latency several-fold if done sequentially).
 
     The per-incident cap (CAVENDEX_ENRICHMENT_MAX_LOOKUPS_PER_INCIDENT,
-    default 30) bounds actual outbound lookup *attempts*, not just
+    default 50) bounds actual outbound lookup *attempts*, not just
     results appended — each IOC's provider list is sliced down to
     whatever budget remains before any of them are dispatched. This
     matters for more than cost/latency: an alert with many fabricated-

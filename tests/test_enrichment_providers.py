@@ -12,28 +12,43 @@ import socket
 import pytest
 
 from enrichment.providers import (
+    lookup_cve_nvd,
     lookup_domain_metadefender,
     lookup_domain_otx,
+    lookup_domain_pulsedive,
     lookup_domain_resolutions_virustotal,
+    lookup_domain_safebrowsing,
+    lookup_domain_securitytrails,
     lookup_domain_threatfox,
+    lookup_domain_threatminer,
+    lookup_domain_urlscan,
+    lookup_hash_hybridanalysis,
+    lookup_hash_intezer,
     lookup_hash_malwarebazaar,
     lookup_hash_metadefender,
     lookup_hash_otx,
     lookup_hash_threatfox,
+    lookup_hash_threatminer,
     lookup_hash_virustotal,
     lookup_hash_xforce,
     lookup_ip_abuseipdb,
+    lookup_ip_blocklistde,
     lookup_ip_censys,
     lookup_ip_greynoise,
     lookup_ip_metadefender,
     lookup_ip_otx,
+    lookup_ip_pulsedive,
     lookup_ip_shodan,
     lookup_ip_threatfox,
+    lookup_ip_threatminer,
     lookup_ip_virustotal,
     lookup_ip_xforce,
     lookup_url_metadefender,
+    lookup_url_pulsedive,
+    lookup_url_safebrowsing,
     lookup_url_threatfox,
     lookup_url_urlhaus,
+    lookup_url_urlscan,
     lookup_url_xforce,
     reset_cache_for_tests,
 )
@@ -55,8 +70,35 @@ def _shodan_reachable() -> bool:
         return False
 
 
+def _threatminer_reachable() -> bool:
+    try:
+        socket.create_connection(("api.threatminer.org", 443), timeout=5).close()
+        return True
+    except OSError:
+        return False
+
+
+def _blocklistde_reachable() -> bool:
+    try:
+        socket.create_connection(("api.blocklist.de", 443), timeout=5).close()
+        return True
+    except OSError:
+        return False
+
+
+def _nvd_reachable() -> bool:
+    try:
+        socket.create_connection(("services.nvd.nist.gov", 443), timeout=5).close()
+        return True
+    except OSError:
+        return False
+
+
 _HAS_NETWORK = _network_reachable()
 _HAS_SHODAN_NETWORK = _shodan_reachable()
+_HAS_THREATMINER_NETWORK = _threatminer_reachable()
+_HAS_BLOCKLISTDE_NETWORK = _blocklistde_reachable()
+_HAS_NVD_NETWORK = _nvd_reachable()
 
 
 @pytest.fixture(autouse=True)
@@ -1270,3 +1312,598 @@ def test_results_are_cached_to_avoid_repeat_calls(monkeypatch):
     lookup_ip_abuseipdb("1.2.3.4")
 
     assert call_count["n"] == 1  # second call hit the cache, not the network
+
+
+# ---------------------------------------------------------------------------
+# Round 2: Pulsedive, ThreatMiner, Hybrid Analysis, Intezer, urlscan.io,
+# Google Safe Browsing, SecurityTrails, Blocklist.de, NVD
+# ---------------------------------------------------------------------------
+
+
+def test_pulsedive_returns_none_without_api_key(monkeypatch):
+    monkeypatch.delenv("PULSEDIVE_API_KEY", raising=False)
+    assert lookup_ip_pulsedive("8.8.8.8") is None
+
+
+@pytest.mark.skipif(not _HAS_NETWORK, reason="No network access in this environment")
+def test_pulsedive_invalid_key_returns_error_or_unknown_live(monkeypatch):
+    monkeypatch.setenv("PULSEDIVE_API_KEY", "definitely-not-a-real-key")
+    result = lookup_ip_pulsedive("8.8.8.8")
+    assert result is not None
+    assert result.verdict in ("error", "unknown")
+
+
+def test_pulsedive_high_risk_maps_to_malicious(monkeypatch):
+    monkeypatch.setenv("PULSEDIVE_API_KEY", "fake-key")
+
+    class _FakeResponse:
+        status_code = 200
+
+        def json(self):
+            return {"risk": "high", "risk_recommended": "high", "threats": [{"name": "Emotet"}]}
+
+    monkeypatch.setattr("requests.get", lambda *a, **kw: _FakeResponse())
+    result = lookup_ip_pulsedive("203.0.113.9")
+    assert result.verdict == "malicious"
+    assert "Emotet" in result.detail
+
+
+def test_pulsedive_none_risk_maps_to_harmless(monkeypatch):
+    monkeypatch.setenv("PULSEDIVE_API_KEY", "fake-key")
+
+    class _FakeResponse:
+        status_code = 200
+
+        def json(self):
+            return {"risk": "none"}
+
+    monkeypatch.setattr("requests.get", lambda *a, **kw: _FakeResponse())
+    result = lookup_ip_pulsedive("203.0.113.10")
+    assert result.verdict == "harmless"
+
+
+def test_pulsedive_error_field_maps_to_unknown(monkeypatch):
+    monkeypatch.setenv("PULSEDIVE_API_KEY", "fake-key")
+
+    class _FakeResponse:
+        status_code = 200
+
+        def json(self):
+            return {"error": "Indicator not found."}
+
+    monkeypatch.setattr("requests.get", lambda *a, **kw: _FakeResponse())
+    result = lookup_ip_pulsedive("203.0.113.11")
+    assert result.verdict == "unknown"
+
+
+def test_pulsedive_request_exception_returns_error_verdict(monkeypatch):
+    monkeypatch.setenv("PULSEDIVE_API_KEY", "fake-key")
+
+    import requests
+
+    monkeypatch.setattr("requests.get", lambda *a, **kw: (_ for _ in ()).throw(requests.ConnectionError("boom")))
+    result = lookup_ip_pulsedive("203.0.113.12")
+    assert result.verdict == "error"
+
+
+def test_pulsedive_covers_domain_and_url(monkeypatch):
+    monkeypatch.setenv("PULSEDIVE_API_KEY", "fake-key")
+
+    class _FakeResponse:
+        status_code = 200
+
+        def json(self):
+            return {"risk": "low"}
+
+    monkeypatch.setattr("requests.get", lambda *a, **kw: _FakeResponse())
+    assert lookup_domain_pulsedive("evil.example").indicator_type == "domain"
+    assert lookup_url_pulsedive("http://evil.example/x").indicator_type == "url"
+
+
+def test_threatminer_returns_none_when_disabled_by_default(monkeypatch):
+    monkeypatch.delenv("CAVENDEX_THREATMINER_ENABLED", raising=False)
+
+    def _fail(*a, **kw):
+        raise AssertionError("must not call the network when ThreatMiner is disabled")
+
+    monkeypatch.setattr("requests.get", _fail)
+    assert lookup_ip_threatminer("8.8.8.8") is None
+
+
+@pytest.mark.skipif(not _HAS_THREATMINER_NETWORK, reason="No network access in this environment")
+def test_threatminer_live_call_never_crashes(monkeypatch):
+    """ThreatMiner's real endpoint was found unreliable during research --
+    this only proves the module degrades gracefully (a well-formed
+    EnrichmentResult, or None on a hard failure), never raising."""
+    monkeypatch.setenv("CAVENDEX_THREATMINER_ENABLED", "true")
+    result = lookup_ip_threatminer("8.8.8.8")
+    assert result is None or result.source == "threatminer"
+
+
+def test_threatminer_related_samples_maps_to_malicious(monkeypatch):
+    monkeypatch.setenv("CAVENDEX_THREATMINER_ENABLED", "true")
+
+    class _FakeResponse:
+        status_code = 200
+
+        def json(self):
+            return {"status_code": "200", "results": [{"sample": "aaaa"}, {"sample": "bbbb"}]}
+
+    monkeypatch.setattr("requests.get", lambda *a, **kw: _FakeResponse())
+    result = lookup_ip_threatminer("203.0.113.9")
+    assert result.verdict == "malicious"
+    assert "aaaa" in result.detail
+
+
+def test_threatminer_no_results_maps_to_unknown(monkeypatch):
+    monkeypatch.setenv("CAVENDEX_THREATMINER_ENABLED", "true")
+
+    class _FakeResponse:
+        status_code = 200
+
+        def json(self):
+            return {"status_code": "200", "results": []}
+
+    monkeypatch.setattr("requests.get", lambda *a, **kw: _FakeResponse())
+    result = lookup_domain_threatminer("clean.example")
+    assert result.verdict == "unknown"
+
+
+def test_threatminer_hash_lookup_maps_to_malicious(monkeypatch):
+    monkeypatch.setenv("CAVENDEX_THREATMINER_ENABLED", "true")
+
+    class _FakeResponse:
+        status_code = 200
+
+        def json(self):
+            return {"status_code": "200", "results": [{"file_name": "evil.exe", "mime_type": "application/x-dosexec"}]}
+
+    monkeypatch.setattr("requests.get", lambda *a, **kw: _FakeResponse())
+    result = lookup_hash_threatminer("d41d8cd98f00b204e9800998ecf8427e")
+    assert result.verdict == "malicious"
+    assert "evil.exe" in result.detail
+
+
+def test_threatminer_error_status_returns_error_verdict(monkeypatch):
+    monkeypatch.setenv("CAVENDEX_THREATMINER_ENABLED", "true")
+
+    class _FakeResponse:
+        status_code = 500
+        text = "Internal Server Error"
+
+    monkeypatch.setattr("requests.get", lambda *a, **kw: _FakeResponse())
+    result = lookup_ip_threatminer("203.0.113.13")
+    assert result.verdict == "error"
+
+
+def test_hybridanalysis_returns_none_without_api_key(monkeypatch):
+    monkeypatch.delenv("HYBRIDANALYSIS_API_KEY", raising=False)
+    assert lookup_hash_hybridanalysis("d41d8cd98f00b204e9800998ecf8427e") is None
+
+
+@pytest.mark.skipif(not _HAS_NETWORK, reason="No network access in this environment")
+def test_hybridanalysis_invalid_key_returns_error_live(monkeypatch):
+    monkeypatch.setenv("HYBRIDANALYSIS_API_KEY", "definitely-not-a-real-key")
+    result = lookup_hash_hybridanalysis("d41d8cd98f00b204e9800998ecf8427e")
+    assert result is not None
+    assert result.verdict == "error"
+
+
+def test_hybridanalysis_malicious_verdict(monkeypatch):
+    monkeypatch.setenv("HYBRIDANALYSIS_API_KEY", "fake-key")
+
+    class _FakeResponse:
+        status_code = 200
+
+        def json(self):
+            return [{"verdict": "malicious", "threat_score": 90, "vx_family": "Emotet"}]
+
+    monkeypatch.setattr("requests.get", lambda *a, **kw: _FakeResponse())
+    result = lookup_hash_hybridanalysis("aaaa")
+    assert result.verdict == "malicious"
+    assert "Emotet" in result.detail
+
+
+def test_hybridanalysis_empty_list_maps_to_unknown(monkeypatch):
+    monkeypatch.setenv("HYBRIDANALYSIS_API_KEY", "fake-key")
+
+    class _FakeResponse:
+        status_code = 200
+
+        def json(self):
+            return []
+
+    monkeypatch.setattr("requests.get", lambda *a, **kw: _FakeResponse())
+    result = lookup_hash_hybridanalysis("bbbb")
+    assert result.verdict == "unknown"
+
+
+def test_hybridanalysis_request_exception_returns_error_verdict(monkeypatch):
+    monkeypatch.setenv("HYBRIDANALYSIS_API_KEY", "fake-key")
+
+    import requests
+
+    monkeypatch.setattr("requests.get", lambda *a, **kw: (_ for _ in ()).throw(requests.ConnectionError("boom")))
+    result = lookup_hash_hybridanalysis("cccc")
+    assert result.verdict == "error"
+
+
+def test_intezer_returns_none_without_api_key(monkeypatch):
+    monkeypatch.delenv("INTEZER_API_KEY", raising=False)
+    assert lookup_hash_intezer("d41d8cd98f00b204e9800998ecf8427e") is None
+
+
+def test_intezer_token_exchange_failure_returns_error(monkeypatch):
+    monkeypatch.setenv("INTEZER_API_KEY", "fake-key")
+
+    class _FakeTokenResponse:
+        status_code = 401
+        text = "Unauthorized"
+
+    monkeypatch.setattr("requests.post", lambda *a, **kw: _FakeTokenResponse())
+    result = lookup_hash_intezer("aaaa")
+    assert result.verdict == "error"
+    assert "401" in result.detail
+
+
+def test_intezer_malicious_verdict_end_to_end(monkeypatch):
+    monkeypatch.setenv("INTEZER_API_KEY", "fake-key")
+
+    class _FakeTokenResponse:
+        status_code = 200
+
+        def json(self):
+            return {"result": "a-real-looking-jwt"}
+
+    class _FakeFileResponse:
+        status_code = 200
+
+        def json(self):
+            return {"verdict": "malicious", "sub_verdict": "trojan", "analysis_url": "https://analyze.intezer.com/x"}
+
+    monkeypatch.setattr("requests.post", lambda *a, **kw: _FakeTokenResponse())
+    monkeypatch.setattr("requests.get", lambda *a, **kw: _FakeFileResponse())
+    result = lookup_hash_intezer("bbbb")
+    assert result.verdict == "malicious"
+    assert "trojan" in result.detail
+    assert result.link == "https://analyze.intezer.com/x"
+
+
+def test_intezer_not_found_maps_to_unknown(monkeypatch):
+    monkeypatch.setenv("INTEZER_API_KEY", "fake-key")
+
+    class _FakeTokenResponse:
+        status_code = 200
+
+        def json(self):
+            return {"result": "a-real-looking-jwt"}
+
+    class _FakeFileResponse:
+        status_code = 404
+
+    monkeypatch.setattr("requests.post", lambda *a, **kw: _FakeTokenResponse())
+    monkeypatch.setattr("requests.get", lambda *a, **kw: _FakeFileResponse())
+    result = lookup_hash_intezer("cccc")
+    assert result.verdict == "unknown"
+
+
+def test_urlscan_returns_none_without_api_key(monkeypatch):
+    monkeypatch.delenv("URLSCAN_API_KEY", raising=False)
+    assert lookup_domain_urlscan("evil.example") is None
+
+
+@pytest.mark.skipif(not _HAS_NETWORK, reason="No network access in this environment")
+def test_urlscan_invalid_key_returns_error_live(monkeypatch):
+    monkeypatch.setenv("URLSCAN_API_KEY", "definitely-not-a-real-key")
+    result = lookup_domain_urlscan("example.com")
+    assert result is not None
+    assert result.verdict in ("error", "unknown")
+
+
+def test_urlscan_always_returns_unknown_verdict_with_results(monkeypatch):
+    monkeypatch.setenv("URLSCAN_API_KEY", "fake-key")
+
+    class _FakeResponse:
+        status_code = 200
+
+        def json(self):
+            return {"results": [{"_id": "abc123", "page": {"domain": "evil.example"}}], "total": 1}
+
+    monkeypatch.setattr("requests.get", lambda *a, **kw: _FakeResponse())
+    result = lookup_domain_urlscan("evil.example")
+    assert result.verdict == "unknown"
+    assert "1 prior scan" in result.detail
+    assert result.link == "https://urlscan.io/result/abc123/"
+
+
+def test_urlscan_no_results(monkeypatch):
+    monkeypatch.setenv("URLSCAN_API_KEY", "fake-key")
+
+    class _FakeResponse:
+        status_code = 200
+
+        def json(self):
+            return {"results": [], "total": 0}
+
+    monkeypatch.setattr("requests.get", lambda *a, **kw: _FakeResponse())
+    result = lookup_url_urlscan("http://clean.example/")
+    assert result.verdict == "unknown"
+    assert result.link is None
+
+
+def test_urlscan_escapes_lucene_special_characters(monkeypatch):
+    """A malicious/malformed IOC string must not be able to widen the
+    search query with unescaped quotes."""
+    monkeypatch.setenv("URLSCAN_API_KEY", "fake-key")
+    captured = {}
+
+    class _FakeResponse:
+        status_code = 200
+
+        def json(self):
+            return {"results": [], "total": 0}
+
+    def _fake_get(url, params=None, **kwargs):
+        captured["q"] = params.get("q") if params else None
+        return _FakeResponse()
+
+    monkeypatch.setattr("requests.get", _fake_get)
+    lookup_url_urlscan('http://evil.example/" OR page.domain:*')
+    assert captured["q"] is not None
+    assert '\\"' in captured["q"]
+
+
+def test_safebrowsing_returns_none_without_api_key(monkeypatch):
+    monkeypatch.delenv("GOOGLE_SAFE_BROWSING_API_KEY", raising=False)
+    assert lookup_url_safebrowsing("http://evil.example/x") is None
+
+
+@pytest.mark.skipif(not _HAS_NETWORK, reason="No network access in this environment")
+def test_safebrowsing_invalid_key_returns_error_live(monkeypatch):
+    monkeypatch.setenv("GOOGLE_SAFE_BROWSING_API_KEY", "definitely-not-a-real-key")
+    result = lookup_url_safebrowsing("http://example.com/")
+    assert result is not None
+    assert result.verdict == "error"
+
+
+def test_safebrowsing_match_maps_to_malicious(monkeypatch):
+    monkeypatch.setenv("GOOGLE_SAFE_BROWSING_API_KEY", "fake-key")
+
+    class _FakeResponse:
+        status_code = 200
+
+        def json(self):
+            return {"matches": [{"threatType": "MALWARE"}]}
+
+    monkeypatch.setattr("requests.post", lambda *a, **kw: _FakeResponse())
+    result = lookup_url_safebrowsing("http://evil.example/payload.exe")
+    assert result.verdict == "malicious"
+    assert "MALWARE" in result.detail
+
+
+def test_safebrowsing_empty_response_maps_to_harmless(monkeypatch):
+    monkeypatch.setenv("GOOGLE_SAFE_BROWSING_API_KEY", "fake-key")
+
+    class _FakeResponse:
+        status_code = 200
+
+        def json(self):
+            return {}
+
+    monkeypatch.setattr("requests.post", lambda *a, **kw: _FakeResponse())
+    result = lookup_url_safebrowsing("http://clean.example/")
+    assert result.verdict == "harmless"
+
+
+def test_safebrowsing_domain_is_wrapped_as_root_url(monkeypatch):
+    monkeypatch.setenv("GOOGLE_SAFE_BROWSING_API_KEY", "fake-key")
+    captured = {}
+
+    class _FakeResponse:
+        status_code = 200
+
+        def json(self):
+            return {}
+
+    def _fake_post(url, params=None, json=None, **kwargs):
+        captured["threat_entries"] = json["threatInfo"]["threatEntries"]
+        return _FakeResponse()
+
+    monkeypatch.setattr("requests.post", _fake_post)
+    lookup_domain_safebrowsing("evil.example")
+    assert captured["threat_entries"] == [{"url": "http://evil.example/"}]
+
+
+def test_securitytrails_returns_none_without_api_key(monkeypatch):
+    monkeypatch.delenv("SECURITYTRAILS_API_KEY", raising=False)
+    assert lookup_domain_securitytrails("example.com") is None
+
+
+@pytest.mark.skipif(not _HAS_NETWORK, reason="No network access in this environment")
+def test_securitytrails_invalid_key_returns_error_live(monkeypatch):
+    monkeypatch.setenv("SECURITYTRAILS_API_KEY", "definitely-not-a-real-key")
+    result = lookup_domain_securitytrails("example.com")
+    assert result is not None
+    assert result.verdict in ("error", "unknown")
+
+
+def test_securitytrails_always_returns_unknown_verdict(monkeypatch):
+    monkeypatch.setenv("SECURITYTRAILS_API_KEY", "fake-key")
+
+    class _FakeResponse:
+        status_code = 200
+
+        def json(self):
+            return {
+                "subdomain_count": 42,
+                "current_dns": {"a": {"values": [{"ip": "1.2.3.4"}]}, "mx": {"values": []}},
+                "alexa_rank": 1000,
+            }
+
+    monkeypatch.setattr("requests.get", lambda *a, **kw: _FakeResponse())
+    result = lookup_domain_securitytrails("example.com")
+    assert result.verdict == "unknown"
+    assert "42 known subdomain" in result.detail
+    assert "1000" in result.detail
+
+
+def test_securitytrails_404_maps_to_unknown(monkeypatch):
+    monkeypatch.setenv("SECURITYTRAILS_API_KEY", "fake-key")
+
+    class _FakeResponse:
+        status_code = 404
+        text = "Not Found"
+
+    monkeypatch.setattr("requests.get", lambda *a, **kw: _FakeResponse())
+    result = lookup_domain_securitytrails("neverseen.example")
+    assert result.verdict == "unknown"
+
+
+def test_blocklistde_returns_none_when_disabled_by_default(monkeypatch):
+    monkeypatch.delenv("CAVENDEX_BLOCKLISTDE_ENABLED", raising=False)
+
+    def _fail(*a, **kw):
+        raise AssertionError("must not call the network when Blocklist.de is disabled")
+
+    monkeypatch.setattr("requests.get", _fail)
+    assert lookup_ip_blocklistde("8.8.8.8") is None
+
+
+@pytest.mark.skipif(not _HAS_BLOCKLISTDE_NETWORK, reason="No network access in this environment")
+def test_blocklistde_live_success_path_against_real_endpoint(monkeypatch):
+    """A genuine live call against Blocklist.de's real, keyless,
+    plain-text endpoint -- proves the regex-based text parsing matches
+    the real response shape (confirmed at research time to be
+    "attacks: N<br />reports: N<br />", not JSON)."""
+    monkeypatch.setenv("CAVENDEX_BLOCKLISTDE_ENABLED", "true")
+    result = lookup_ip_blocklistde("8.8.8.8")
+    assert result is not None
+    assert result.source == "blocklistde"
+    assert result.verdict in ("harmless", "malicious")
+    assert "report" in result.detail.lower()
+
+
+def test_blocklistde_parses_plaintext_response(monkeypatch):
+    monkeypatch.setenv("CAVENDEX_BLOCKLISTDE_ENABLED", "true")
+
+    class _FakeResponse:
+        status_code = 200
+        text = "attacks: 3<br />reports: 7<br />"
+
+    monkeypatch.setattr("requests.get", lambda *a, **kw: _FakeResponse())
+    result = lookup_ip_blocklistde("203.0.113.9")
+    assert result.verdict == "malicious"
+    assert "3 attack" in result.detail
+    assert "7 abuse report" in result.detail
+
+
+def test_blocklistde_zero_counts_maps_to_harmless(monkeypatch):
+    monkeypatch.setenv("CAVENDEX_BLOCKLISTDE_ENABLED", "true")
+
+    class _FakeResponse:
+        status_code = 200
+        text = "attacks: 0<br />reports: 0<br />"
+
+    monkeypatch.setattr("requests.get", lambda *a, **kw: _FakeResponse())
+    result = lookup_ip_blocklistde("203.0.113.10")
+    assert result.verdict == "harmless"
+
+
+def test_blocklistde_unrecognized_body_returns_error(monkeypatch):
+    monkeypatch.setenv("CAVENDEX_BLOCKLISTDE_ENABLED", "true")
+
+    class _FakeResponse:
+        status_code = 200
+        text = "<html>maintenance</html>"
+
+    monkeypatch.setattr("requests.get", lambda *a, **kw: _FakeResponse())
+    result = lookup_ip_blocklistde("203.0.113.11")
+    assert result.verdict == "error"
+
+
+def test_nvd_returns_none_when_disabled_by_default(monkeypatch):
+    monkeypatch.delenv("CAVENDEX_NVD_ENABLED", raising=False)
+
+    def _fail(*a, **kw):
+        raise AssertionError("must not call the network when NVD is disabled")
+
+    monkeypatch.setattr("requests.get", _fail)
+    assert lookup_cve_nvd("CVE-2021-44228") is None
+
+
+@pytest.mark.skipif(not _HAS_NVD_NETWORK, reason="No network access in this environment")
+def test_nvd_live_success_path_against_real_heartbleed_cve(monkeypatch):
+    """A genuine live call against NVD's real, keyless API for a stable,
+    famous CVE (Heartbleed) -- proves the CVSS v3.1 field parsing matches
+    the real response shape, not a guessed one."""
+    monkeypatch.setenv("CAVENDEX_NVD_ENABLED", "true")
+    result = lookup_cve_nvd("CVE-2014-0160")
+    assert result is not None
+    assert result.source == "nvd"
+    assert result.verdict in ("malicious", "suspicious", "harmless")
+    assert "7.5" in result.detail or "HIGH" in result.detail.upper()
+    assert result.link == "https://nvd.nist.gov/vuln/detail/CVE-2014-0160"
+
+
+def test_nvd_critical_severity_maps_to_malicious(monkeypatch):
+    monkeypatch.setenv("CAVENDEX_NVD_ENABLED", "true")
+
+    class _FakeResponse:
+        status_code = 200
+
+        def json(self):
+            return {
+                "vulnerabilities": [
+                    {
+                        "cve": {
+                            "id": "CVE-2099-0001",
+                            "descriptions": [{"lang": "en", "value": "A critical remote code execution flaw."}],
+                            "metrics": {
+                                "cvssMetricV31": [
+                                    {"cvssData": {"baseScore": 9.8, "baseSeverity": "CRITICAL"}}
+                                ]
+                            },
+                        }
+                    }
+                ]
+            }
+
+    monkeypatch.setattr("requests.get", lambda *a, **kw: _FakeResponse())
+    result = lookup_cve_nvd("CVE-2099-0001")
+    assert result.verdict == "malicious"
+    assert "9.8" in result.detail
+    assert "remote code execution" in result.detail
+
+
+def test_nvd_not_found_maps_to_unknown(monkeypatch):
+    monkeypatch.setenv("CAVENDEX_NVD_ENABLED", "true")
+
+    class _FakeResponse:
+        status_code = 200
+
+        def json(self):
+            return {"vulnerabilities": []}
+
+    monkeypatch.setattr("requests.get", lambda *a, **kw: _FakeResponse())
+    result = lookup_cve_nvd("CVE-2099-9999")
+    assert result.verdict == "unknown"
+
+
+def test_nvd_key_optional_but_sent_when_present(monkeypatch):
+    monkeypatch.setenv("CAVENDEX_NVD_ENABLED", "true")
+    monkeypatch.setenv("NVD_API_KEY", "my-real-key")
+    captured = {}
+
+    class _FakeResponse:
+        status_code = 200
+
+        def json(self):
+            return {"vulnerabilities": []}
+
+    def _fake_get(url, params=None, headers=None, **kwargs):
+        captured["headers"] = headers
+        return _FakeResponse()
+
+    monkeypatch.setattr("requests.get", _fake_get)
+    lookup_cve_nvd("CVE-2099-0002")
+    assert captured["headers"]["apiKey"] == "my-real-key"

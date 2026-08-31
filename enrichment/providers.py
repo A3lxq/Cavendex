@@ -1,38 +1,56 @@
 """Real threat-intel provider lookups — AbuseIPDB, VirusTotal, Shodan,
 AlienVault OTX, GreyNoise, MalwareBazaar, ThreatFox, URLhaus (abuse.ch),
-IBM X-Force Exchange, Metadefender Cloud (OPSWAT), and Censys. Every
-function here follows the same contract as the rest of this project's
-external-dependency code (utils/llm.py's provider fallback, ingestion's
-normalizers): never raise into the caller, return None when a lookup
-can't be answered (disabled, no API key configured, the provider
-errored, the network is unreachable), so a missing/broken threat-intel
-key degrades an incident's context instead of crashing the pipeline.
+IBM X-Force Exchange, Metadefender Cloud (OPSWAT), Censys, Pulsedive,
+ThreatMiner, Hybrid Analysis, Intezer, urlscan.io, Google Safe Browsing,
+SecurityTrails, Blocklist.de, and NVD. Every function here follows the
+same contract as the rest of this project's external-dependency code
+(utils/llm.py's provider fallback, ingestion's normalizers): never raise
+into the caller, return None when a lookup can't be answered (disabled,
+no API key configured, the provider errored, the network is
+unreachable), so a missing/broken threat-intel key degrades an
+incident's context instead of crashing the pipeline.
 
 Results are cached in-process for CACHE_TTL_SECONDS — free-tier quotas are
 tight (VirusTotal: 4 requests/minute) and the same IOC is looked up again
 every time an incident revisits it (e.g. Investigator re-checking what
 Triage already checked).
 
-Honesty note on the 8 newer providers (added after PhD-level research
-into their real APIs, ToS, and free tiers — see README's "Adding a
-Threat-Intel Provider" section for the full per-platform writeup):
-AlienVault OTX, GreyNoise, and the three abuse.ch platforms
-(MalwareBazaar/ThreatFox/URLhaus) were verified against real, current
-public API docs with stable, well-documented response shapes. IBM
-X-Force, Metadefender Cloud, and Censys carry real, flagged uncertainty
-at the time this was written — an unresolved 2026 end-of-life question
-for IBM X-Force tied to the Palo Alto Networks/QRadar transition, only
-2018-era free-tier numbers found for Metadefender, and a genuinely
-unstable free tier for Censys — so their response parsing below is
-written defensively (never assumes one gold-standard shape) rather than
-pinned to a verified-live success response, the same honesty pattern
-this project already uses for Wazuh/Splunk/CrowdStrike ("verified
-against the documented shape, not a live vendor tenant"). All three are
-inert without a key either way, same as everything else here.
+Honesty note on the 8-provider batch (AlienVault OTX, GreyNoise,
+MalwareBazaar/ThreatFox/URLhaus, IBM X-Force, Metadefender Cloud,
+Censys): AlienVault OTX, GreyNoise, and the three abuse.ch platforms
+were verified against real, current public API docs with stable,
+well-documented response shapes. IBM X-Force, Metadefender Cloud, and
+Censys carry real, flagged uncertainty at the time this was written — an
+unresolved 2026 end-of-life question for IBM X-Force tied to the Palo
+Alto Networks/QRadar transition, only 2018-era free-tier numbers found
+for Metadefender, and a genuinely unstable free tier for Censys — so
+their response parsing is written defensively (never assumes one
+gold-standard shape) rather than pinned to a verified-live success
+response.
+
+Honesty note on the second, 9-provider batch (Pulsedive, ThreatMiner,
+Hybrid Analysis, Intezer, urlscan.io, Google Safe Browsing,
+SecurityTrails, Blocklist.de, NVD): request/response shapes for
+Pulsedive, Google Safe Browsing, SecurityTrails, Blocklist.de, and NVD
+were confirmed directly against live endpoints/current docs during
+research. Hybrid Analysis and Intezer's response field names come from
+public docs and third-party integration references, not a confirmed
+live successful response (parsed defensively, same pattern as IBM
+X-Force above). ThreatMiner's own endpoint was found intermittently
+unreachable/erroring during research — parsed defensively and never
+assumed to be a stable dependency. urlscan.io's Search API was confirmed
+to expose scan metadata only, no explicit malicious/clean flag — so
+lookup_domain_urlscan/lookup_url_urlscan deliberately always return
+verdict="unknown" (informational, not a missing feature), the same
+honest pattern as lookup_domain_securitytrails, which has no
+malicious/clean signal of its own either. All nine are inert without
+their gate (a key, or an explicit *_ENABLED flag for the three keyless
+ones) either way, same as everything else here.
 """
 
 import logging
 import os
+import re
 import threading
 import time
 import urllib.parse
@@ -66,6 +84,14 @@ logger = logging.getLogger(__name__)
 # bounds actual outbound *attempts*, not just successful results, so a
 # maliciously alert with many fabricated-looking IOCs can't turn a wider
 # provider fan-out into an unbounded number of real third-party requests.
+#
+# A third, narrower invariant added for urlscan.io specifically: its
+# search query (`q=`) is a Lucene-style query language, not a plain
+# value — an unescaped indicator could widen *what* the query matches
+# (e.g. injecting a second clause), not redirect the request anywhere
+# (still no SSRF). lookup_domain_urlscan/lookup_url_urlscan escape
+# backslashes and double-quotes before interpolating into the query
+# string for exactly this reason.
 
 _CACHE_TTL_SECONDS = 3600.0
 # Bounds the cache's total memory growth over the process's lifetime —
@@ -1146,6 +1172,841 @@ def lookup_ip_censys(ip: str) -> Optional[EnrichmentResult]:
         verdict=verdict,
         detail=detail[:1000],
         link=f"https://platform.censys.io/hosts/{urllib.parse.quote(ip, safe='')}",
+    )
+    _cache_set(cache_key, result)
+    return result
+
+
+def _lookup_pulsedive(indicator: str, indicator_type: str) -> Optional[EnrichmentResult]:
+    """Pulsedive — community risk-tagging and threat/campaign
+    associations for an ip/domain/url, rather than a bare score.
+    Requires PULSEDIVE_API_KEY (free registration).
+    """
+    api_key = os.getenv("PULSEDIVE_API_KEY")
+    if not api_key:
+        return None
+
+    cache_key = ("pulsedive", indicator)
+    cached = _cache_get(cache_key)
+    if cached is not None:
+        return cached
+
+    import requests
+
+    try:
+        response = requests.get(
+            "https://pulsedive.com/api/indicator.php",
+            params={"indicator": indicator, "key": api_key},
+            timeout=10,
+        )
+    except requests.RequestException as exc:
+        return EnrichmentResult(
+            indicator=indicator, indicator_type=indicator_type, source="pulsedive",
+            verdict="error", detail=f"Request failed: {exc}"[:1000],
+        )
+
+    if response.status_code != 200:
+        return EnrichmentResult(
+            indicator=indicator, indicator_type=indicator_type, source="pulsedive",
+            verdict="error", detail=_error_detail(response),
+        )
+
+    raw = _parse_json(response)
+    if raw is None:
+        return EnrichmentResult(
+            indicator=indicator, indicator_type=indicator_type, source="pulsedive",
+            verdict="error", detail="Pulsedive returned a non-JSON response body.",
+        )
+    data = raw
+    if data.get("error"):
+        result = EnrichmentResult(
+            indicator=indicator, indicator_type=indicator_type, source="pulsedive",
+            verdict="unknown", detail=str(data.get("error"))[:1000],
+        )
+        _cache_set(cache_key, result)
+        return result
+
+    risk = (data.get("risk") or "unknown").lower()
+    risk_recommended = data.get("risk_recommended")
+    threats = [t.get("name") for t in (data.get("threats") or []) if isinstance(t, dict) and t.get("name")][:5]
+
+    verdict_map = {
+        "critical": "malicious", "high": "malicious",
+        "medium": "suspicious", "low": "harmless", "none": "harmless",
+    }
+    verdict = verdict_map.get(risk, "unknown")
+
+    detail = f"Pulsedive risk: {risk}."
+    if risk_recommended and risk_recommended != risk:
+        detail += f" Recommended risk: {risk_recommended}."
+    if threats:
+        detail += f" Associated threat(s): {', '.join(threats)}."
+
+    result = EnrichmentResult(
+        indicator=indicator,
+        indicator_type=indicator_type,
+        source="pulsedive",
+        verdict=verdict,
+        detail=detail[:1000],
+        link=f"https://pulsedive.com/indicator/?ioc={urllib.parse.quote(indicator, safe='')}",
+    )
+    _cache_set(cache_key, result)
+    return result
+
+
+def lookup_ip_pulsedive(ip: str) -> Optional[EnrichmentResult]:
+    return _lookup_pulsedive(ip, "ip")
+
+
+def lookup_domain_pulsedive(domain: str) -> Optional[EnrichmentResult]:
+    return _lookup_pulsedive(domain, "domain")
+
+
+def lookup_url_pulsedive(url: str) -> Optional[EnrichmentResult]:
+    return _lookup_pulsedive(url, "url")
+
+
+def _threatminer_enabled() -> bool:
+    return os.getenv("CAVENDEX_THREATMINER_ENABLED", "false").strip().lower() in ("1", "true", "yes")
+
+
+_THREATMINER_ENDPOINT = {"ip": "host.php", "domain": "domain.php", "hash": "sample.php"}
+_THREATMINER_RT = {"ip": 4, "domain": 4, "hash": 1}
+
+
+def _lookup_threatminer(indicator: str, indicator_type: str) -> Optional[EnrichmentResult]:
+    """ThreatMiner — free, keyless passive-DNS/related-malware-sample
+    graph. Gated by CAVENDEX_THREATMINER_ENABLED (default off), the same
+    keyless-provider pattern as Shodan: querying a third party about an
+    IOC under investigation is an operational-security choice a tool
+    with no key to withhold shouldn't make silently.
+
+    Honest caveat: this project's research found threatminer.org's own
+    API endpoint intermittently unreachable/erroring at research time —
+    parsed defensively (never assumes a clean response), same pattern as
+    the honesty caveats already documented for IBM X-Force/Metadefender/
+    Censys above.
+    """
+    if not _threatminer_enabled():
+        return None
+
+    cache_key = ("threatminer", indicator)
+    cached = _cache_get(cache_key)
+    if cached is not None:
+        return cached
+
+    import requests
+
+    endpoint = _THREATMINER_ENDPOINT[indicator_type]
+    rt = _THREATMINER_RT[indicator_type]
+    try:
+        response = requests.get(
+            f"https://api.threatminer.org/v2/{endpoint}",
+            params={"q": indicator, "rt": rt},
+            timeout=10,
+        )
+    except requests.RequestException as exc:
+        return EnrichmentResult(
+            indicator=indicator, indicator_type=indicator_type, source="threatminer",
+            verdict="error", detail=f"Request failed: {exc}"[:1000],
+        )
+
+    if response.status_code != 200:
+        return EnrichmentResult(
+            indicator=indicator, indicator_type=indicator_type, source="threatminer",
+            verdict="error", detail=_error_detail(response),
+        )
+
+    raw = _parse_json(response)
+    if raw is None:
+        return EnrichmentResult(
+            indicator=indicator, indicator_type=indicator_type, source="threatminer",
+            verdict="error", detail="ThreatMiner returned a non-JSON response body.",
+        )
+    body = raw
+    status_code = str(body.get("status_code", ""))
+    results = body.get("results")
+    if not isinstance(results, list):
+        results = []
+
+    if status_code != "200" or not results:
+        result = EnrichmentResult(
+            indicator=indicator, indicator_type=indicator_type, source="threatminer",
+            verdict="unknown",
+            detail=f"Not found in ThreatMiner (status: {status_code or 'no data'}).",
+        )
+        _cache_set(cache_key, result)
+        return result
+
+    if indicator_type == "hash":
+        entry = results[0] if isinstance(results[0], dict) else {}
+        file_name = entry.get("file_name") or "unknown"
+        mime_type = entry.get("mime_type") or "unknown"
+        detail = f"Known malware sample in ThreatMiner. File name: {file_name}. Type: {mime_type}."
+        verdict = "malicious"
+    else:
+        samples = [r.get("sample") for r in results if isinstance(r, dict) and r.get("sample")][:5]
+        detail = (
+            f"Referenced by {len(results)} related malware sample(s)"
+            + (f": {', '.join(samples)}" if samples else "")
+            + "."
+        )
+        verdict = "malicious"
+
+    threatminer_page = "host" if indicator_type == "ip" else indicator_type
+    result = EnrichmentResult(
+        indicator=indicator,
+        indicator_type=indicator_type,
+        source="threatminer",
+        verdict=verdict,
+        detail=detail[:1000],
+        link=f"https://www.threatminer.org/{threatminer_page}.php?q={urllib.parse.quote(indicator, safe='')}",
+    )
+    _cache_set(cache_key, result)
+    return result
+
+
+def lookup_ip_threatminer(ip: str) -> Optional[EnrichmentResult]:
+    return _lookup_threatminer(ip, "ip")
+
+
+def lookup_domain_threatminer(domain: str) -> Optional[EnrichmentResult]:
+    return _lookup_threatminer(domain, "domain")
+
+
+def lookup_hash_threatminer(file_hash: str) -> Optional[EnrichmentResult]:
+    return _lookup_threatminer(file_hash, "hash")
+
+
+def lookup_hash_hybridanalysis(file_hash: str) -> Optional[EnrichmentResult]:
+    """Hybrid Analysis (CrowdStrike Falcon Sandbox public service) — a
+    real sandbox-behavior verdict/threat score for a hash already in
+    their public corpus, not just AV-consensus. Requires
+    HYBRIDANALYSIS_API_KEY (free registration). Read-only hash lookup
+    only — Cavendex never uploads a file for detonation.
+    """
+    api_key = os.getenv("HYBRIDANALYSIS_API_KEY")
+    if not api_key:
+        return None
+
+    cache_key = ("hybridanalysis", file_hash)
+    cached = _cache_get(cache_key)
+    if cached is not None:
+        return cached
+
+    import requests
+
+    try:
+        response = requests.get(
+            "https://www.hybrid-analysis.com/api/v2/search/hash",
+            params={"hash": file_hash},
+            headers={
+                "api-key": api_key,
+                "User-Agent": "Falcon Sandbox",
+                "Accept": "application/json",
+            },
+            timeout=10,
+        )
+    except requests.RequestException as exc:
+        return EnrichmentResult(
+            indicator=file_hash, indicator_type="hash", source="hybrid_analysis",
+            verdict="error", detail=f"Request failed: {exc}"[:1000],
+        )
+
+    if response.status_code != 200:
+        return EnrichmentResult(
+            indicator=file_hash, indicator_type="hash", source="hybrid_analysis",
+            verdict="error", detail=_error_detail(response),
+        )
+
+    raw = _parse_json(response)
+    if raw is None:
+        return EnrichmentResult(
+            indicator=file_hash, indicator_type="hash", source="hybrid_analysis",
+            verdict="error", detail="Hybrid Analysis returned a non-JSON response body.",
+        )
+    entries = raw if isinstance(raw, list) else []
+    if not entries or not isinstance(entries[0], dict):
+        result = EnrichmentResult(
+            indicator=file_hash, indicator_type="hash", source="hybrid_analysis",
+            verdict="unknown", detail="Not found in Hybrid Analysis.",
+        )
+        _cache_set(cache_key, result)
+        return result
+
+    entry = entries[0]
+    ha_verdict = (entry.get("verdict") or "").lower()
+    threat_score = entry.get("threat_score")
+    vx_family = entry.get("vx_family")
+
+    if ha_verdict == "malicious":
+        verdict = "malicious"
+    elif ha_verdict in ("whitelisted", "no specific threat", "no_verdict"):
+        verdict = "harmless"
+    elif ha_verdict == "suspicious":
+        verdict = "suspicious"
+    elif isinstance(threat_score, (int, float)):
+        verdict = "malicious" if threat_score >= 70 else "suspicious" if threat_score > 0 else "harmless"
+    else:
+        verdict = "unknown"
+
+    detail_parts = [f"Hybrid Analysis verdict: {ha_verdict or 'unrecorded'}."]
+    if threat_score is not None:
+        detail_parts.append(f"Threat score: {threat_score}/100.")
+    if vx_family:
+        detail_parts.append(f"Family: {vx_family}.")
+
+    result = EnrichmentResult(
+        indicator=file_hash,
+        indicator_type="hash",
+        source="hybrid_analysis",
+        verdict=verdict,
+        detail=" ".join(detail_parts)[:1000],
+        link=f"https://www.hybrid-analysis.com/search?query={urllib.parse.quote(file_hash, safe='')}",
+    )
+    _cache_set(cache_key, result)
+    return result
+
+
+def lookup_hash_intezer(file_hash: str) -> Optional[EnrichmentResult]:
+    """Intezer — code-genetics/reuse-based verdict for a hash already in
+    their corpus, a fundamentally different detection method than AV
+    consensus. Requires INTEZER_API_KEY (free Community registration).
+
+    The only provider here needing a token-exchange auth flow: the
+    api_key is exchanged for a short-lived Bearer token on every
+    cache-miss lookup (not itself cached — cheap enough, and lookups are
+    already cached by indicator for an hour, so this extra round-trip
+    only happens on genuine cache misses).
+    """
+    api_key = os.getenv("INTEZER_API_KEY")
+    if not api_key:
+        return None
+
+    cache_key = ("intezer", file_hash)
+    cached = _cache_get(cache_key)
+    if cached is not None:
+        return cached
+
+    import requests
+
+    try:
+        token_response = requests.post(
+            "https://analyze.intezer.com/api/v2-0/get-access-token",
+            json={"api_key": api_key},
+            timeout=10,
+        )
+    except requests.RequestException as exc:
+        return EnrichmentResult(
+            indicator=file_hash, indicator_type="hash", source="intezer",
+            verdict="error", detail=f"Request failed: {exc}"[:1000],
+        )
+
+    if token_response.status_code != 200:
+        return EnrichmentResult(
+            indicator=file_hash, indicator_type="hash", source="intezer",
+            verdict="error", detail=_error_detail(token_response),
+        )
+
+    token_body = _parse_json(token_response)
+    access_token = (token_body or {}).get("result")
+    if not access_token:
+        return EnrichmentResult(
+            indicator=file_hash, indicator_type="hash", source="intezer",
+            verdict="error", detail="Intezer did not return an access token.",
+        )
+
+    try:
+        response = requests.get(
+            f"https://analyze.intezer.com/api/v2-0/files/{urllib.parse.quote(file_hash, safe='')}",
+            headers={"Authorization": f"Bearer {access_token}"},
+            timeout=10,
+        )
+    except requests.RequestException as exc:
+        return EnrichmentResult(
+            indicator=file_hash, indicator_type="hash", source="intezer",
+            verdict="error", detail=f"Request failed: {exc}"[:1000],
+        )
+
+    if response.status_code == 404:
+        result = EnrichmentResult(
+            indicator=file_hash, indicator_type="hash", source="intezer",
+            verdict="unknown", detail="Not found in Intezer.",
+        )
+        _cache_set(cache_key, result)
+        return result
+
+    if response.status_code != 200:
+        return EnrichmentResult(
+            indicator=file_hash, indicator_type="hash", source="intezer",
+            verdict="error", detail=_error_detail(response),
+        )
+
+    raw = _parse_json(response)
+    if raw is None:
+        return EnrichmentResult(
+            indicator=file_hash, indicator_type="hash", source="intezer",
+            verdict="error", detail="Intezer returned a non-JSON response body.",
+        )
+    body = raw.get("result") if isinstance(raw.get("result"), dict) else raw
+    intezer_verdict = (body.get("verdict") or "").lower()
+    sub_verdict = body.get("sub_verdict")
+
+    verdict_map = {
+        "malicious": "malicious", "known_malware": "malicious",
+        "suspicious": "suspicious",
+        "trusted": "harmless", "no_threats": "harmless",
+    }
+    verdict = verdict_map.get(intezer_verdict, "unknown")
+
+    detail = f"Intezer verdict: {intezer_verdict or 'unrecorded'}."
+    if sub_verdict:
+        detail += f" ({sub_verdict})"
+
+    analysis_url = body.get("analysis_url")
+    result = EnrichmentResult(
+        indicator=file_hash,
+        indicator_type="hash",
+        source="intezer",
+        verdict=verdict,
+        detail=detail[:1000],
+        link=analysis_url if isinstance(analysis_url, str) else None,
+    )
+    _cache_set(cache_key, result)
+    return result
+
+
+def _lookup_urlscan(indicator: str, indicator_type: str) -> Optional[EnrichmentResult]:
+    """urlscan.io — real prior-scan history (screenshots, DOM/JS behavior
+    available via the linked scan) for a domain/URL. Requires
+    URLSCAN_API_KEY (free registration).
+
+    Deliberately always returns verdict="unknown": urlscan.io's Search
+    API results carry scan metadata (page/task/stats), not an explicit
+    malicious/clean flag — see this module's docstring. The indicator is
+    escaped for Lucene special characters before being embedded in the
+    search query — see the security note near the top of this module.
+    """
+    api_key = os.getenv("URLSCAN_API_KEY")
+    if not api_key:
+        return None
+
+    cache_key = ("urlscan", indicator)
+    cached = _cache_get(cache_key)
+    if cached is not None:
+        return cached
+
+    import requests
+
+    field = "page.domain" if indicator_type == "domain" else "page.url"
+    escaped = indicator.replace("\\", "\\\\").replace('"', '\\"')
+    try:
+        response = requests.get(
+            "https://urlscan.io/api/v1/search/",
+            params={"q": f'{field}:"{escaped}"'},
+            headers={"API-Key": api_key, "Accept": "application/json"},
+            timeout=10,
+        )
+    except requests.RequestException as exc:
+        return EnrichmentResult(
+            indicator=indicator, indicator_type=indicator_type, source="urlscan",
+            verdict="error", detail=f"Request failed: {exc}"[:1000],
+        )
+
+    if response.status_code != 200:
+        return EnrichmentResult(
+            indicator=indicator, indicator_type=indicator_type, source="urlscan",
+            verdict="error", detail=_error_detail(response),
+        )
+
+    raw = _parse_json(response)
+    if raw is None:
+        return EnrichmentResult(
+            indicator=indicator, indicator_type=indicator_type, source="urlscan",
+            verdict="error", detail="urlscan.io returned a non-JSON response body.",
+        )
+    results = [r for r in (raw.get("results") or []) if isinstance(r, dict)]
+
+    if not results:
+        detail = "No prior urlscan.io scans found for this indicator."
+        link = None
+    else:
+        scan_id = results[0].get("_id")
+        link = f"https://urlscan.io/result/{scan_id}/" if scan_id else "https://urlscan.io/search/"
+        detail = (
+            f"{len(results)} prior scan(s) on record. No explicit malicious "
+            "verdict is exposed by this endpoint — see the linked scan for full detail."
+        )
+
+    result = EnrichmentResult(
+        indicator=indicator,
+        indicator_type=indicator_type,
+        source="urlscan",
+        verdict="unknown",
+        detail=detail[:1000],
+        link=link,
+    )
+    _cache_set(cache_key, result)
+    return result
+
+
+def lookup_domain_urlscan(domain: str) -> Optional[EnrichmentResult]:
+    return _lookup_urlscan(domain, "domain")
+
+
+def lookup_url_urlscan(url: str) -> Optional[EnrichmentResult]:
+    return _lookup_urlscan(url, "url")
+
+
+_SAFE_BROWSING_THREAT_TYPES = [
+    "MALWARE", "SOCIAL_ENGINEERING", "UNWANTED_SOFTWARE", "POTENTIALLY_HARMFUL_APPLICATION",
+]
+
+
+def _lookup_safebrowsing(indicator: str, indicator_type: str) -> Optional[EnrichmentResult]:
+    """Google Safe Browsing Lookup API v4 — Google's own browser-blocklist
+    signal. A bare domain is checked as its own root URL (a documented
+    simplification: this won't catch a malicious *path* on an otherwise-
+    clean domain). Requires GOOGLE_SAFE_BROWSING_API_KEY (free, via
+    Google Cloud Console). The indicator only ever travels as a JSON
+    body field, never as the request target.
+    """
+    api_key = os.getenv("GOOGLE_SAFE_BROWSING_API_KEY")
+    if not api_key:
+        return None
+
+    cache_key = ("safebrowsing", indicator)
+    cached = _cache_get(cache_key)
+    if cached is not None:
+        return cached
+
+    import requests
+
+    check_url = indicator if indicator_type == "url" else f"http://{indicator}/"
+    payload = {
+        "client": {"clientId": "cavendex", "clientVersion": "1.0"},
+        "threatInfo": {
+            "threatTypes": _SAFE_BROWSING_THREAT_TYPES,
+            "platformTypes": ["ANY_PLATFORM"],
+            "threatEntryTypes": ["URL"],
+            "threatEntries": [{"url": check_url}],
+        },
+    }
+    try:
+        response = requests.post(
+            "https://safebrowsing.googleapis.com/v4/threatMatches:find",
+            params={"key": api_key},
+            json=payload,
+            timeout=10,
+        )
+    except requests.RequestException as exc:
+        return EnrichmentResult(
+            indicator=indicator, indicator_type=indicator_type, source="google_safebrowsing",
+            verdict="error", detail=f"Request failed: {exc}"[:1000],
+        )
+
+    if response.status_code != 200:
+        return EnrichmentResult(
+            indicator=indicator, indicator_type=indicator_type, source="google_safebrowsing",
+            verdict="error", detail=_error_detail(response),
+        )
+
+    raw = _parse_json(response)
+    if raw is None:
+        return EnrichmentResult(
+            indicator=indicator, indicator_type=indicator_type, source="google_safebrowsing",
+            verdict="error", detail="Google Safe Browsing returned a non-JSON response body.",
+        )
+    matches = [m for m in (raw.get("matches") or []) if isinstance(m, dict)]
+
+    if matches:
+        threat_types = sorted({m.get("threatType", "UNKNOWN") for m in matches})
+        verdict = "malicious"
+        detail = f"Flagged by Google Safe Browsing: {', '.join(threat_types)}."
+    else:
+        verdict = "harmless"
+        detail = "Not on Google's Safe Browsing lists."
+
+    result = EnrichmentResult(
+        indicator=indicator,
+        indicator_type=indicator_type,
+        source="google_safebrowsing",
+        verdict=verdict,
+        detail=detail[:1000],
+        link=None,
+    )
+    _cache_set(cache_key, result)
+    return result
+
+
+def lookup_domain_safebrowsing(domain: str) -> Optional[EnrichmentResult]:
+    return _lookup_safebrowsing(domain, "domain")
+
+
+def lookup_url_safebrowsing(url: str) -> Optional[EnrichmentResult]:
+    return _lookup_safebrowsing(url, "url")
+
+
+def lookup_domain_securitytrails(domain: str) -> Optional[EnrichmentResult]:
+    """SecurityTrails — real current DNS records and subdomain count, an
+    infrastructure fact-sheet rather than a reputation verdict. Requires
+    SECURITYTRAILS_API_KEY (free registration; the exact free monthly
+    quota varied across sources at research time — verify at signup).
+
+    Deliberately always returns verdict="unknown": SecurityTrails has no
+    malicious/clean signal of its own, only infrastructure facts an
+    analyst weighs themselves — see this module's docstring.
+    """
+    api_key = os.getenv("SECURITYTRAILS_API_KEY")
+    if not api_key:
+        return None
+
+    cache_key = ("securitytrails", domain)
+    cached = _cache_get(cache_key)
+    if cached is not None:
+        return cached
+
+    import requests
+
+    try:
+        response = requests.get(
+            f"https://api.securitytrails.com/v1/domain/{urllib.parse.quote(domain, safe='')}",
+            headers={"APIKEY": api_key, "Accept": "application/json"},
+            timeout=10,
+        )
+    except requests.RequestException as exc:
+        return EnrichmentResult(
+            indicator=domain, indicator_type="domain", source="securitytrails",
+            verdict="error", detail=f"Request failed: {exc}"[:1000],
+        )
+
+    if response.status_code == 404:
+        result = EnrichmentResult(
+            indicator=domain, indicator_type="domain", source="securitytrails",
+            verdict="unknown", detail="Not found in SecurityTrails.",
+        )
+        _cache_set(cache_key, result)
+        return result
+
+    if response.status_code != 200:
+        return EnrichmentResult(
+            indicator=domain, indicator_type="domain", source="securitytrails",
+            verdict="error", detail=_error_detail(response),
+        )
+
+    raw = _parse_json(response)
+    if raw is None:
+        return EnrichmentResult(
+            indicator=domain, indicator_type="domain", source="securitytrails",
+            verdict="error", detail="SecurityTrails returned a non-JSON response body.",
+        )
+    body = raw
+    subdomain_count = body.get("subdomain_count")
+    current_dns = body.get("current_dns") if isinstance(body.get("current_dns"), dict) else {}
+    record_types = sorted(k for k, v in current_dns.items() if isinstance(v, dict) and (v.get("values") or []))
+    alexa_rank = body.get("alexa_rank")
+
+    detail_parts = []
+    if subdomain_count is not None:
+        detail_parts.append(f"{subdomain_count} known subdomain(s).")
+    if record_types:
+        detail_parts.append(f"Active DNS record types: {', '.join(record_types)}.")
+    if alexa_rank is not None:
+        detail_parts.append(f"Alexa rank: {alexa_rank}.")
+    if not detail_parts:
+        detail_parts.append("No infrastructure data returned.")
+
+    result = EnrichmentResult(
+        indicator=domain,
+        indicator_type="domain",
+        source="securitytrails",
+        verdict="unknown",
+        detail=" ".join(detail_parts)[:1000],
+        link=f"https://securitytrails.com/domain/{urllib.parse.quote(domain, safe='')}/dns",
+    )
+    _cache_set(cache_key, result)
+    return result
+
+
+def _blocklistde_enabled() -> bool:
+    return os.getenv("CAVENDEX_BLOCKLISTDE_ENABLED", "false").strip().lower() in ("1", "true", "yes")
+
+
+_BLOCKLISTDE_FIELD_RE = re.compile(r"(attacks|reports):\s*(\d+)")
+
+
+def lookup_ip_blocklistde(ip: str) -> Optional[EnrichmentResult]:
+    """Blocklist.de — free, keyless abuse-report-history check for an IP.
+    Gated by CAVENDEX_BLOCKLISTDE_ENABLED (default off), the same
+    keyless-provider pattern as Shodan/ThreatMiner.
+
+    Deviates from every other provider here: the real response is plain
+    text (e.g. "attacks: 0<br />reports: 0<br />"), not JSON — verified
+    directly at research time — so this skips _parse_json entirely and
+    parses the two counts with a small regex instead. HTTPS was
+    confirmed to work directly against the real endpoint (some public
+    documentation only shows an HTTP example).
+    """
+    if not _blocklistde_enabled():
+        return None
+
+    cache_key = ("blocklistde", ip)
+    cached = _cache_get(cache_key)
+    if cached is not None:
+        return cached
+
+    import requests
+
+    try:
+        response = requests.get(
+            "https://api.blocklist.de/api.php",
+            params={"ip": ip},
+            timeout=10,
+        )
+    except requests.RequestException as exc:
+        return EnrichmentResult(
+            indicator=ip, indicator_type="ip", source="blocklistde",
+            verdict="error", detail=f"Request failed: {exc}"[:1000],
+        )
+
+    if response.status_code != 200:
+        return EnrichmentResult(
+            indicator=ip, indicator_type="ip", source="blocklistde",
+            verdict="error", detail=_error_detail(response),
+        )
+
+    fields = dict(_BLOCKLISTDE_FIELD_RE.findall(response.text or ""))
+    if not fields:
+        result = EnrichmentResult(
+            indicator=ip, indicator_type="ip", source="blocklistde",
+            verdict="error", detail="Blocklist.de returned an unrecognized response body.",
+        )
+        _cache_set(cache_key, result)
+        return result
+
+    attacks = int(fields.get("attacks", 0))
+    reports = int(fields.get("reports", 0))
+    verdict = "malicious" if (attacks > 0 or reports > 0) else "harmless"
+
+    result = EnrichmentResult(
+        indicator=ip,
+        indicator_type="ip",
+        source="blocklistde",
+        verdict=verdict,
+        detail=f"{attacks} attack(s), {reports} abuse report(s) on record."[:1000],
+        link=None,
+    )
+    _cache_set(cache_key, result)
+    return result
+
+
+def _nvd_enabled() -> bool:
+    return os.getenv("CAVENDEX_NVD_ENABLED", "false").strip().lower() in ("1", "true", "yes")
+
+
+_CVSS_METRIC_KEYS = ("cvssMetricV31", "cvssMetricV30", "cvssMetricV2")
+
+
+def lookup_cve_nvd(cve_id: str) -> Optional[EnrichmentResult]:
+    """NVD (NIST) — CVSS severity/context for a CVE ID referenced in an
+    incident. Gated by CAVENDEX_NVD_ENABLED (default off, same
+    keyless-provider pattern as Shodan/ThreatMiner/Blocklist.de) since
+    the underlying API needs no key at all; NVD_API_KEY is optional and,
+    if set, only raises the rate limit (5 req/30s unkeyed, 50/30s
+    keyed) — it never gates whether this function runs.
+
+    Deliberately overloads "verdict" to mean the underlying
+    vulnerability's *severity*, not "is this indicator itself
+    malicious" — CRITICAL/HIGH -> malicious, MEDIUM -> suspicious,
+    LOW -> harmless — the same kind of per-provider semantic
+    reinterpretation already documented for Shodan/Censys above.
+    """
+    if not _nvd_enabled():
+        return None
+
+    cache_key = ("nvd", cve_id)
+    cached = _cache_get(cache_key)
+    if cached is not None:
+        return cached
+
+    import requests
+
+    headers = {"Accept": "application/json"}
+    api_key = os.getenv("NVD_API_KEY")
+    if api_key:
+        headers["apiKey"] = api_key
+
+    try:
+        response = requests.get(
+            "https://services.nvd.nist.gov/rest/json/cves/2.0",
+            params={"cveId": cve_id.upper()},
+            headers=headers,
+            timeout=15,
+        )
+    except requests.RequestException as exc:
+        return EnrichmentResult(
+            indicator=cve_id, indicator_type="cve", source="nvd",
+            verdict="error", detail=f"Request failed: {exc}"[:1000],
+        )
+
+    if response.status_code != 200:
+        return EnrichmentResult(
+            indicator=cve_id, indicator_type="cve", source="nvd",
+            verdict="error", detail=_error_detail(response),
+        )
+
+    raw = _parse_json(response)
+    if raw is None:
+        return EnrichmentResult(
+            indicator=cve_id, indicator_type="cve", source="nvd",
+            verdict="error", detail="NVD returned a non-JSON response body.",
+        )
+    vulnerabilities = raw.get("vulnerabilities") or []
+    if not vulnerabilities or not isinstance(vulnerabilities[0], dict):
+        result = EnrichmentResult(
+            indicator=cve_id, indicator_type="cve", source="nvd",
+            verdict="unknown", detail=f"{cve_id} not found in NVD.",
+        )
+        _cache_set(cache_key, result)
+        return result
+
+    cve = vulnerabilities[0].get("cve") or {}
+    descriptions = [d for d in (cve.get("descriptions") or []) if isinstance(d, dict)]
+    english = next((d.get("value") for d in descriptions if d.get("lang") == "en"), None)
+    english = english or "No description available."
+
+    metrics = cve.get("metrics") or {}
+    base_score = None
+    base_severity = None
+    for key in _CVSS_METRIC_KEYS:
+        entries = metrics.get(key)
+        if isinstance(entries, list) and entries and isinstance(entries[0], dict):
+            cvss_data = entries[0].get("cvssData") or {}
+            base_score = cvss_data.get("baseScore")
+            base_severity = cvss_data.get("baseSeverity") or entries[0].get("baseSeverity")
+            break
+
+    severity = (base_severity or "").upper()
+    if severity in ("CRITICAL", "HIGH"):
+        verdict = "malicious"
+    elif severity == "MEDIUM":
+        verdict = "suspicious"
+    elif severity == "LOW":
+        verdict = "harmless"
+    else:
+        verdict = "unknown"
+
+    detail = english[:800]
+    if base_score is not None:
+        detail += f" (CVSS {base_score}, {base_severity or 'unrated'})"
+
+    result = EnrichmentResult(
+        indicator=cve_id,
+        indicator_type="cve",
+        source="nvd",
+        verdict=verdict,
+        detail=detail[:1000],
+        link=f"https://nvd.nist.gov/vuln/detail/{urllib.parse.quote(cve_id.upper(), safe='')}",
     )
     _cache_set(cache_key, result)
     return result

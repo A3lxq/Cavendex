@@ -75,9 +75,10 @@ first alert through to closed or `pending_approval`. Identified by a
 assets, agent findings, and an audit log.
 
 **IOC (Indicator of Compromise)** — A concrete artifact tied to
-malicious activity: an IP address, a domain, a file hash. Cavendex
-classifies each IOC's type (`enrichment/ioc_classifier.py`) before
-deciding which threat-intel providers to query.
+malicious activity: an IP address, a domain, a file hash, a URL, or a
+CVE ID. Cavendex classifies each IOC's type
+(`enrichment/ioc_classifier.py`) before deciding which threat-intel
+providers to query.
 
 **Obsidian vault** — The folder of Markdown files (`obsidian_vault/` by
 default) where every incident and hunt report is written, one file per

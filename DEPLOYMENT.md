@@ -82,14 +82,21 @@ Edit `.env`:
   redeploy — e.g. `/var/lib/cavendex/{data,chroma,vault}`. These three
   directories are the entire state of the system; see Section 12.
 - Optionally set `ABUSEIPDB_API_KEY` / `VIRUSTOTAL_API_KEY` for real
-  threat-intel lookups — and optionally any of the 8 further opt-in
-  providers (`ALIENVAULT_OTX_API_KEY`, `GREYNOISE_API_KEY`,
-  `ABUSECH_API_KEY` covering MalwareBazaar/ThreatFox/URLhaus,
-  `IBM_XFORCE_API_KEY`+`IBM_XFORCE_API_PASSWORD`, `METADEFENDER_API_KEY`,
-  `CENSYS_API_KEY` — see README's "Adding a Threat-Intel Provider" for
-  what each one actually adds, and real honesty caveats for the last
-  three specifically before depending on them in production). Configure
-  only the ones you want; every one is inert without its key, same as
+  threat-intel lookups — and optionally any of the 17 further opt-in
+  providers across two rounds: round 1 (`ALIENVAULT_OTX_API_KEY`,
+  `GREYNOISE_API_KEY`, `ABUSECH_API_KEY` covering
+  MalwareBazaar/ThreatFox/URLhaus, `IBM_XFORCE_API_KEY`+
+  `IBM_XFORCE_API_PASSWORD`, `METADEFENDER_API_KEY`, `CENSYS_API_KEY`)
+  and round 2 (`PULSEDIVE_API_KEY`, `CAVENDEX_THREATMINER_ENABLED`
+  (no key), `HYBRIDANALYSIS_API_KEY`, `INTEZER_API_KEY`,
+  `URLSCAN_API_KEY`, `GOOGLE_SAFE_BROWSING_API_KEY`,
+  `SECURITYTRAILS_API_KEY`, `CAVENDEX_BLOCKLISTDE_ENABLED` (no key),
+  `CAVENDEX_NVD_ENABLED`+optional `NVD_API_KEY` — the one that answers a
+  CVE ID, not an ip/domain/hash/url) — see README's "Adding a
+  Threat-Intel Provider" for what each one actually adds, and real
+  honesty caveats before depending on any of them in production.
+  Configure only the ones you want; every one is inert without its
+  key/flag, same as
   the two above. Then tune `CAVENDEX_INGEST_MIN_SEVERITY`,
   `CAVENDEX_DEDUP_WINDOW_SECONDS`, `CAVENDEX_CORRELATION_*` to your
   actual alert volume — the shipped defaults are reasonable starting
@@ -1084,11 +1091,11 @@ affect a live deployment decision, not just a feature-completeness one:
   serious signal, not "no detected tampering" as an absolute guarantee.
 - **"Air-gapped" doesn't extend to enrichment or alerting.** The
   dashboard's own assets have no CDN dependency, but `enrichment/` (all
-  11 threat-intel providers, not just AbuseIPDB/VirusTotal/Shodan) and
+  20 threat-intel providers, not just AbuseIPDB/VirusTotal/Shodan) and
   `notifications/webhook.py` make real outbound HTTP calls whenever
   configured. A genuinely air-gapped deployment needs those left
   unconfigured, not just the dashboard.
-- **8 of the 11 threat-intel providers have deferred live-network
+- **8 of the round-1 threat-intel providers have deferred live-network
   verification (Section 1).** AlienVault OTX, GreyNoise, MalwareBazaar,
   ThreatFox, URLhaus, IBM X-Force, Metadefender, and Censys are built
   and unit/mocked-tested against their documented API shapes, but no
@@ -1099,6 +1106,14 @@ affect a live deployment decision, not just a feature-completeness one:
   `"unknown"` verdict rather than crashing if their real response shape
   differs, but not yet confirmed against a live successful response.
   Test each against a real key before depending on it in production.
+  **The round-2 9 providers did get live-network verification**
+  (invalid-key calls, or real success-path calls for the three
+  keyless/key-optional ones — ThreatMiner, Blocklist.de, NVD), but
+  Hybrid Analysis and Intezer's response field names still come from
+  public docs/third-party references rather than a confirmed live
+  successful response, and ThreatMiner's own endpoint was found
+  intermittently unreachable during research — it's explicitly not a
+  stable dependency.
 
 None of this means "don't deploy it" — it means deploy it as what it
 actually is: a real, tested incident-response assistant that watches

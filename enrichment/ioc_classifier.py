@@ -1,5 +1,5 @@
-"""Classifies a free-text IOC string as ip/domain/hash/url/unknown so the
-enrichment pipeline knows which provider(s), if any, can look it up.
+"""Classifies a free-text IOC string as ip/domain/hash/url/cve/unknown so
+the enrichment pipeline knows which provider(s), if any, can look it up.
 
 Most "IOCs" an LLM proposes are actually descriptive phrases ("Suricata
 rule ID and payload signature indicating banner-grabbing behavior") —
@@ -13,6 +13,7 @@ import re
 _HASH_LENGTHS = {32: "md5", 40: "sha1", 64: "sha256"}
 _HEX_RE = re.compile(r"^[a-fA-F0-9]+$")
 _DOMAIN_RE = re.compile(r"^(?!-)[A-Za-z0-9-]{1,63}(?<!-)(\.(?!-)[A-Za-z0-9-]{1,63}(?<!-))+$")
+_CVE_RE = re.compile(r"^CVE-\d{4}-\d{4,7}$", re.IGNORECASE)
 
 
 def classify_ioc(value: str) -> str:
@@ -23,6 +24,9 @@ def classify_ioc(value: str) -> str:
         return "ip"
     except ValueError:
         pass
+
+    if _CVE_RE.match(value):
+        return "cve"
 
     if value.lower().startswith(("http://", "https://")):
         return "url"
