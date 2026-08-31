@@ -1,6 +1,6 @@
 """A real UDP/TCP network listener that receives syslog (optionally
 CEF-formatted) messages directly over the network and feeds each one into
-SentinelOS's ingestion pipeline — the network-facing counterpart to
+Cavendex's ingestion pipeline — the network-facing counterpart to
 ingest_watch.py, which requires a forwarder to already be writing to a
 local file.
 
@@ -19,10 +19,10 @@ Usage:
     # Only accept traffic from a trusted management subnet:
     python syslog_listener.py --protocol udp --port 5514 --allow-from 10.0.0.0/24
 
-    # Remote — POST to a SentinelOS API running elsewhere instead of
+    # Remote — POST to a Cavendex API running elsewhere instead of
     # ingesting in-process:
     python syslog_listener.py --protocol udp --port 5514 \
-        --api-url http://sentinelos-host:8000 --api-key secret
+        --api-url http://cavendex-host:8000 --api-key secret
 
     # TCP wrapped in real TLS (encrypted transport, TCP only -- see the
     # "no DTLS" note below for UDP senders):
@@ -51,7 +51,7 @@ what's mitigable:
     specific interface) to accept traffic from other hosts is a
     deliberate, explicit choice you have to make — the same
     "insecure exposure requires opting in" default api.py uses for
-    SENTINELOS_API_KEY.
+    CAVENDEX_API_KEY.
   - --allow-from restricts accepted source IPs to one or more CIDR
     ranges (repeatable) — real syslog senders almost always live on a
     trusted management network/VLAN, not the open internet, so this
@@ -249,7 +249,7 @@ class _TLSThreadingTCPServer(_ThreadingTCPServer):
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Receive syslog messages over the network into SentinelOS")
+    parser = argparse.ArgumentParser(description="Receive syslog messages over the network into Cavendex")
     parser.add_argument("--protocol", choices=["udp", "tcp"], default="udp")
     parser.add_argument("--bind", default="127.0.0.1", help="Interface to bind to (default: loopback only)")
     parser.add_argument("--port", type=int, default=5514)
@@ -263,7 +263,7 @@ def main():
         help="Only accept messages from this CIDR range; repeatable. Default: accept from anywhere reachable.",
     )
     parser.add_argument(
-        "--api-url", default=None, help="POST to this SentinelOS API instead of ingesting in-process"
+        "--api-url", default=None, help="POST to this Cavendex API instead of ingesting in-process"
     )
     parser.add_argument("--api-key", default=None)
     parser.add_argument(

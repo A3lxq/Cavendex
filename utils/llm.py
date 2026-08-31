@@ -53,7 +53,7 @@ def get_llm(temperature: float = 0):
         "tier), OPENAI_API_KEY, ANTHROPIC_API_KEY, GOOGLE_API_KEY, or "
         "OLLAMA_MODEL (for a local model, no key required) in your .env "
         "file. Copy .env.example to .env and fill in one before running "
-        "SentinelOS."
+        "Cavendex."
     )
 
 

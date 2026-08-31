@@ -25,8 +25,8 @@ def test_unknown_iocs_never_trigger_a_lookup(monkeypatch):
 
 def test_ip_iocs_are_checked_against_both_key_based_ip_providers(monkeypatch):
     """Shodan is deliberately not mocked here — disabled by default
-    (SENTINELOS_SHODAN_ENABLED unset), it should stay silent."""
-    monkeypatch.delenv("SENTINELOS_SHODAN_ENABLED", raising=False)
+    (CAVENDEX_SHODAN_ENABLED unset), it should stay silent."""
+    monkeypatch.delenv("CAVENDEX_SHODAN_ENABLED", raising=False)
     monkeypatch.setattr(
         "enrichment.pipeline.lookup_ip_abuseipdb",
         lambda ip: _fake_result(ip, "ip", "abuseipdb"),
@@ -85,7 +85,7 @@ def test_url_iocs_are_routed_to_url_capable_providers(monkeypatch):
 
 
 def test_lookup_count_is_capped_per_incident(monkeypatch):
-    monkeypatch.setenv("SENTINELOS_ENRICHMENT_MAX_LOOKUPS_PER_INCIDENT", "10")
+    monkeypatch.setenv("CAVENDEX_ENRICHMENT_MAX_LOOKUPS_PER_INCIDENT", "10")
     monkeypatch.setattr(
         "enrichment.pipeline.lookup_ip_abuseipdb",
         lambda ip: _fake_result(ip, "ip", "abuseipdb"),
@@ -105,7 +105,7 @@ def test_lookup_cap_bounds_attempts_not_just_appended_results(monkeypatch):
     here "succeeds" so appended-results count and attempt count would
     otherwise diverge sharply (up to 8 providers/IOC) if attempts were
     not itself bounded to the cap."""
-    monkeypatch.setenv("SENTINELOS_ENRICHMENT_MAX_LOOKUPS_PER_INCIDENT", "5")
+    monkeypatch.setenv("CAVENDEX_ENRICHMENT_MAX_LOOKUPS_PER_INCIDENT", "5")
     attempts = []
 
     def _tracked(source):

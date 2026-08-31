@@ -6,7 +6,7 @@ def setup_function():
 
 
 def test_add_then_list_returns_the_note(monkeypatch, tmp_path):
-    monkeypatch.setenv("SENTINELOS_DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("CAVENDEX_DATA_DIR", str(tmp_path))
 
     note = add_note("t1", "inc-1", "Checked with the user, login was expected.", author="j.smith")
 
@@ -20,7 +20,7 @@ def test_add_then_list_returns_the_note(monkeypatch, tmp_path):
 
 
 def test_notes_ordered_oldest_first(monkeypatch, tmp_path):
-    monkeypatch.setenv("SENTINELOS_DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("CAVENDEX_DATA_DIR", str(tmp_path))
     add_note("t1", "inc-1", "first")
     add_note("t1", "inc-1", "second")
     add_note("t1", "inc-1", "third")
@@ -30,7 +30,7 @@ def test_notes_ordered_oldest_first(monkeypatch, tmp_path):
 
 
 def test_notes_scoped_per_thread(monkeypatch, tmp_path):
-    monkeypatch.setenv("SENTINELOS_DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("CAVENDEX_DATA_DIR", str(tmp_path))
     add_note("t1", "inc-1", "note on inc-1")
     add_note("t1", "inc-2", "note on inc-2")
 
@@ -39,7 +39,7 @@ def test_notes_scoped_per_thread(monkeypatch, tmp_path):
 
 
 def test_notes_scoped_per_tenant(monkeypatch, tmp_path):
-    monkeypatch.setenv("SENTINELOS_DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("CAVENDEX_DATA_DIR", str(tmp_path))
     add_note("acme", "inc-1", "acme's note")
     add_note("globex", "inc-1", "globex's note")
 
@@ -48,14 +48,14 @@ def test_notes_scoped_per_tenant(monkeypatch, tmp_path):
 
 
 def test_missing_author_recorded_as_none_not_a_placeholder(monkeypatch, tmp_path):
-    monkeypatch.setenv("SENTINELOS_DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("CAVENDEX_DATA_DIR", str(tmp_path))
     note = add_note("t1", "inc-1", "anonymous-ish note")
     assert note["author"] is None
     assert list_notes("t1", "inc-1")[0]["author"] is None
 
 
 def test_empty_note_text_is_rejected(monkeypatch, tmp_path):
-    monkeypatch.setenv("SENTINELOS_DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("CAVENDEX_DATA_DIR", str(tmp_path))
     try:
         add_note("t1", "inc-1", "   ")
         assert False, "expected ValueError"
@@ -65,11 +65,11 @@ def test_empty_note_text_is_rejected(monkeypatch, tmp_path):
 
 
 def test_note_text_is_truncated_to_a_sane_length(monkeypatch, tmp_path):
-    monkeypatch.setenv("SENTINELOS_DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("CAVENDEX_DATA_DIR", str(tmp_path))
     note = add_note("t1", "inc-1", "x" * 5000)
     assert len(note["text"]) == 2000
 
 
 def test_no_notes_returns_empty_list(monkeypatch, tmp_path):
-    monkeypatch.setenv("SENTINELOS_DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("CAVENDEX_DATA_DIR", str(tmp_path))
     assert list_notes("t1", "never-noted") == []

@@ -37,7 +37,7 @@ def _msg_name_content(msg):
 
 
 def run_pipeline_demo():
-    print("\n🚀 Starting SentinelOS incident pipeline...\n")
+    print("\n🚀 Starting Cavendex incident pipeline...\n")
 
     try:
         # No fixed thread_id here on purpose: checkpointing is now durable
@@ -55,7 +55,7 @@ def run_pipeline_demo():
             source="SIEM",
         )
     except Exception as exc:
-        print(f"\n❌ SentinelOS run failed: {exc}")
+        print(f"\n❌ Cavendex run failed: {exc}")
         sys.exit(1)
 
     incident = final_state.get("incident")

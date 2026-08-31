@@ -40,8 +40,8 @@ def _seed_pending_incident(tenant_id, thread_id="inc-1"):
 
 
 def test_approve_with_no_body_records_approved_by_none(monkeypatch, tmp_path):
-    monkeypatch.delenv("SENTINELOS_API_KEY", raising=False)
-    monkeypatch.setenv("SENTINELOS_DATA_DIR", str(tmp_path))
+    monkeypatch.delenv("CAVENDEX_API_KEY", raising=False)
+    monkeypatch.setenv("CAVENDEX_DATA_DIR", str(tmp_path))
     tenant = _tenant()
     _seed_pending_incident(tenant)
 
@@ -54,8 +54,8 @@ def test_approve_with_no_body_records_approved_by_none(monkeypatch, tmp_path):
 
 
 def test_approve_with_approved_by_in_body(monkeypatch, tmp_path):
-    monkeypatch.delenv("SENTINELOS_API_KEY", raising=False)
-    monkeypatch.setenv("SENTINELOS_DATA_DIR", str(tmp_path))
+    monkeypatch.delenv("CAVENDEX_API_KEY", raising=False)
+    monkeypatch.setenv("CAVENDEX_DATA_DIR", str(tmp_path))
     tenant = _tenant()
     _seed_pending_incident(tenant)
 
@@ -69,8 +69,8 @@ def test_approve_with_approved_by_in_body(monkeypatch, tmp_path):
 
 
 def test_deny_with_approved_by_in_body(monkeypatch, tmp_path):
-    monkeypatch.delenv("SENTINELOS_API_KEY", raising=False)
-    monkeypatch.setenv("SENTINELOS_DATA_DIR", str(tmp_path))
+    monkeypatch.delenv("CAVENDEX_API_KEY", raising=False)
+    monkeypatch.setenv("CAVENDEX_DATA_DIR", str(tmp_path))
     tenant = _tenant()
     _seed_pending_incident(tenant)
 
@@ -85,8 +85,8 @@ def test_deny_with_approved_by_in_body(monkeypatch, tmp_path):
 def test_default_tenant_approve_route_also_accepts_approved_by(monkeypatch, tmp_path):
     from utils.tenancy import DEFAULT_TENANT
 
-    monkeypatch.delenv("SENTINELOS_API_KEY", raising=False)
-    monkeypatch.setenv("SENTINELOS_DATA_DIR", str(tmp_path))
+    monkeypatch.delenv("CAVENDEX_API_KEY", raising=False)
+    monkeypatch.setenv("CAVENDEX_DATA_DIR", str(tmp_path))
     _seed_pending_incident(DEFAULT_TENANT, thread_id="inc-default-1")
 
     response = client.post("/incidents/inc-default-1/approve", json={"approved_by": "j.smith"})
@@ -96,8 +96,8 @@ def test_default_tenant_approve_route_also_accepts_approved_by(monkeypatch, tmp_
 
 
 def test_approve_unknown_thread_returns_400(monkeypatch, tmp_path):
-    monkeypatch.delenv("SENTINELOS_API_KEY", raising=False)
-    monkeypatch.setenv("SENTINELOS_DATA_DIR", str(tmp_path))
+    monkeypatch.delenv("CAVENDEX_API_KEY", raising=False)
+    monkeypatch.setenv("CAVENDEX_DATA_DIR", str(tmp_path))
     tenant = _tenant()
 
     response = client.post(f"/tenants/{tenant}/incidents/never-existed/approve")
@@ -106,9 +106,9 @@ def test_approve_unknown_thread_returns_400(monkeypatch, tmp_path):
 
 
 def test_approve_rejects_missing_approved_by_when_required(monkeypatch, tmp_path):
-    monkeypatch.delenv("SENTINELOS_API_KEY", raising=False)
-    monkeypatch.setenv("SENTINELOS_DATA_DIR", str(tmp_path))
-    monkeypatch.setenv("SENTINELOS_REQUIRE_APPROVED_BY", "true")
+    monkeypatch.delenv("CAVENDEX_API_KEY", raising=False)
+    monkeypatch.setenv("CAVENDEX_DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("CAVENDEX_REQUIRE_APPROVED_BY", "true")
     tenant = _tenant()
     _seed_pending_incident(tenant)
 
@@ -118,9 +118,9 @@ def test_approve_rejects_missing_approved_by_when_required(monkeypatch, tmp_path
 
 
 def test_approve_succeeds_with_approved_by_when_required(monkeypatch, tmp_path):
-    monkeypatch.delenv("SENTINELOS_API_KEY", raising=False)
-    monkeypatch.setenv("SENTINELOS_DATA_DIR", str(tmp_path))
-    monkeypatch.setenv("SENTINELOS_REQUIRE_APPROVED_BY", "true")
+    monkeypatch.delenv("CAVENDEX_API_KEY", raising=False)
+    monkeypatch.setenv("CAVENDEX_DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("CAVENDEX_REQUIRE_APPROVED_BY", "true")
     tenant = _tenant()
     _seed_pending_incident(tenant)
 
@@ -130,8 +130,8 @@ def test_approve_succeeds_with_approved_by_when_required(monkeypatch, tmp_path):
 
 
 def test_approve_requires_api_key_when_configured(monkeypatch, tmp_path):
-    monkeypatch.setenv("SENTINELOS_API_KEY", "secret-key-123")
-    monkeypatch.setenv("SENTINELOS_DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("CAVENDEX_API_KEY", "secret-key-123")
+    monkeypatch.setenv("CAVENDEX_DATA_DIR", str(tmp_path))
     tenant = _tenant()
     _seed_pending_incident(tenant)
 

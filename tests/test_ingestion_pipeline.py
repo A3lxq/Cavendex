@@ -22,11 +22,11 @@ def _isolate(monkeypatch, tmp_path):
     reset_index()
     reset_rate_limit()
     reset_asset_inventory()
-    monkeypatch.setenv("SENTINELOS_DEDUP_WINDOW_SECONDS", "300")
-    monkeypatch.setenv("SENTINELOS_INGEST_MIN_SEVERITY", "medium")
-    monkeypatch.setenv("SENTINELOS_DATA_DIR", str(tmp_path))
-    monkeypatch.delenv("SENTINELOS_INGEST_RATE_LIMIT_PER_MINUTE", raising=False)
-    monkeypatch.delenv("SENTINELOS_ASSET_INVENTORY_PATH", raising=False)
+    monkeypatch.setenv("CAVENDEX_DEDUP_WINDOW_SECONDS", "300")
+    monkeypatch.setenv("CAVENDEX_INGEST_MIN_SEVERITY", "medium")
+    monkeypatch.setenv("CAVENDEX_DATA_DIR", str(tmp_path))
+    monkeypatch.delenv("CAVENDEX_INGEST_RATE_LIMIT_PER_MINUTE", raising=False)
+    monkeypatch.delenv("CAVENDEX_ASSET_INVENTORY_PATH", raising=False)
     yield
     reset_dedup()
     reset_index()
@@ -140,7 +140,7 @@ def test_same_dedup_key_different_tenants_both_promote(fake_run_new_incident):
 
 
 def test_every_outcome_is_logged_to_ingestion_log(fake_run_new_incident, tmp_path, monkeypatch):
-    monkeypatch.setenv("SENTINELOS_DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("CAVENDEX_DATA_DIR", str(tmp_path))
     from ingestion.pipeline import ingest_alert
 
     ingest_alert("generic", {"description": "x", "severity": "low", "source": "t"}, tenant_id="log-test")
@@ -271,7 +271,7 @@ def test_renamed_asset_correlates_via_identity_tier(
 
     inventory_path = tmp_path / "inventory.json"
     inventory_path.write_text(json.dumps({"WEB-01": "asset-042", "WEB-01-RENAMED": "asset-042"}))
-    monkeypatch.setenv("SENTINELOS_ASSET_INVENTORY_PATH", str(inventory_path))
+    monkeypatch.setenv("CAVENDEX_ASSET_INVENTORY_PATH", str(inventory_path))
 
     from ingestion.pipeline import ingest_alert
 
@@ -304,7 +304,7 @@ def test_identity_tier_only_checked_when_exact_fuzzy_tier_finds_nothing(
 
     inventory_path = tmp_path / "inventory.json"
     inventory_path.write_text(json.dumps({"WEB-01": "asset-042", "WEB-01-RENAMED": "asset-042"}))
-    monkeypatch.setenv("SENTINELOS_ASSET_INVENTORY_PATH", str(inventory_path))
+    monkeypatch.setenv("CAVENDEX_ASSET_INVENTORY_PATH", str(inventory_path))
 
     from ingestion.pipeline import ingest_alert
 
@@ -425,7 +425,7 @@ def test_ingest_is_rate_limited_independent_of_the_api_layer(monkeypatch, fake_r
     in-process, never touching api.py's FastAPI rate-limit dependency —
     so the gate itself must enforce a limit, or a network-reachable
     syslog listener has zero abuse resistance."""
-    monkeypatch.setenv("SENTINELOS_INGEST_RATE_LIMIT_PER_MINUTE", "2")
+    monkeypatch.setenv("CAVENDEX_INGEST_RATE_LIMIT_PER_MINUTE", "2")
     from ingestion.pipeline import ingest_alert
 
     def _alert(n):
@@ -447,7 +447,7 @@ def test_ingest_rate_limit_is_checked_before_dedup(monkeypatch, fake_run_new_inc
     still counts against the limit, since the point is bounding total
     call volume into this function, not just volume that would've been
     promoted anyway."""
-    monkeypatch.setenv("SENTINELOS_INGEST_RATE_LIMIT_PER_MINUTE", "1")
+    monkeypatch.setenv("CAVENDEX_INGEST_RATE_LIMIT_PER_MINUTE", "1")
     from ingestion.pipeline import ingest_alert
 
     payload = {"description": "x", "severity": "high", "source": "test", "dedup_key": "fixed"}
@@ -459,7 +459,7 @@ def test_ingest_rate_limit_is_checked_before_dedup(monkeypatch, fake_run_new_inc
 
 
 def test_ingest_rate_limit_disabled_by_zero(monkeypatch, fake_run_new_incident):
-    monkeypatch.setenv("SENTINELOS_INGEST_RATE_LIMIT_PER_MINUTE", "0")
+    monkeypatch.setenv("CAVENDEX_INGEST_RATE_LIMIT_PER_MINUTE", "0")
     from ingestion.pipeline import ingest_alert
 
     for n in range(5):
@@ -472,7 +472,7 @@ def test_ingest_rate_limit_disabled_by_zero(monkeypatch, fake_run_new_incident):
 
 
 def test_ingest_rate_limit_is_scoped_per_tenant(monkeypatch, fake_run_new_incident):
-    monkeypatch.setenv("SENTINELOS_INGEST_RATE_LIMIT_PER_MINUTE", "1")
+    monkeypatch.setenv("CAVENDEX_INGEST_RATE_LIMIT_PER_MINUTE", "1")
     from ingestion.pipeline import ingest_alert
 
     r1 = ingest_alert(

@@ -4,7 +4,7 @@ real, verified evidence for the ones that are lookupable — anything
 classified "unknown" (most LLM-proposed "IOCs" are descriptive phrases,
 not real indicators) is skipped and never costs an API call, and a
 disabled/unconfigured provider (no API key, or — for Shodan specifically,
-which needs none — SENTINELOS_SHODAN_ENABLED left off) is silently
+which needs none — CAVENDEX_SHODAN_ENABLED left off) is silently
 skipped too.
 """
 
@@ -79,7 +79,7 @@ _DEFAULT_MAX_LOOKUPS_PER_INCIDENT = 30
 
 def _max_lookups_per_incident() -> int:
     try:
-        return int(os.getenv("SENTINELOS_ENRICHMENT_MAX_LOOKUPS_PER_INCIDENT", str(_DEFAULT_MAX_LOOKUPS_PER_INCIDENT)))
+        return int(os.getenv("CAVENDEX_ENRICHMENT_MAX_LOOKUPS_PER_INCIDENT", str(_DEFAULT_MAX_LOOKUPS_PER_INCIDENT)))
     except ValueError:
         return _DEFAULT_MAX_LOOKUPS_PER_INCIDENT
 
@@ -90,7 +90,7 @@ def enrich_iocs(iocs: List[str]) -> List[EnrichmentResult]:
     fan-out — up to 8 providers for one IP — would otherwise multiply
     Triage's latency several-fold if done sequentially).
 
-    The per-incident cap (SENTINELOS_ENRICHMENT_MAX_LOOKUPS_PER_INCIDENT,
+    The per-incident cap (CAVENDEX_ENRICHMENT_MAX_LOOKUPS_PER_INCIDENT,
     default 30) bounds actual outbound lookup *attempts*, not just
     results appended — each IOC's provider list is sliced down to
     whatever budget remains before any of them are dispatched. This

@@ -13,33 +13,33 @@ def setup_function():
 
 
 def test_returns_none_when_unconfigured(monkeypatch):
-    monkeypatch.delenv("SENTINELOS_ASSET_INVENTORY_PATH", raising=False)
+    monkeypatch.delenv("CAVENDEX_ASSET_INVENTORY_PATH", raising=False)
     assert resolve_asset_identity("WEB-01") is None
 
 
 def test_returns_none_when_file_does_not_exist(monkeypatch, tmp_path):
-    monkeypatch.setenv("SENTINELOS_ASSET_INVENTORY_PATH", str(tmp_path / "missing.json"))
+    monkeypatch.setenv("CAVENDEX_ASSET_INVENTORY_PATH", str(tmp_path / "missing.json"))
     assert resolve_asset_identity("WEB-01") is None
 
 
 def test_returns_none_for_malformed_json(monkeypatch, tmp_path):
     path = tmp_path / "inventory.json"
     path.write_text("not valid json{{{")
-    monkeypatch.setenv("SENTINELOS_ASSET_INVENTORY_PATH", str(path))
+    monkeypatch.setenv("CAVENDEX_ASSET_INVENTORY_PATH", str(path))
     assert resolve_asset_identity("WEB-01") is None
 
 
 def test_returns_none_for_non_object_json(monkeypatch, tmp_path):
     path = tmp_path / "inventory.json"
     path.write_text(json.dumps(["WEB-01", "asset-042"]))
-    monkeypatch.setenv("SENTINELOS_ASSET_INVENTORY_PATH", str(path))
+    monkeypatch.setenv("CAVENDEX_ASSET_INVENTORY_PATH", str(path))
     assert resolve_asset_identity("WEB-01") is None
 
 
 def test_resolves_a_valid_mapping(monkeypatch, tmp_path):
     path = tmp_path / "inventory.json"
     path.write_text(json.dumps({"WEB-01": "asset-042", "WEB-01-RENAMED": "asset-042"}))
-    monkeypatch.setenv("SENTINELOS_ASSET_INVENTORY_PATH", str(path))
+    monkeypatch.setenv("CAVENDEX_ASSET_INVENTORY_PATH", str(path))
 
     assert resolve_asset_identity("WEB-01") == "asset-042"
     assert resolve_asset_identity("WEB-01-RENAMED") == "asset-042"
@@ -48,7 +48,7 @@ def test_resolves_a_valid_mapping(monkeypatch, tmp_path):
 def test_unknown_name_returns_none(monkeypatch, tmp_path):
     path = tmp_path / "inventory.json"
     path.write_text(json.dumps({"WEB-01": "asset-042"}))
-    monkeypatch.setenv("SENTINELOS_ASSET_INVENTORY_PATH", str(path))
+    monkeypatch.setenv("CAVENDEX_ASSET_INVENTORY_PATH", str(path))
 
     assert resolve_asset_identity("NOT-IN-THE-FILE") is None
 
@@ -56,7 +56,7 @@ def test_unknown_name_returns_none(monkeypatch, tmp_path):
 def test_lookup_is_exact_string_not_case_folded(monkeypatch, tmp_path):
     path = tmp_path / "inventory.json"
     path.write_text(json.dumps({"WEB-01": "asset-042"}))
-    monkeypatch.setenv("SENTINELOS_ASSET_INVENTORY_PATH", str(path))
+    monkeypatch.setenv("CAVENDEX_ASSET_INVENTORY_PATH", str(path))
 
     assert resolve_asset_identity("web-01") is None
 
@@ -64,7 +64,7 @@ def test_lookup_is_exact_string_not_case_folded(monkeypatch, tmp_path):
 def test_reload_picks_up_edits_via_mtime(monkeypatch, tmp_path):
     path = tmp_path / "inventory.json"
     path.write_text(json.dumps({"WEB-01": "asset-042"}))
-    monkeypatch.setenv("SENTINELOS_ASSET_INVENTORY_PATH", str(path))
+    monkeypatch.setenv("CAVENDEX_ASSET_INVENTORY_PATH", str(path))
 
     assert resolve_asset_identity("DC-01") is None
 

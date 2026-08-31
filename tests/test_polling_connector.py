@@ -285,7 +285,7 @@ def fake_ingest_normalized_alert(monkeypatch):
 
 
 def test_poll_once_ingests_each_record(http_server, fake_ingest_normalized_alert, monkeypatch, tmp_path):
-    monkeypatch.setenv("SENTINELOS_DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("CAVENDEX_DATA_DIR", str(tmp_path))
     http_server.set_responses(
         [{"results": [{"title": "first"}, {"title": "second"}]}]
     )
@@ -302,7 +302,7 @@ def test_poll_once_ingests_each_record(http_server, fake_ingest_normalized_alert
 
 
 def test_poll_once_skips_non_dict_records(http_server, fake_ingest_normalized_alert, monkeypatch, tmp_path):
-    monkeypatch.setenv("SENTINELOS_DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("CAVENDEX_DATA_DIR", str(tmp_path))
     http_server.set_responses([{"results": ["not a dict", 42]}])
     config = PollerConfig(name="t", base_url=http_server.url, records_path="results", tenant="skip-tenant")
 
@@ -312,7 +312,7 @@ def test_poll_once_skips_non_dict_records(http_server, fake_ingest_normalized_al
 
 
 def test_poll_once_persists_cursor_across_calls(http_server, fake_ingest_normalized_alert, monkeypatch, tmp_path):
-    monkeypatch.setenv("SENTINELOS_DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("CAVENDEX_DATA_DIR", str(tmp_path))
     config = PollerConfig(
         name="cursor-persist-test", base_url=http_server.url, records_path="results",
         cursor_field="ts", cursor_query_param="since", tenant="cursor-tenant",
@@ -335,7 +335,7 @@ def test_poll_once_uses_registered_normalizer_when_configured(
     NORMALIZERS-registered function directly -- exercising this via the
     real 'splunk' normalizer to prove it's actually wired through
     poll_once(), not just unit-testable in isolation."""
-    monkeypatch.setenv("SENTINELOS_DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("CAVENDEX_DATA_DIR", str(tmp_path))
     http_server.set_responses(
         [{"results": [{"rule_name": "Excessive Failed Logins", "urgency": "informational", "src": "1.2.3.4"}]}]
     )
@@ -355,7 +355,7 @@ def test_poll_once_uses_registered_normalizer_when_configured(
 def test_poll_once_normalizer_skips_non_dict_records(
     http_server, fake_ingest_normalized_alert, monkeypatch, tmp_path
 ):
-    monkeypatch.setenv("SENTINELOS_DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("CAVENDEX_DATA_DIR", str(tmp_path))
     http_server.set_responses([{"results": ["not a dict"]}])
     config = PollerConfig(
         name="normalizer-skip-test", base_url=http_server.url, records_path="results", normalizer="splunk",
@@ -373,7 +373,7 @@ def test_poll_once_unknown_normalizer_name_skips_every_record(
     raise or silently fall back to the generic field_map path -- fail
     loud enough to notice (no results at all) rather than guessing what
     the operator meant."""
-    monkeypatch.setenv("SENTINELOS_DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("CAVENDEX_DATA_DIR", str(tmp_path))
     http_server.set_responses([{"results": [{"rule_name": "x"}]}])
     config = PollerConfig(
         name="bad-normalizer-test", base_url=http_server.url, records_path="results",
@@ -398,7 +398,7 @@ def test_load_splunk_example_config():
 
 
 def test_save_and_load_cursor_roundtrip(monkeypatch, tmp_path):
-    monkeypatch.setenv("SENTINELOS_DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("CAVENDEX_DATA_DIR", str(tmp_path))
     config = PollerConfig(name="roundtrip-test", base_url="http://example.invalid", tenant="roundtrip-tenant")
 
     assert load_cursor(config) is None

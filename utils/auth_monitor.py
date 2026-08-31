@@ -1,6 +1,6 @@
 """Watches for repeated authentication failures against the API and
 fires a webhook alert if they cross a threshold within a short window —
-closing a real gap: SentinelOS alerts on the threat data it ingests, but
+closing a real gap: Cavendex alerts on the threat data it ingests, but
 had no way to notice a burst of failed API keys against itself.
 
 In-process, in-memory state, the same as utils/rate_limit.py and
@@ -31,7 +31,7 @@ _alerted_until: dict = {}
 
 def _window_seconds() -> int:
     try:
-        return int(os.getenv("SENTINELOS_AUTH_FAILURE_WINDOW_SECONDS", "300"))
+        return int(os.getenv("CAVENDEX_AUTH_FAILURE_WINDOW_SECONDS", "300"))
     except ValueError:
         return 300
 
@@ -40,13 +40,13 @@ def _alert_threshold() -> int:
     """Failures from the same source within the window that trigger a
     webhook alert. 0 disables alerting (failures are still logged)."""
     try:
-        return int(os.getenv("SENTINELOS_AUTH_FAILURE_ALERT_THRESHOLD", "5"))
+        return int(os.getenv("CAVENDEX_AUTH_FAILURE_ALERT_THRESHOLD", "5"))
     except ValueError:
         return 5
 
 
 def _log_path() -> str:
-    return os.path.join(os.getenv("SENTINELOS_DATA_DIR", "data"), "auth_failures.jsonl")
+    return os.path.join(os.getenv("CAVENDEX_DATA_DIR", "data"), "auth_failures.jsonl")
 
 
 def _log_failure(source_ip: str, path: str, tenant_id: Optional[str]) -> None:
@@ -65,7 +65,7 @@ def _send_alert(source_ip: str, count: int, window: int) -> None:
 
         send_webhook_notification(
             {
-                "text": f"[SentinelOS] {count} failed API key attempts from {source_ip} in the last {window}s.",
+                "text": f"[Cavendex] {count} failed API key attempts from {source_ip} in the last {window}s.",
                 "reason": "auth_failure_burst",
                 "source_ip": source_ip,
                 "count": count,
@@ -80,8 +80,8 @@ def record_auth_failure(source_ip: str, path: str, tenant_id: Optional[str] = No
     """Call on every 401. Always logs the attempt to
     data/auth_failures.jsonl; additionally fires a webhook alert (at most
     once per window, per source) if this source's failures within
-    SENTINELOS_AUTH_FAILURE_WINDOW_SECONDS reach
-    SENTINELOS_AUTH_FAILURE_ALERT_THRESHOLD.
+    CAVENDEX_AUTH_FAILURE_WINDOW_SECONDS reach
+    CAVENDEX_AUTH_FAILURE_ALERT_THRESHOLD.
     """
     _log_failure(source_ip, path, tenant_id)
 

@@ -97,15 +97,15 @@ def test_missing_approved_by_is_recorded_as_unspecified_not_silently_generic(ten
 
 
 def test_require_approved_by_rejects_a_missing_name_when_enabled(tenant, monkeypatch):
-    monkeypatch.setenv("SENTINELOS_REQUIRE_APPROVED_BY", "true")
+    monkeypatch.setenv("CAVENDEX_REQUIRE_APPROVED_BY", "true")
     _seed_pending_incident(tenant)
 
-    with pytest.raises(ValueError, match="SENTINELOS_REQUIRE_APPROVED_BY"):
+    with pytest.raises(ValueError, match="CAVENDEX_REQUIRE_APPROVED_BY"):
         resolve_proposed_actions("inc-1", approve=True, tenant_id=tenant)
 
 
 def test_require_approved_by_accepts_a_real_name_when_enabled(tenant, monkeypatch):
-    monkeypatch.setenv("SENTINELOS_REQUIRE_APPROVED_BY", "true")
+    monkeypatch.setenv("CAVENDEX_REQUIRE_APPROVED_BY", "true")
     _seed_pending_incident(tenant)
 
     result = resolve_proposed_actions("inc-1", approve=True, tenant_id=tenant, approved_by="j.smith")
@@ -114,7 +114,7 @@ def test_require_approved_by_accepts_a_real_name_when_enabled(tenant, monkeypatc
 
 
 def test_missing_approved_by_still_allowed_when_flag_not_set(tenant, monkeypatch):
-    monkeypatch.delenv("SENTINELOS_REQUIRE_APPROVED_BY", raising=False)
+    monkeypatch.delenv("CAVENDEX_REQUIRE_APPROVED_BY", raising=False)
     _seed_pending_incident(tenant)
 
     result = resolve_proposed_actions("inc-1", approve=True, tenant_id=tenant)
@@ -133,7 +133,7 @@ def test_concurrent_approve_calls_on_same_incident_never_overlap(tenant, monkeyp
     directly by instrumenting app.update_state to record how many
     threads are ever inside it concurrently, with an artificial delay
     long enough that an actual race would reliably be caught."""
-    monkeypatch.setenv("SENTINELOS_DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("CAVENDEX_DATA_DIR", str(tmp_path))
     _seed_pending_incident(tenant, n_actions=1)
 
     app = get_app(tenant)
@@ -218,8 +218,8 @@ def test_default_action_type_is_never_executed(tenant, monkeypatch, tmp_path):
     """A plain ProposedAction() defaults to action_type='other' -- must
     never be executed even with remediation fully enabled, since 'other'
     carries no machine-actionable shape."""
-    monkeypatch.setenv("SENTINELOS_DATA_DIR", str(tmp_path))
-    monkeypatch.setenv("SENTINELOS_REMEDIATION_ENABLED", "true")
+    monkeypatch.setenv("CAVENDEX_DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("CAVENDEX_REMEDIATION_ENABLED", "true")
     _seed_pending_incident(tenant)
 
     result = resolve_proposed_actions("inc-1", approve=True, tenant_id=tenant)
@@ -228,8 +228,8 @@ def test_default_action_type_is_never_executed(tenant, monkeypatch, tmp_path):
 
 
 def test_remediation_disabled_by_default_leaves_executed_none(tenant, monkeypatch, tmp_path):
-    monkeypatch.setenv("SENTINELOS_DATA_DIR", str(tmp_path))
-    monkeypatch.delenv("SENTINELOS_REMEDIATION_ENABLED", raising=False)
+    monkeypatch.setenv("CAVENDEX_DATA_DIR", str(tmp_path))
+    monkeypatch.delenv("CAVENDEX_REMEDIATION_ENABLED", raising=False)
     _seed_pending_incident(
         tenant, actions=[ProposedAction(action="Block IP", target="1.2.3.4", rationale="r", action_type="block_ip")]
     )
@@ -240,9 +240,9 @@ def test_remediation_disabled_by_default_leaves_executed_none(tenant, monkeypatc
 
 
 def test_eligible_action_type_executed_true_under_dry_run_when_approved(tenant, monkeypatch, tmp_path):
-    monkeypatch.setenv("SENTINELOS_DATA_DIR", str(tmp_path))
-    monkeypatch.setenv("SENTINELOS_REMEDIATION_ENABLED", "true")
-    monkeypatch.delenv("SENTINELOS_REMEDIATION_DRY_RUN", raising=False)  # defaults to true
+    monkeypatch.setenv("CAVENDEX_DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("CAVENDEX_REMEDIATION_ENABLED", "true")
+    monkeypatch.delenv("CAVENDEX_REMEDIATION_DRY_RUN", raising=False)  # defaults to true
     _seed_pending_incident(
         tenant, actions=[ProposedAction(action="Block IP", target="1.2.3.4", rationale="r", action_type="block_ip")]
     )
@@ -256,8 +256,8 @@ def test_eligible_action_type_executed_true_under_dry_run_when_approved(tenant, 
 
 
 def test_denial_never_attempts_remediation(tenant, monkeypatch, tmp_path):
-    monkeypatch.setenv("SENTINELOS_DATA_DIR", str(tmp_path))
-    monkeypatch.setenv("SENTINELOS_REMEDIATION_ENABLED", "true")
+    monkeypatch.setenv("CAVENDEX_DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("CAVENDEX_REMEDIATION_ENABLED", "true")
     _seed_pending_incident(
         tenant, actions=[ProposedAction(action="Block IP", target="1.2.3.4", rationale="r", action_type="block_ip")]
     )
@@ -269,8 +269,8 @@ def test_denial_never_attempts_remediation(tenant, monkeypatch, tmp_path):
 
 
 def test_mixed_batch_only_executes_the_eligible_action(tenant, monkeypatch, tmp_path):
-    monkeypatch.setenv("SENTINELOS_DATA_DIR", str(tmp_path))
-    monkeypatch.setenv("SENTINELOS_REMEDIATION_ENABLED", "true")
+    monkeypatch.setenv("CAVENDEX_DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("CAVENDEX_REMEDIATION_ENABLED", "true")
     _seed_pending_incident(
         tenant,
         actions=[
@@ -310,11 +310,11 @@ def test_playbook_chain_halts_remaining_steps_after_a_real_failure_by_default(te
     """No playbook file on disk for this playbook_id -> the halt policy
     defaults to "halt" (the safer default), same as an unrecognized/
     since-deleted playbook file would."""
-    monkeypatch.setenv("SENTINELOS_DATA_DIR", str(tmp_path))
-    monkeypatch.setenv("SENTINELOS_REMEDIATION_ENABLED", "true")
-    monkeypatch.setenv("SENTINELOS_REMEDIATION_DRY_RUN", "false")
-    monkeypatch.setenv("SENTINELOS_REMEDIATION_ACTION_TYPES", "isolate_host,disable_account,block_ip")
-    monkeypatch.delenv("SENTINELOS_PLAYBOOKS_DIR", raising=False)
+    monkeypatch.setenv("CAVENDEX_DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("CAVENDEX_REMEDIATION_ENABLED", "true")
+    monkeypatch.setenv("CAVENDEX_REMEDIATION_DRY_RUN", "false")
+    monkeypatch.setenv("CAVENDEX_REMEDIATION_ACTION_TYPES", "isolate_host,disable_account,block_ip")
+    monkeypatch.delenv("CAVENDEX_PLAYBOOKS_DIR", raising=False)
 
     def _send(payload):
         if payload["target"] == "alice":  # step 2 fails
@@ -339,12 +339,12 @@ def test_playbook_chain_continues_after_failure_when_policy_says_so(tenant, monk
     disk at approval time -- see the TOCTOU this closes in
     ProposedAction.on_failure's docstring. So this test sets on_failure
     directly on the seeded actions rather than writing a playbook file
-    SENTINELOS_PLAYBOOKS_DIR would need to point at."""
-    monkeypatch.setenv("SENTINELOS_DATA_DIR", str(tmp_path))
-    monkeypatch.setenv("SENTINELOS_REMEDIATION_ENABLED", "true")
-    monkeypatch.setenv("SENTINELOS_REMEDIATION_DRY_RUN", "false")
-    monkeypatch.setenv("SENTINELOS_REMEDIATION_ACTION_TYPES", "isolate_host,disable_account,block_ip")
-    monkeypatch.delenv("SENTINELOS_PLAYBOOKS_DIR", raising=False)
+    CAVENDEX_PLAYBOOKS_DIR would need to point at."""
+    monkeypatch.setenv("CAVENDEX_DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("CAVENDEX_REMEDIATION_ENABLED", "true")
+    monkeypatch.setenv("CAVENDEX_REMEDIATION_DRY_RUN", "false")
+    monkeypatch.setenv("CAVENDEX_REMEDIATION_ACTION_TYPES", "isolate_host,disable_account,block_ip")
+    monkeypatch.delenv("CAVENDEX_PLAYBOOKS_DIR", raising=False)
 
     def _send(payload):
         if payload["target"] == "alice":  # step 2 fails
@@ -370,10 +370,10 @@ def test_playbook_chain_policy_edit_on_disk_after_generation_has_no_effect(tenan
     "halt", via ProposedAction.on_failure) always wins, even if a file
     named the same playbook_id and declaring "continue" exists on disk
     when resolve_proposed_actions actually runs."""
-    monkeypatch.setenv("SENTINELOS_DATA_DIR", str(tmp_path))
-    monkeypatch.setenv("SENTINELOS_REMEDIATION_ENABLED", "true")
-    monkeypatch.setenv("SENTINELOS_REMEDIATION_DRY_RUN", "false")
-    monkeypatch.setenv("SENTINELOS_REMEDIATION_ACTION_TYPES", "isolate_host,disable_account,block_ip")
+    monkeypatch.setenv("CAVENDEX_DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("CAVENDEX_REMEDIATION_ENABLED", "true")
+    monkeypatch.setenv("CAVENDEX_REMEDIATION_DRY_RUN", "false")
+    monkeypatch.setenv("CAVENDEX_REMEDIATION_ACTION_TYPES", "isolate_host,disable_account,block_ip")
 
     playbooks_dir = tmp_path / "playbooks"
     playbooks_dir.mkdir()
@@ -388,7 +388,7 @@ def test_playbook_chain_policy_edit_on_disk_after_generation_has_no_effect(tenan
             }
         )
     )
-    monkeypatch.setenv("SENTINELOS_PLAYBOOKS_DIR", str(playbooks_dir))
+    monkeypatch.setenv("CAVENDEX_PLAYBOOKS_DIR", str(playbooks_dir))
 
     def _send(payload):
         if payload["target"] == "alice":
@@ -412,11 +412,11 @@ def test_playbook_chain_failure_never_affects_an_independent_non_chain_action(te
     """Regression guard: a mixed incident with one failing playbook chain
     and one unrelated, non-playbook action must still execute the
     independent action normally."""
-    monkeypatch.setenv("SENTINELOS_DATA_DIR", str(tmp_path))
-    monkeypatch.setenv("SENTINELOS_REMEDIATION_ENABLED", "true")
-    monkeypatch.setenv("SENTINELOS_REMEDIATION_DRY_RUN", "false")
-    monkeypatch.setenv("SENTINELOS_REMEDIATION_ACTION_TYPES", "isolate_host,disable_account,block_ip")
-    monkeypatch.delenv("SENTINELOS_PLAYBOOKS_DIR", raising=False)
+    monkeypatch.setenv("CAVENDEX_DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("CAVENDEX_REMEDIATION_ENABLED", "true")
+    monkeypatch.setenv("CAVENDEX_REMEDIATION_DRY_RUN", "false")
+    monkeypatch.setenv("CAVENDEX_REMEDIATION_ACTION_TYPES", "isolate_host,disable_account,block_ip")
+    monkeypatch.delenv("CAVENDEX_PLAYBOOKS_DIR", raising=False)
 
     def _send(payload):
         if payload["target"] == "WEB-01":  # the only chain step fails
@@ -446,10 +446,10 @@ def test_not_automatable_step_in_a_chain_never_halts_it(tenant, monkeypatch, tmp
     """executed is None ("not automatable") must never be confused with a
     real failure -- only an actual attempted-and-failed send halts a
     chain."""
-    monkeypatch.setenv("SENTINELOS_DATA_DIR", str(tmp_path))
-    monkeypatch.setenv("SENTINELOS_REMEDIATION_ENABLED", "true")
-    monkeypatch.setenv("SENTINELOS_REMEDIATION_ACTION_TYPES", "isolate_host,block_ip")  # disable_account not eligible
-    monkeypatch.delenv("SENTINELOS_PLAYBOOKS_DIR", raising=False)
+    monkeypatch.setenv("CAVENDEX_DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("CAVENDEX_REMEDIATION_ENABLED", "true")
+    monkeypatch.setenv("CAVENDEX_REMEDIATION_ACTION_TYPES", "isolate_host,block_ip")  # disable_account not eligible
+    monkeypatch.delenv("CAVENDEX_PLAYBOOKS_DIR", raising=False)
     _seed_pending_incident(tenant, actions=_chain_actions())
 
     result = resolve_proposed_actions("inc-1", approve=True, tenant_id=tenant)

@@ -14,15 +14,15 @@ def setup_function():
 
 
 def test_dashboard_shell_is_served_unauthenticated(monkeypatch):
-    monkeypatch.setenv("SENTINELOS_API_KEY", "secret-key-123")
+    monkeypatch.setenv("CAVENDEX_API_KEY", "secret-key-123")
     response = client.get("/")
     assert response.status_code == 200
     assert "text/html" in response.headers["content-type"]
-    assert "SentinelOS" in response.text
+    assert "Cavendex" in response.text
 
 
 def test_static_assets_are_served_unauthenticated(monkeypatch):
-    monkeypatch.setenv("SENTINELOS_API_KEY", "secret-key-123")
+    monkeypatch.setenv("CAVENDEX_API_KEY", "secret-key-123")
     js = client.get("/static/app.js")
     css = client.get("/static/style.css")
     assert js.status_code == 200
@@ -32,14 +32,14 @@ def test_static_assets_are_served_unauthenticated(monkeypatch):
 
 
 def test_list_incidents_requires_auth_when_configured(monkeypatch):
-    monkeypatch.setenv("SENTINELOS_API_KEY", "secret-key-123")
+    monkeypatch.setenv("CAVENDEX_API_KEY", "secret-key-123")
     response = client.get("/tenants/dash-test/incidents")
     assert response.status_code == 401
 
 
 def test_list_incidents_returns_seeded_summaries(monkeypatch, tmp_path):
-    monkeypatch.delenv("SENTINELOS_API_KEY", raising=False)
-    monkeypatch.setenv("SENTINELOS_DATA_DIR", str(tmp_path))
+    monkeypatch.delenv("CAVENDEX_API_KEY", raising=False)
+    monkeypatch.setenv("CAVENDEX_DATA_DIR", str(tmp_path))
 
     upsert_incident_summary(
         "dash-test",
@@ -56,16 +56,16 @@ def test_list_incidents_returns_seeded_summaries(monkeypatch, tmp_path):
 
 
 def test_list_incidents_empty_for_unknown_tenant(monkeypatch, tmp_path):
-    monkeypatch.delenv("SENTINELOS_API_KEY", raising=False)
-    monkeypatch.setenv("SENTINELOS_DATA_DIR", str(tmp_path))
+    monkeypatch.delenv("CAVENDEX_API_KEY", raising=False)
+    monkeypatch.setenv("CAVENDEX_DATA_DIR", str(tmp_path))
     response = client.get("/tenants/never-used-tenant/incidents")
     assert response.status_code == 200
     assert response.json() == []
 
 
 def _seed_two(tenant, tmp_path, monkeypatch):
-    monkeypatch.delenv("SENTINELOS_API_KEY", raising=False)
-    monkeypatch.setenv("SENTINELOS_DATA_DIR", str(tmp_path))
+    monkeypatch.delenv("CAVENDEX_API_KEY", raising=False)
+    monkeypatch.setenv("CAVENDEX_DATA_DIR", str(tmp_path))
     upsert_incident_summary(
         tenant,
         {"incident": Incident(id="inc-1", description="Brute force from 1.2.3.4", severity="high", status="open"),

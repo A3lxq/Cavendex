@@ -18,7 +18,7 @@ from typing import List, Optional
 
 from graph import get_app
 from notifications.pipeline import notify_if_needed
-from state import SEVERITY_RANK, Incident, SentinelState
+from state import SEVERITY_RANK, Incident, CavendexState
 from utils.audit_chain import record_chain
 from utils.incident_events import publish as publish_incident_event
 from utils.incident_index import upsert_incident_summary
@@ -58,17 +58,17 @@ def _config(thread_id: str) -> dict:
 
 
 def _playbooks_mode() -> str:
-    mode = os.getenv("SENTINELOS_PLAYBOOKS_MODE", "append").strip().lower()
+    mode = os.getenv("CAVENDEX_PLAYBOOKS_MODE", "append").strip().lower()
     return mode if mode in ("append", "replace") else "append"
 
 
-def _apply_playbook(app, config: dict, state: SentinelState) -> SentinelState:
+def _apply_playbook(app, config: dict, state: CavendexState) -> CavendexState:
     """Deterministic, non-LLM post-processing step run once after the
     agent graph finishes (see run_new_incident/run_new_incident_stream):
     if a configured playbook (playbooks/loader.py) matches this
     incident (playbooks/matcher.py), its steps are rendered into real
     ProposedActions (playbooks/expander.py) and folded into
-    proposed_actions per SENTINELOS_PLAYBOOKS_MODE — "append" (default)
+    proposed_actions per CAVENDEX_PLAYBOOKS_MODE — "append" (default)
     alongside whatever the Responder Agent already proposed, or
     "replace" instead of it.
 
@@ -80,7 +80,7 @@ def _apply_playbook(app, config: dict, state: SentinelState) -> SentinelState:
     No playbooks configured, nothing matches, or nothing was renderable
     for this incident: returns `state` completely unchanged (not even a
     no-op app.update_state call), so this feature costs nothing when
-    SENTINELOS_PLAYBOOKS_DIR is unset.
+    CAVENDEX_PLAYBOOKS_DIR is unset.
     """
     incident = state.get("incident")
     if incident is None:
@@ -134,7 +134,7 @@ def _apply_playbook(app, config: dict, state: SentinelState) -> SentinelState:
         return app.get_state(config).values
 
 
-def _persist(state: SentinelState, report_type: str = "incident") -> None:
+def _persist(state: CavendexState, report_type: str = "incident") -> None:
     """Write the vault report, update the dashboard's list index, and
     record this audit_log's current tamper-evidence hash into the
     append-only chain ledger (see utils/audit_chain.py) — everything a
@@ -167,7 +167,7 @@ def _new_incident_state(
     source: Optional[str],
     thread_id: str,
     tenant_id: str,
-) -> SentinelState:
+) -> CavendexState:
     return {
         "messages": [],
         "incident": Incident(
@@ -198,7 +198,7 @@ def run_new_incident(
     thread_id: Optional[str] = None,
     tenant_id: str = DEFAULT_TENANT,
     seed_usage: Optional[dict] = None,
-) -> SentinelState:
+) -> CavendexState:
     """Create a new incident and run it through the full agent pipeline.
 
     `seed_usage`, if given, is folded into the new incident's token_usage
@@ -309,7 +309,7 @@ def merge_correlated_alert(
     tenant_id: str = DEFAULT_TENANT,
     match_reason: str = "shared indicator",
     usage: Optional[dict] = None,
-) -> SentinelState:
+) -> CavendexState:
     """Fold a newly-ingested alert into an already-open incident instead of
     starting a new pipeline run for it — the other half of "correlation"
     alongside ingestion/correlation.py, which decided `thread_id` is a
@@ -392,19 +392,19 @@ def merge_correlated_alert(
     return final_state
 
 
-def get_incident_state(thread_id: str, tenant_id: str = DEFAULT_TENANT) -> Optional[SentinelState]:
+def get_incident_state(thread_id: str, tenant_id: str = DEFAULT_TENANT) -> Optional[CavendexState]:
     app = get_app(tenant_id)
     snapshot = app.get_state(_config(thread_id))
     return snapshot.values or None
 
 
 def _require_approved_by() -> bool:
-    return os.getenv("SENTINELOS_REQUIRE_APPROVED_BY", "false").strip().lower() in ("1", "true", "yes")
+    return os.getenv("CAVENDEX_REQUIRE_APPROVED_BY", "false").strip().lower() in ("1", "true", "yes")
 
 
 def resolve_proposed_actions(
     thread_id: str, approve: bool, tenant_id: str = DEFAULT_TENANT, approved_by: Optional[str] = None
-) -> SentinelState:
+) -> CavendexState:
     """Approve or deny a Responder Agent's proposed actions for an incident.
 
     This is the human-in-the-loop gate: the Responder Agent only ever
@@ -417,7 +417,7 @@ def resolve_proposed_actions(
     denial never reaches that at all.
 
     `approved_by` is an analyst-supplied identifier — the CLI's `--by`
-    flag (or SENTINELOS_ANALYST_NAME), the API's `approved_by` request
+    flag (or CAVENDEX_ANALYST_NAME), the API's `approved_by` request
     field, or the dashboard's "Approved by" input — recorded on every
     decided ProposedAction and in the audit log/message. It is NOT an
     authenticated identity (there's no per-user login yet — see README
@@ -447,7 +447,7 @@ def resolve_proposed_actions(
 
         if _require_approved_by() and not approved_by:
             raise ValueError(
-                "SENTINELOS_REQUIRE_APPROVED_BY is set — this approve/deny call must include "
+                "CAVENDEX_REQUIRE_APPROVED_BY is set — this approve/deny call must include "
                 "an analyst name (CLI --by, the API's approved_by field, or the dashboard's "
                 "Analyst name field)."
             )
@@ -547,7 +547,7 @@ def resolve_proposed_actions(
 
 def run_threat_hunt(
     query: str, thread_id: Optional[str] = None, tenant_id: str = DEFAULT_TENANT
-) -> SentinelState:
+) -> CavendexState:
     """Run a standalone, analyst-initiated threat hunt (not incident-triggered).
 
     Unlike a hunt reached automatically from the Investigator Agent, this
@@ -560,7 +560,7 @@ def run_threat_hunt(
 
     tenant_id = sanitize_tenant_id(tenant_id)
     thread_id = thread_id or f"hunt-{uuid.uuid4()}"
-    state: SentinelState = {
+    state: CavendexState = {
         "messages": [],
         "incident": Incident(
             id=thread_id,

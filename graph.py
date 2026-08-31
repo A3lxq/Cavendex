@@ -10,11 +10,11 @@ from agents.investigator_agent import investigator_agent
 from agents.responder_agent import responder_agent
 from agents.threat_hunter_agent import threat_hunter_agent
 from agents.triage_agent import triage_agent
-from state import SentinelState
+from state import CavendexState
 from utils.tenancy import DEFAULT_TENANT, sanitize_tenant_id
 
 
-def route_next(state: SentinelState):
+def route_next(state: CavendexState):
     return state.get("next_agent") or END
 
 
@@ -25,7 +25,7 @@ def route_next(state: SentinelState):
 # triage->END edge, so escalation never went anywhere). The graph's
 # structure (nodes/edges) is shared across all tenants — only the
 # checkpointer differs, so it's compiled once per tenant in get_app().
-workflow = StateGraph(SentinelState)
+workflow = StateGraph(CavendexState)
 
 workflow.add_node("triage", triage_agent)
 workflow.add_node("investigator", investigator_agent)
@@ -67,10 +67,10 @@ _apps_lock = threading.Lock()
 
 
 def _base_data_dir() -> str:
-    # Read lazily (not at import time) so SENTINELOS_DATA_DIR can be set
+    # Read lazily (not at import time) so CAVENDEX_DATA_DIR can be set
     # via load_dotenv() or monkeypatched in tests after this module is
     # first imported — same reasoning as utils.obsidian._vault_root().
-    return os.getenv("SENTINELOS_DATA_DIR", os.path.join(os.path.dirname(__file__), "data"))
+    return os.getenv("CAVENDEX_DATA_DIR", os.path.join(os.path.dirname(__file__), "data"))
 
 
 def tenant_data_dir(tenant_id: str = DEFAULT_TENANT) -> str:
@@ -96,7 +96,7 @@ def get_app(tenant_id: str = DEFAULT_TENANT):
 
         tenant_dir = tenant_data_dir(tenant_id)
         os.makedirs(tenant_dir, exist_ok=True)
-        db_path = os.path.join(tenant_dir, "sentinelos.db")
+        db_path = os.path.join(tenant_dir, "cavendex.db")
 
         conn = sqlite3.connect(db_path, check_same_thread=False)
         checkpointer = SqliteSaver(conn, serde=_SERDE)

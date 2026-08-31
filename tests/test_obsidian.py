@@ -109,7 +109,7 @@ def test_audit_log_entry_with_embedded_newline_cannot_inject_a_fake_bullet(tmp_p
     value folded into it) must render as a single bullet line in the
     vault report, never as multiple lines -- which would let it inject
     an arbitrary extra Markdown line (a fake bullet, a fake heading)
-    that reads as if it came from SentinelOS itself."""
+    that reads as if it came from Cavendex itself."""
     monkeypatch.setenv("OBSIDIAN_VAULT_PATH", str(tmp_path))
 
     state = _fake_state()

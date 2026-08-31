@@ -36,7 +36,7 @@ def _alert(iocs=None, affected_assets=None, severity="medium"):
 def _write_inventory(monkeypatch, tmp_path, mapping):
     path = tmp_path / "inventory.json"
     path.write_text(json.dumps(mapping))
-    monkeypatch.setenv("SENTINELOS_ASSET_INVENTORY_PATH", str(path))
+    monkeypatch.setenv("CAVENDEX_ASSET_INVENTORY_PATH", str(path))
 
 
 # ---------- No candidates / no signal ----------
@@ -55,7 +55,7 @@ def test_no_candidates_never_matches(monkeypatch, tmp_path):
 
 
 def test_no_inventory_configured_never_matches(monkeypatch, tmp_path):
-    monkeypatch.delenv("SENTINELOS_ASSET_INVENTORY_PATH", raising=False)
+    monkeypatch.delenv("CAVENDEX_ASSET_INVENTORY_PATH", raising=False)
     candidates = [_candidate("inc-1", affected_assets=["WEB-01"])]
     match = find_identity_correlation(
         "t1", _alert(affected_assets=["WEB-01-RENAMED"]), candidates=candidates
@@ -104,7 +104,7 @@ def test_asset_identity_checked_before_domain_identity(monkeypatch, tmp_path):
     """Even with DNS identity enabled, the free asset tier should short
     circuit before spending an API call -- proven here by not configuring
     a VirusTotal key at all and still getting the asset match."""
-    monkeypatch.setenv("SENTINELOS_CORRELATION_IDENTITY_DNS_ENABLED", "true")
+    monkeypatch.setenv("CAVENDEX_CORRELATION_IDENTITY_DNS_ENABLED", "true")
     monkeypatch.delenv("VIRUSTOTAL_API_KEY", raising=False)
     _write_inventory(monkeypatch, tmp_path, {"WEB-01": "asset-042", "WEB-01-RENAMED": "asset-042"})
     candidates = [_candidate("inc-1", affected_assets=["WEB-01"])]
@@ -117,7 +117,7 @@ def test_asset_identity_checked_before_domain_identity(monkeypatch, tmp_path):
 
 
 def test_domain_identity_disabled_by_default(monkeypatch, tmp_path):
-    monkeypatch.delenv("SENTINELOS_CORRELATION_IDENTITY_DNS_ENABLED", raising=False)
+    monkeypatch.delenv("CAVENDEX_CORRELATION_IDENTITY_DNS_ENABLED", raising=False)
     monkeypatch.setenv("VIRUSTOTAL_API_KEY", "fake-key")
 
     def _fail(*a, **kw):
@@ -131,7 +131,7 @@ def test_domain_identity_disabled_by_default(monkeypatch, tmp_path):
 
 
 def test_shared_resolution_correlates_lexically_unrelated_domains(monkeypatch, tmp_path):
-    monkeypatch.setenv("SENTINELOS_CORRELATION_IDENTITY_DNS_ENABLED", "true")
+    monkeypatch.setenv("CAVENDEX_CORRELATION_IDENTITY_DNS_ENABLED", "true")
     monkeypatch.setenv("VIRUSTOTAL_API_KEY", "fake-key")
 
     def _fake_get(url, headers=None, params=None, timeout=None):
@@ -155,7 +155,7 @@ def test_shared_resolution_correlates_lexically_unrelated_domains(monkeypatch, t
 
 
 def test_no_shared_resolution_does_not_correlate(monkeypatch, tmp_path):
-    monkeypatch.setenv("SENTINELOS_CORRELATION_IDENTITY_DNS_ENABLED", "true")
+    monkeypatch.setenv("CAVENDEX_CORRELATION_IDENTITY_DNS_ENABLED", "true")
     monkeypatch.setenv("VIRUSTOTAL_API_KEY", "fake-key")
 
     def _fake_get(url, headers=None, params=None, timeout=None):
@@ -180,10 +180,10 @@ def test_domain_lookup_count_is_bounded_by_a_configurable_budget(monkeypatch, tm
     """Security regression: one alert with many domain IOCs matched
     against many candidates (each with their own domain IOCs) must never
     turn into an unbounded number of real VirusTotal calls -- see
-    SENTINELOS_IDENTITY_DNS_MAX_LOOKUPS in ingestion/identity_correlation.py."""
-    monkeypatch.setenv("SENTINELOS_CORRELATION_IDENTITY_DNS_ENABLED", "true")
+    CAVENDEX_IDENTITY_DNS_MAX_LOOKUPS in ingestion/identity_correlation.py."""
+    monkeypatch.setenv("CAVENDEX_CORRELATION_IDENTITY_DNS_ENABLED", "true")
     monkeypatch.setenv("VIRUSTOTAL_API_KEY", "fake-key")
-    monkeypatch.setenv("SENTINELOS_IDENTITY_DNS_MAX_LOOKUPS", "3")
+    monkeypatch.setenv("CAVENDEX_IDENTITY_DNS_MAX_LOOKUPS", "3")
 
     call_count = {"n": 0}
 
@@ -216,7 +216,7 @@ def test_domain_lookup_count_is_bounded_by_a_configurable_budget(monkeypatch, tm
 
 
 def test_non_domain_iocs_are_ignored_by_domain_identity_tier(monkeypatch, tmp_path):
-    monkeypatch.setenv("SENTINELOS_CORRELATION_IDENTITY_DNS_ENABLED", "true")
+    monkeypatch.setenv("CAVENDEX_CORRELATION_IDENTITY_DNS_ENABLED", "true")
     monkeypatch.setenv("VIRUSTOTAL_API_KEY", "fake-key")
 
     def _fail(*a, **kw):

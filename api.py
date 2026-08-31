@@ -1,4 +1,4 @@
-"""Minimal FastAPI layer over the SentinelOS incident pipeline.
+"""Minimal FastAPI layer over the Cavendex incident pipeline.
 
 Run with: uvicorn api:api --reload, then open http://localhost:8000/ for
 the analyst dashboard.
@@ -10,7 +10,7 @@ isolation (separate SQLite DB, ChromaDB collection, and Obsidian vault
 subfolder per tenant — see graph.get_app, memory.vector_store,
 utils.obsidian).
 
-Auth: set SENTINELOS_API_KEY to require `Authorization: Bearer <key>` on
+Auth: set CAVENDEX_API_KEY to require `Authorization: Bearer <key>` on
 every data route except /health, /, and /static/* (the dashboard's HTML
 shell contains no incident data — only its own fetch() calls to the
 protected routes need the key, entered client-side in the dashboard).
@@ -20,11 +20,11 @@ your own gateway, not for public exposure. /docs, /redoc, and
 these routes bypass the router-level auth dependency entirely, so this
 project defines its own authenticated ones instead of using the default.
 
-Tenant isolation: SENTINELOS_API_KEY alone authorizes a caller for every
+Tenant isolation: CAVENDEX_API_KEY alone authorizes a caller for every
 tenant — fine for one trusted operator using tenants purely to organize
 data, but not a real boundary between organizations that shouldn't see
 each other's incidents (storage was already isolated per-tenant; auth
-was not). SENTINELOS_TENANT_API_KEYS closes that: a JSON object mapping
+was not). CAVENDEX_TENANT_API_KEYS closes that: a JSON object mapping
 a tenant_id to its own key, e.g. {"acme-corp": "...", "globex": "..."}.
 A tenant with an entry there only ever accepts *that* key on its
 /tenants/{tenant_id}/... routes — the global key no longer works for it.
@@ -78,9 +78,9 @@ from workflows.incident_pipeline import (
     run_threat_hunt,
 )
 
-if not os.getenv("SENTINELOS_API_KEY"):
+if not os.getenv("CAVENDEX_API_KEY"):
     print(
-        "⚠️  SENTINELOS_API_KEY is not set — the API is running unauthenticated. "
+        "⚠️  CAVENDEX_API_KEY is not set — the API is running unauthenticated. "
         "Fine for local/internal use; set it before exposing this beyond your own machine."
     )
 
@@ -88,11 +88,11 @@ _bearer_scheme = HTTPBearer(auto_error=False)
 
 
 def _global_api_key() -> Optional[str]:
-    return os.getenv("SENTINELOS_API_KEY")
+    return os.getenv("CAVENDEX_API_KEY")
 
 
 def _tenant_api_keys() -> dict:
-    """Parses SENTINELOS_TENANT_API_KEYS (a JSON object mapping tenant_id
+    """Parses CAVENDEX_TENANT_API_KEYS (a JSON object mapping tenant_id
     to its own key) once per call — cheap enough not to cache, and always
     reflects the current environment, the same as every other
     os.getenv(...)-per-call setting in this project. Malformed JSON is
@@ -100,15 +100,15 @@ def _tenant_api_keys() -> dict:
     warning) rather than crashing every request — misconfiguring this
     should degrade to today's global-key behavior, never to a 500.
     """
-    raw = (os.getenv("SENTINELOS_TENANT_API_KEYS") or "").strip()
+    raw = (os.getenv("CAVENDEX_TENANT_API_KEYS") or "").strip()
     if not raw:
         return {}
     try:
         parsed = json.loads(raw)
     except json.JSONDecodeError:
         print(
-            "SENTINELOS_TENANT_API_KEYS is not valid JSON — ignoring it. "
-            "Every tenant will fall back to the shared SENTINELOS_API_KEY."
+            "CAVENDEX_TENANT_API_KEYS is not valid JSON — ignoring it. "
+            "Every tenant will fall back to the shared CAVENDEX_API_KEY."
         )
         return {}
     if not isinstance(parsed, dict):
@@ -117,7 +117,7 @@ def _tenant_api_keys() -> dict:
 
 
 def _require_login_when_users_exist() -> bool:
-    return os.getenv("SENTINELOS_REQUIRE_LOGIN", "false").strip().lower() in ("1", "true", "yes")
+    return os.getenv("CAVENDEX_REQUIRE_LOGIN", "false").strip().lower() in ("1", "true", "yes")
 
 
 def require_api_key(
@@ -142,11 +142,11 @@ def require_api_key(
     sets up a login purely for its accountability benefit (a real
     identity auto-filling `approved_by`), the exact kind of surprise
     every other opt-in feature in this project goes out of its way to
-    avoid. `SENTINELOS_REQUIRE_LOGIN=true` opts into treating "this
+    avoid. `CAVENDEX_REQUIRE_LOGIN=true` opts into treating "this
     tenant has any real user accounts" as its own reason to require a
     credential, for an operator who deliberately wants account creation
     itself to be the access-control switch instead of (or in addition
-    to) SENTINELOS_API_KEY.
+    to) CAVENDEX_API_KEY.
     """
     request.state.session_user = None
     if credentials is not None:
@@ -176,9 +176,9 @@ def require_tenant_api_key(
     the tenant actually named in the URL.
 
     Previously every tenant route accepted the single global
-    SENTINELOS_API_KEY — tenancy isolated storage but not who could read
+    CAVENDEX_API_KEY — tenancy isolated storage but not who could read
     or act on it, so one key holder could reach every tenant just by
-    changing the URL. If SENTINELOS_TENANT_API_KEYS configures a key for
+    changing the URL. If CAVENDEX_TENANT_API_KEYS configures a key for
     THIS tenant, the caller must present exactly that key; the global key
     no longer authorizes it. A tenant with no entry in that mapping falls
     back to the global key, preserving today's behavior for anyone who
@@ -186,7 +186,7 @@ def require_tenant_api_key(
 
     Also accepts a real per-user session token scoped to this tenant —
     see require_api_key's docstring for both that and
-    SENTINELOS_REQUIRE_LOGIN, the reasoning is identical here.
+    CAVENDEX_REQUIRE_LOGIN, the reasoning is identical here.
     """
     request.state.session_user = None
     if credentials is not None:
@@ -227,7 +227,7 @@ def _enforce_rate_limit(key: str) -> None:
         raise HTTPException(
             status_code=429,
             detail=(
-                f"Rate limit exceeded ({os.getenv('SENTINELOS_RATE_LIMIT_PER_MINUTE', '10')} "
+                f"Rate limit exceeded ({os.getenv('CAVENDEX_RATE_LIMIT_PER_MINUTE', '10')} "
                 "requests/minute) — this endpoint runs a full LLM pipeline per call."
             ),
             headers={"Retry-After": str(int(retry_after))},
@@ -236,7 +236,7 @@ def _enforce_rate_limit(key: str) -> None:
 
 def _tenant_rate_limit_per_minute() -> int:
     try:
-        return int(os.getenv("SENTINELOS_TENANT_RATE_LIMIT_PER_MINUTE", "50"))
+        return int(os.getenv("CAVENDEX_TENANT_RATE_LIMIT_PER_MINUTE", "50"))
     except ValueError:
         return 50
 
@@ -302,12 +302,12 @@ def enforce_max_body_size(request: Request) -> None:
 # docs_url/redoc_url/openapi_url are disabled here and re-added below as
 # authenticated routes on `router` instead — FastAPI's default /docs,
 # /redoc, and /openapi.json are otherwise reachable with NO credentials
-# even when SENTINELOS_API_KEY is set (they're framework routes on the
+# even when CAVENDEX_API_KEY is set (they're framework routes on the
 # app object, not the auth-gated router), disclosing the entire API
 # schema for free. Live-verified before this fix: all three returned 200
 # with zero Authorization header sent.
 api = FastAPI(
-    title="SentinelOS",
+    title="Cavendex",
     description="Cybersecurity agentic AI operating system",
     docs_url=None,
     redoc_url=None,
@@ -368,7 +368,7 @@ class ChangeRoleRequest(BaseModel):
 
 def _login_rate_limit_per_minute() -> int:
     try:
-        return int(os.getenv("SENTINELOS_LOGIN_RATE_LIMIT_PER_MINUTE", "5"))
+        return int(os.getenv("CAVENDEX_LOGIN_RATE_LIMIT_PER_MINUTE", "5"))
     except ValueError:
         return 5
 
@@ -377,7 +377,7 @@ def _login(tenant_id: str, payload: LoginRequest, request: Request) -> dict:
     """Deliberately unauthenticated — logging in is how a caller obtains
     a credential in the first place, so it can't itself require one.
     Rate-limited far more tightly than the LLM-triggering routes
-    (SENTINELOS_LOGIN_RATE_LIMIT_PER_MINUTE, default 5/minute per
+    (CAVENDEX_LOGIN_RATE_LIMIT_PER_MINUTE, default 5/minute per
     (tenant, client IP)) since this is the one route in the whole API
     whose entire job is checking a password against a stored hash — the
     exact kind of endpoint password-brute-forcing targets.
@@ -416,12 +416,12 @@ def login_for_tenant(tenant_id: str, payload: LoginRequest, request: Request):
 
 
 # Every route except /health, /, /static/*, and /auth/login requires auth
-# (when SENTINELOS_API_KEY is set, or when the tenant has any real user
+# (when CAVENDEX_API_KEY is set, or when the tenant has any real user
 # accounts — see require_api_key/require_tenant_api_key) — enforced once
 # here rather than repeated on each route, so a new route can't
 # accidentally be added unauthenticated. Tenant-scoped routes get their
 # own router below with a dependency that also checks
-# SENTINELOS_TENANT_API_KEYS for the specific tenant in the URL, not just
+# CAVENDEX_TENANT_API_KEYS for the specific tenant in the URL, not just
 # the global key.
 router = APIRouter(dependencies=[Depends(require_api_key)])
 tenant_router = APIRouter(dependencies=[Depends(require_tenant_api_key)])
@@ -717,7 +717,7 @@ def _stream_incident(payload: NewIncidentRequest, tenant_id: str) -> StreamingRe
 # thread behind.
 def _events_heartbeat_seconds() -> float:
     try:
-        return max(1.0, float(os.getenv("SENTINELOS_EVENTS_HEARTBEAT_SECONDS", "15")))
+        return max(1.0, float(os.getenv("CAVENDEX_EVENTS_HEARTBEAT_SECONDS", "15")))
     except ValueError:
         return 15.0
 

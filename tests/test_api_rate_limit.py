@@ -23,7 +23,7 @@ def _clean_rate_limit_state():
 def test_incident_creation_is_rate_limited(monkeypatch):
     for key in ["GROQ_API_KEY", "OPENAI_API_KEY", "ANTHROPIC_API_KEY", "GOOGLE_API_KEY", "OLLAMA_MODEL"]:
         monkeypatch.delenv(key, raising=False)
-    monkeypatch.setenv("SENTINELOS_RATE_LIMIT_PER_MINUTE", "2")
+    monkeypatch.setenv("CAVENDEX_RATE_LIMIT_PER_MINUTE", "2")
 
     payload = {"description": "test incident for rate limiting", "severity": "low"}
 
@@ -51,7 +51,7 @@ def test_tenant_global_limit_catches_what_per_ip_limit_cannot(monkeypatch):
 
     from api import _enforce_tenant_rate_limit
 
-    monkeypatch.setenv("SENTINELOS_TENANT_RATE_LIMIT_PER_MINUTE", "3")
+    monkeypatch.setenv("CAVENDEX_TENANT_RATE_LIMIT_PER_MINUTE", "3")
 
     # Three calls succeed (simulating three different client IPs, each
     # well under its own per-IP limit) -- the fourth is rejected because
@@ -68,7 +68,7 @@ def test_tenant_global_limit_catches_what_per_ip_limit_cannot(monkeypatch):
 def test_tenant_global_limit_is_scoped_per_tenant(monkeypatch):
     from api import _enforce_tenant_rate_limit
 
-    monkeypatch.setenv("SENTINELOS_TENANT_RATE_LIMIT_PER_MINUTE", "1")
+    monkeypatch.setenv("CAVENDEX_TENANT_RATE_LIMIT_PER_MINUTE", "1")
 
     _enforce_tenant_rate_limit("tenant-a-global-test")
     # A different tenant's own budget is untouched by tenant-a's usage.
@@ -76,7 +76,7 @@ def test_tenant_global_limit_is_scoped_per_tenant(monkeypatch):
 
 
 def test_reads_are_never_rate_limited(monkeypatch):
-    monkeypatch.setenv("SENTINELOS_RATE_LIMIT_PER_MINUTE", "1")
+    monkeypatch.setenv("CAVENDEX_RATE_LIMIT_PER_MINUTE", "1")
     # Burn through the limit on a *different* key namespace (tenant "reads-test")
     # by hitting reads repeatedly — reads have no rate_limit dependency at all.
     for _ in range(10):

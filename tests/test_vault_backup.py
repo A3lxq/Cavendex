@@ -96,7 +96,7 @@ def test_backup_once_uses_a_dedicated_commit_identity(vault):
     backup_once(str(vault), branch="main", push=False)
 
     author = _git(["log", "-1", "--format=%an <%ae>"], vault).stdout.strip()
-    assert author == "SentinelOS Vault Backup <vault-backup@sentinelos.local>"
+    assert author == "Cavendex Vault Backup <vault-backup@cavendex.local>"
 
 
 def test_backup_once_pushes_to_a_real_local_bare_repo(vault, bare_remote):

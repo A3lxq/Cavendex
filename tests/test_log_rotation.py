@@ -8,7 +8,7 @@ from utils.log_rotation import append_line
 
 
 def test_appends_without_rotating_when_under_the_limit(tmp_path, monkeypatch):
-    monkeypatch.setenv("SENTINELOS_LOG_MAX_BYTES", "1000000")
+    monkeypatch.setenv("CAVENDEX_LOG_MAX_BYTES", "1000000")
     path = str(tmp_path / "log.jsonl")
 
     append_line(path, "line one")
@@ -19,8 +19,8 @@ def test_appends_without_rotating_when_under_the_limit(tmp_path, monkeypatch):
 
 
 def test_rotates_once_the_size_threshold_is_crossed(tmp_path, monkeypatch):
-    monkeypatch.setenv("SENTINELOS_LOG_MAX_BYTES", "10")  # tiny, forces rotation fast
-    monkeypatch.setenv("SENTINELOS_LOG_BACKUP_COUNT", "3")
+    monkeypatch.setenv("CAVENDEX_LOG_MAX_BYTES", "10")  # tiny, forces rotation fast
+    monkeypatch.setenv("CAVENDEX_LOG_BACKUP_COUNT", "3")
     path = str(tmp_path / "log.jsonl")
 
     for i in range(5):
@@ -32,8 +32,8 @@ def test_rotates_once_the_size_threshold_is_crossed(tmp_path, monkeypatch):
 
 
 def test_backup_count_is_respected(tmp_path, monkeypatch):
-    monkeypatch.setenv("SENTINELOS_LOG_MAX_BYTES", "1")  # rotate on every single write
-    monkeypatch.setenv("SENTINELOS_LOG_BACKUP_COUNT", "2")
+    monkeypatch.setenv("CAVENDEX_LOG_MAX_BYTES", "1")  # rotate on every single write
+    monkeypatch.setenv("CAVENDEX_LOG_BACKUP_COUNT", "2")
     path = str(tmp_path / "log.jsonl")
 
     for i in range(6):
@@ -45,8 +45,8 @@ def test_backup_count_is_respected(tmp_path, monkeypatch):
 
 
 def test_rotation_preserves_chronological_order_across_files(tmp_path, monkeypatch):
-    monkeypatch.setenv("SENTINELOS_LOG_MAX_BYTES", "1")  # rotate on every write
-    monkeypatch.setenv("SENTINELOS_LOG_BACKUP_COUNT", "5")
+    monkeypatch.setenv("CAVENDEX_LOG_MAX_BYTES", "1")  # rotate on every write
+    monkeypatch.setenv("CAVENDEX_LOG_BACKUP_COUNT", "5")
     path = str(tmp_path / "log.jsonl")
 
     for i in range(4):
@@ -60,7 +60,7 @@ def test_rotation_preserves_chronological_order_across_files(tmp_path, monkeypat
 
 
 def test_rotation_disabled_by_zero_max_bytes(tmp_path, monkeypatch):
-    monkeypatch.setenv("SENTINELOS_LOG_MAX_BYTES", "0")
+    monkeypatch.setenv("CAVENDEX_LOG_MAX_BYTES", "0")
     path = str(tmp_path / "log.jsonl")
 
     for i in range(20):
@@ -71,8 +71,8 @@ def test_rotation_disabled_by_zero_max_bytes(tmp_path, monkeypatch):
 
 
 def test_zero_backup_count_truncates_instead_of_growing_forever(tmp_path, monkeypatch):
-    monkeypatch.setenv("SENTINELOS_LOG_MAX_BYTES", "1")
-    monkeypatch.setenv("SENTINELOS_LOG_BACKUP_COUNT", "0")
+    monkeypatch.setenv("CAVENDEX_LOG_MAX_BYTES", "1")
+    monkeypatch.setenv("CAVENDEX_LOG_BACKUP_COUNT", "0")
     path = str(tmp_path / "log.jsonl")
 
     for i in range(5):

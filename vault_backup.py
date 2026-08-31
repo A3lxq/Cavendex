@@ -1,5 +1,5 @@
 """Back up the entire Obsidian vault (every tenant's incident/hunt
-reports) to a git remote — the durable, off-box copy of SentinelOS's
+reports) to a git remote — the durable, off-box copy of Cavendex's
 structured audit trail. Runs on an interval and does its own git
 add/commit/push, deliberately as a separate process rather than something
 the incident pipeline does inline: a git failure (network blip, auth
@@ -45,8 +45,8 @@ from dotenv import load_dotenv
 
 load_dotenv(override=True)
 
-_COMMIT_AUTHOR_NAME = "SentinelOS Vault Backup"
-_COMMIT_AUTHOR_EMAIL = "vault-backup@sentinelos.local"
+_COMMIT_AUTHOR_NAME = "Cavendex Vault Backup"
+_COMMIT_AUTHOR_EMAIL = "vault-backup@cavendex.local"
 
 
 def _run_git(args, cwd) -> subprocess.CompletedProcess:
@@ -87,7 +87,7 @@ def backup_once(vault_path: str, branch: str, push: bool = True) -> bool:
     if not status.stdout.strip():
         return False
 
-    message = f"SentinelOS vault backup: {datetime.now(timezone.utc).isoformat()}"
+    message = f"Cavendex vault backup: {datetime.now(timezone.utc).isoformat()}"
     commit = _run_git(
         [
             "-c", f"user.name={_COMMIT_AUTHOR_NAME}",
@@ -109,7 +109,7 @@ def backup_once(vault_path: str, branch: str, push: bool = True) -> bool:
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Back up the SentinelOS Obsidian vault to a git remote")
+    parser = argparse.ArgumentParser(description="Back up the Cavendex Obsidian vault to a git remote")
     parser.add_argument("--vault-path", default=os.getenv("OBSIDIAN_VAULT_PATH", "obsidian_vault"))
     parser.add_argument("--remote", default=None, help="git remote URL, e.g. git@github.com:you/vault.git")
     parser.add_argument("--branch", default="main")

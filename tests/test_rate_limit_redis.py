@@ -1,5 +1,5 @@
 """Tests utils/rate_limit.py's Redis-backed path against a real local
-Redis instance (skipped if one isn't reachable at SENTINELOS_TEST_REDIS_URL
+Redis instance (skipped if one isn't reachable at CAVENDEX_TEST_REDIS_URL
 or redis://127.0.0.1:6379/0) — the same "prefer real I/O over a guessed
 shape" approach as every other optional-integration test in this project.
 Exercises the actual Lua script via a real EVAL call, not a mocked redis
@@ -16,7 +16,7 @@ import redis as redis_lib
 
 from utils.rate_limit import check_rate_limit, reset_for_tests
 
-_TEST_REDIS_URL = os.getenv("SENTINELOS_TEST_REDIS_URL", "redis://127.0.0.1:6379/0")
+_TEST_REDIS_URL = os.getenv("CAVENDEX_TEST_REDIS_URL", "redis://127.0.0.1:6379/0")
 
 
 def _redis_reachable() -> bool:
@@ -33,21 +33,21 @@ pytestmark = pytest.mark.skipif(not _HAS_REDIS, reason="No reachable Redis insta
 
 @pytest.fixture(autouse=True)
 def _redis_env(monkeypatch):
-    monkeypatch.setenv("SENTINELOS_REDIS_URL", _TEST_REDIS_URL)
+    monkeypatch.setenv("CAVENDEX_REDIS_URL", _TEST_REDIS_URL)
     reset_for_tests()
     yield
     reset_for_tests()
 
 
 def test_allows_requests_under_the_limit(monkeypatch):
-    monkeypatch.setenv("SENTINELOS_RATE_LIMIT_PER_MINUTE", "3")
+    monkeypatch.setenv("CAVENDEX_RATE_LIMIT_PER_MINUTE", "3")
     key = "redis-test-under-limit"
     for _ in range(3):
         assert check_rate_limit(key, now=1000.0) is None
 
 
 def test_blocks_requests_over_the_limit(monkeypatch):
-    monkeypatch.setenv("SENTINELOS_RATE_LIMIT_PER_MINUTE", "2")
+    monkeypatch.setenv("CAVENDEX_RATE_LIMIT_PER_MINUTE", "2")
     key = "redis-test-over-limit"
     assert check_rate_limit(key, now=1000.0) is None
     assert check_rate_limit(key, now=1000.0) is None
@@ -57,7 +57,7 @@ def test_blocks_requests_over_the_limit(monkeypatch):
 
 
 def test_window_expires_after_sixty_seconds(monkeypatch):
-    monkeypatch.setenv("SENTINELOS_RATE_LIMIT_PER_MINUTE", "1")
+    monkeypatch.setenv("CAVENDEX_RATE_LIMIT_PER_MINUTE", "1")
     key = "redis-test-window-expiry"
     assert check_rate_limit(key, now=1000.0) is None
     assert check_rate_limit(key, now=1010.0) is not None  # still within the window
@@ -65,14 +65,14 @@ def test_window_expires_after_sixty_seconds(monkeypatch):
 
 
 def test_zero_limit_disables_rate_limiting(monkeypatch):
-    monkeypatch.setenv("SENTINELOS_RATE_LIMIT_PER_MINUTE", "0")
+    monkeypatch.setenv("CAVENDEX_RATE_LIMIT_PER_MINUTE", "0")
     key = "redis-test-disabled"
     for _ in range(20):
         assert check_rate_limit(key, now=1000.0) is None
 
 
 def test_different_keys_are_independent(monkeypatch):
-    monkeypatch.setenv("SENTINELOS_RATE_LIMIT_PER_MINUTE", "1")
+    monkeypatch.setenv("CAVENDEX_RATE_LIMIT_PER_MINUTE", "1")
     assert check_rate_limit("redis-key-a", now=1000.0) is None
     assert check_rate_limit("redis-key-b", now=1000.0) is None  # independent bucket
     assert check_rate_limit("redis-key-a", now=1000.0) is not None  # key-a's bucket is full
@@ -83,7 +83,7 @@ def test_two_independent_client_instances_share_the_same_limit(monkeypatch):
     "replicas" (here, two independent redis-py client connections, since
     that's what two uvicorn worker processes would each hold) must see
     and enforce the SAME state, not each get their own private quota."""
-    monkeypatch.setenv("SENTINELOS_RATE_LIMIT_PER_MINUTE", "2")
+    monkeypatch.setenv("CAVENDEX_RATE_LIMIT_PER_MINUTE", "2")
     key = "redis-test-shared-across-replicas"
 
     # First "replica" uses whatever client utils.rate_limit already built.
@@ -105,7 +105,7 @@ def test_uses_real_redis_server_time_when_now_not_given(monkeypatch):
     clock from Redis's own TIME command, not the local wall clock --
     verified here by not passing `now` at all and confirming real,
     unmocked wall-clock rate limiting still works end-to-end."""
-    monkeypatch.setenv("SENTINELOS_RATE_LIMIT_PER_MINUTE", "1")
+    monkeypatch.setenv("CAVENDEX_RATE_LIMIT_PER_MINUTE", "1")
     key = "redis-test-real-time"
     assert check_rate_limit(key) is None
     retry_after = check_rate_limit(key)
@@ -114,7 +114,7 @@ def test_uses_real_redis_server_time_when_now_not_given(monkeypatch):
 
 
 def test_reset_for_tests_clears_redis_state(monkeypatch):
-    monkeypatch.setenv("SENTINELOS_RATE_LIMIT_PER_MINUTE", "1")
+    monkeypatch.setenv("CAVENDEX_RATE_LIMIT_PER_MINUTE", "1")
     key = "redis-test-reset"
     assert check_rate_limit(key, now=1000.0) is None
     assert check_rate_limit(key, now=1000.0) is not None

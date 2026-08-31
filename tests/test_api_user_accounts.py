@@ -2,7 +2,7 @@
 a real HTTP request/response cycle via TestClient, and their integration
 with the existing require_api_key/require_tenant_api_key auth gates and
 approve/deny's approved_by auto-fill. Real PBKDF2 hashing throughout
-(SENTINELOS_PASSWORD_HASH_ITERATIONS lowered for test speed, the same
+(CAVENDEX_PASSWORD_HASH_ITERATIONS lowered for test speed, the same
 "correctness over the real security margin" tradeoff test_user_accounts.py
 makes)."""
 
@@ -29,9 +29,9 @@ def _tenant():
 
 @pytest.fixture(autouse=True)
 def _isolate(monkeypatch):
-    monkeypatch.setenv("SENTINELOS_PASSWORD_HASH_ITERATIONS", "1000")
-    monkeypatch.delenv("SENTINELOS_API_KEY", raising=False)
-    monkeypatch.delenv("SENTINELOS_TENANT_API_KEYS", raising=False)
+    monkeypatch.setenv("CAVENDEX_PASSWORD_HASH_ITERATIONS", "1000")
+    monkeypatch.delenv("CAVENDEX_API_KEY", raising=False)
+    monkeypatch.delenv("CAVENDEX_TENANT_API_KEYS", raising=False)
     reset_auth_monitor()
     reset_rate_limit()
     reset_user_accounts()
@@ -98,7 +98,7 @@ def test_login_rejects_unknown_user():
 
 
 def test_login_is_rate_limited(monkeypatch):
-    monkeypatch.setenv("SENTINELOS_LOGIN_RATE_LIMIT_PER_MINUTE", "2")
+    monkeypatch.setenv("CAVENDEX_LOGIN_RATE_LIMIT_PER_MINUTE", "2")
     client.post("/auth/users", json={"username": "alice", "password": "correct-horse-battery"})
 
     client.post("/auth/login", json={"username": "alice", "password": "wrong"})
@@ -133,9 +133,9 @@ def test_creating_a_user_does_not_lock_out_unauthenticated_access_by_default():
 
 
 def test_require_login_opts_into_enforcement_once_a_user_exists(monkeypatch):
-    """SENTINELOS_REQUIRE_LOGIN=true is the explicit opt-in for an
+    """CAVENDEX_REQUIRE_LOGIN=true is the explicit opt-in for an
     operator who *does* want account creation itself to gate access."""
-    monkeypatch.setenv("SENTINELOS_REQUIRE_LOGIN", "true")
+    monkeypatch.setenv("CAVENDEX_REQUIRE_LOGIN", "true")
     client.post("/auth/users", json={"username": "alice", "password": "correct-horse-battery"})
 
     response = client.get("/incidents/does-not-exist")
@@ -143,7 +143,7 @@ def test_require_login_opts_into_enforcement_once_a_user_exists(monkeypatch):
 
 
 def test_require_login_has_no_effect_without_any_users(monkeypatch):
-    monkeypatch.setenv("SENTINELOS_REQUIRE_LOGIN", "true")
+    monkeypatch.setenv("CAVENDEX_REQUIRE_LOGIN", "true")
     response = client.get("/incidents/does-not-exist")
     assert response.status_code == 404
 
@@ -158,16 +158,16 @@ def test_me_reports_session_identity():
 
 
 def test_me_reports_api_key_when_not_a_session(monkeypatch):
-    monkeypatch.setenv("SENTINELOS_API_KEY", "secret-key-123")
+    monkeypatch.setenv("CAVENDEX_API_KEY", "secret-key-123")
     response = client.get("/auth/me", headers={"Authorization": "Bearer secret-key-123"})
     assert response.json() == {"authenticated_via": "api_key", "username": None, "role": None}
 
 
 def test_logout_invalidates_the_session(monkeypatch):
-    # SENTINELOS_REQUIRE_LOGIN so an invalidated token is actually
+    # CAVENDEX_REQUIRE_LOGIN so an invalidated token is actually
     # rejected rather than the request just falling through to this
     # (otherwise open-by-default) tenant's unauthenticated access.
-    monkeypatch.setenv("SENTINELOS_REQUIRE_LOGIN", "true")
+    monkeypatch.setenv("CAVENDEX_REQUIRE_LOGIN", "true")
     client.post("/auth/users", json={"username": "alice", "password": "correct-horse-battery"})
     login = client.post("/auth/login", json={"username": "alice", "password": "correct-horse-battery"})
     token = login.json()["token"]
@@ -212,7 +212,7 @@ def test_api_key_can_manage_users_even_with_no_session(monkeypatch):
     """The static API key is an implicit superuser, consistent with the
     fact that it already authorizes every other route -- and is the
     only way to bootstrap a tenant's very first admin account."""
-    monkeypatch.setenv("SENTINELOS_API_KEY", "secret-key-123")
+    monkeypatch.setenv("CAVENDEX_API_KEY", "secret-key-123")
     response = client.post(
         "/auth/users",
         json={"username": "alice", "password": "correct-horse-battery"},
@@ -336,11 +336,11 @@ def test_session_from_one_tenant_does_not_authenticate_another(monkeypatch):
     token = login.json()["token"]
 
     # tenant_b must have its own auth requirement (a user account plus
-    # SENTINELOS_REQUIRE_LOGIN here) for this to actually test anything
+    # CAVENDEX_REQUIRE_LOGIN here) for this to actually test anything
     # -- an unconfigured tenant accepts any credentials (or none), by
     # design, regardless of a session token failing to validate against
     # it.
-    monkeypatch.setenv("SENTINELOS_REQUIRE_LOGIN", "true")
+    monkeypatch.setenv("CAVENDEX_REQUIRE_LOGIN", "true")
     client.post(f"/tenants/{tenant_b}/auth/users", json={"username": "someone-else", "password": "a-different-password"})
 
     response = client.get(f"/tenants/{tenant_b}/incidents/does-not-exist", headers={"Authorization": f"Bearer {token}"})

@@ -10,7 +10,7 @@ state change:
 - The incident just reached `pending_approval` — the Responder Agent is
   waiting on an actual decision. This is the single most important
   "someone needs to act now" moment in the whole project.
-- The incident's severity is at or above SENTINELOS_ALERT_MIN_SEVERITY
+- The incident's severity is at or above CAVENDEX_ALERT_MIN_SEVERITY
   (default "high"), regardless of status — so a critical incident still
   mid-investigation doesn't wait for Responder to get a human's
   attention.
@@ -30,7 +30,7 @@ from state import SEVERITY_RANK
 
 
 def _min_alert_severity_rank() -> int:
-    threshold = os.getenv("SENTINELOS_ALERT_MIN_SEVERITY", "high")
+    threshold = os.getenv("CAVENDEX_ALERT_MIN_SEVERITY", "high")
     return SEVERITY_RANK.get(threshold, 2)
 
 
@@ -43,7 +43,7 @@ def should_notify(incident) -> bool:
 
 
 def _dashboard_link(tenant_id: str, thread_id: str) -> str:
-    base = os.getenv("SENTINELOS_DASHBOARD_BASE_URL", "").rstrip("/")
+    base = os.getenv("CAVENDEX_DASHBOARD_BASE_URL", "").rstrip("/")
     if not base:
         return ""
     tenant_segment = "" if tenant_id in (None, "default") else f"/tenants/{tenant_id}"
@@ -56,7 +56,7 @@ def build_notification_payload(state: dict, reason: str) -> dict:
     link = _dashboard_link(tenant_id, incident.id)
 
     text = (
-        f"[SentinelOS] {incident.severity.upper()} incident {incident.id} "
+        f"[Cavendex] {incident.severity.upper()} incident {incident.id} "
         f"({incident.status}) in tenant '{tenant_id}': {incident.description[:200]}"
     )
     if link:

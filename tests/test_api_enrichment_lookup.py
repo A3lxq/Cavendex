@@ -13,7 +13,7 @@ client = TestClient(api)
 
 
 def test_lookup_requires_auth_when_configured(monkeypatch):
-    monkeypatch.setenv("SENTINELOS_API_KEY", "secret-key-123")
+    monkeypatch.setenv("CAVENDEX_API_KEY", "secret-key-123")
     response = client.post("/enrichment/lookup", json={"iocs": ["1.2.3.4"]})
     assert response.status_code == 401
 
@@ -23,14 +23,14 @@ def test_lookup_with_unclassifiable_indicator_returns_empty_list(monkeypatch):
     reaches a provider at all -- this proves the route is wired to the
     real enrich_iocs() end to end without needing network access or a
     configured API key."""
-    monkeypatch.delenv("SENTINELOS_API_KEY", raising=False)
+    monkeypatch.delenv("CAVENDEX_API_KEY", raising=False)
     response = client.post("/enrichment/lookup", json={"iocs": ["not a real indicator, just prose"]})
     assert response.status_code == 200
     assert response.json() == []
 
 
 def test_lookup_returns_serialized_results(monkeypatch):
-    monkeypatch.delenv("SENTINELOS_API_KEY", raising=False)
+    monkeypatch.delenv("CAVENDEX_API_KEY", raising=False)
 
     def fake_enrich_iocs(iocs):
         return [
@@ -54,13 +54,13 @@ def test_lookup_returns_serialized_results(monkeypatch):
 
 
 def test_lookup_rejects_more_than_fifty_iocs(monkeypatch):
-    monkeypatch.delenv("SENTINELOS_API_KEY", raising=False)
+    monkeypatch.delenv("CAVENDEX_API_KEY", raising=False)
     response = client.post("/enrichment/lookup", json={"iocs": [f"1.2.3.{i}" for i in range(51)]})
     assert response.status_code == 422
 
 
 def test_tenant_scoped_lookup_route_also_works(monkeypatch):
-    monkeypatch.delenv("SENTINELOS_API_KEY", raising=False)
+    monkeypatch.delenv("CAVENDEX_API_KEY", raising=False)
     response = client.post("/tenants/acme/enrichment/lookup", json={"iocs": ["not a real indicator"]})
     assert response.status_code == 200
     assert response.json() == []

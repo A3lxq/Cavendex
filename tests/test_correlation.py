@@ -53,7 +53,7 @@ def _alert(iocs=None, affected_assets=None, severity="medium"):
 
 
 def test_shared_ioc_correlates_to_open_incident(monkeypatch, tmp_path):
-    monkeypatch.setenv("SENTINELOS_DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("CAVENDEX_DATA_DIR", str(tmp_path))
     _seed("inc-1", iocs=["1.2.3.4"])
 
     match = find_correlated_incident("t1", _alert(iocs=["1.2.3.4"]))
@@ -62,7 +62,7 @@ def test_shared_ioc_correlates_to_open_incident(monkeypatch, tmp_path):
 
 
 def test_shared_affected_asset_correlates_to_open_incident(monkeypatch, tmp_path):
-    monkeypatch.setenv("SENTINELOS_DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("CAVENDEX_DATA_DIR", str(tmp_path))
     _seed("inc-1", affected_assets=["FIN-SRV-02"])
 
     match = find_correlated_incident("t1", _alert(affected_assets=["FIN-SRV-02"]))
@@ -71,7 +71,7 @@ def test_shared_affected_asset_correlates_to_open_incident(monkeypatch, tmp_path
 
 
 def test_no_overlap_does_not_correlate(monkeypatch, tmp_path):
-    monkeypatch.setenv("SENTINELOS_DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("CAVENDEX_DATA_DIR", str(tmp_path))
     _seed("inc-1", iocs=["1.2.3.4"], affected_assets=["FIN-SRV-02"])
 
     match = find_correlated_incident("t1", _alert(iocs=["9.9.9.9"], affected_assets=["OTHER-HOST"]))
@@ -79,7 +79,7 @@ def test_no_overlap_does_not_correlate(monkeypatch, tmp_path):
 
 
 def test_alert_with_no_iocs_or_assets_never_correlates(monkeypatch, tmp_path):
-    monkeypatch.setenv("SENTINELOS_DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("CAVENDEX_DATA_DIR", str(tmp_path))
     _seed("inc-1", iocs=["1.2.3.4"])
 
     match = find_correlated_incident("t1", _alert())
@@ -87,7 +87,7 @@ def test_alert_with_no_iocs_or_assets_never_correlates(monkeypatch, tmp_path):
 
 
 def test_closed_incident_is_not_a_correlation_candidate(monkeypatch, tmp_path):
-    monkeypatch.setenv("SENTINELOS_DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("CAVENDEX_DATA_DIR", str(tmp_path))
     _seed("inc-1", status="closed", iocs=["1.2.3.4"])
 
     match = find_correlated_incident("t1", _alert(iocs=["1.2.3.4"]))
@@ -95,7 +95,7 @@ def test_closed_incident_is_not_a_correlation_candidate(monkeypatch, tmp_path):
 
 
 def test_correlation_scoped_to_tenant(monkeypatch, tmp_path):
-    monkeypatch.setenv("SENTINELOS_DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("CAVENDEX_DATA_DIR", str(tmp_path))
     _seed("inc-1", tenant_id="tenant-a", iocs=["1.2.3.4"])
 
     match = find_correlated_incident("tenant-b", _alert(iocs=["1.2.3.4"]))
@@ -103,8 +103,8 @@ def test_correlation_scoped_to_tenant(monkeypatch, tmp_path):
 
 
 def test_correlation_window_disabled_by_zero(monkeypatch, tmp_path):
-    monkeypatch.setenv("SENTINELOS_DATA_DIR", str(tmp_path))
-    monkeypatch.setenv("SENTINELOS_CORRELATION_WINDOW_SECONDS", "0")
+    monkeypatch.setenv("CAVENDEX_DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("CAVENDEX_CORRELATION_WINDOW_SECONDS", "0")
     _seed("inc-1", iocs=["1.2.3.4"])
 
     match = find_correlated_incident("t1", _alert(iocs=["1.2.3.4"]))
@@ -112,8 +112,8 @@ def test_correlation_window_disabled_by_zero(monkeypatch, tmp_path):
 
 
 def test_stale_incident_outside_window_does_not_correlate(monkeypatch, tmp_path):
-    monkeypatch.setenv("SENTINELOS_DATA_DIR", str(tmp_path))
-    monkeypatch.setenv("SENTINELOS_CORRELATION_WINDOW_SECONDS", "60")
+    monkeypatch.setenv("CAVENDEX_DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("CAVENDEX_CORRELATION_WINDOW_SECONDS", "60")
     _seed("inc-1", iocs=["1.2.3.4"])
 
     import utils.incident_index as idx
@@ -131,7 +131,7 @@ def test_stale_incident_outside_window_does_not_correlate(monkeypatch, tmp_path)
 
 
 def test_ips_in_same_subnet_correlate_via_fuzzy_tier(monkeypatch, tmp_path):
-    monkeypatch.setenv("SENTINELOS_DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("CAVENDEX_DATA_DIR", str(tmp_path))
     _seed("inc-1", iocs=["10.0.0.5"])
 
     match = find_correlated_incident("t1", _alert(iocs=["10.0.0.9"]))
@@ -141,7 +141,7 @@ def test_ips_in_same_subnet_correlate_via_fuzzy_tier(monkeypatch, tmp_path):
 
 
 def test_ips_in_different_subnet_do_not_correlate(monkeypatch, tmp_path):
-    monkeypatch.setenv("SENTINELOS_DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("CAVENDEX_DATA_DIR", str(tmp_path))
     _seed("inc-1", iocs=["10.0.0.5"])
 
     match = find_correlated_incident("t1", _alert(iocs=["10.0.1.9"]))
@@ -149,8 +149,8 @@ def test_ips_in_different_subnet_do_not_correlate(monkeypatch, tmp_path):
 
 
 def test_subnet_prefix_bits_is_configurable(monkeypatch, tmp_path):
-    monkeypatch.setenv("SENTINELOS_DATA_DIR", str(tmp_path))
-    monkeypatch.setenv("SENTINELOS_CORRELATION_SUBNET_PREFIX_BITS", "16")
+    monkeypatch.setenv("CAVENDEX_DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("CAVENDEX_CORRELATION_SUBNET_PREFIX_BITS", "16")
     _seed("inc-1", iocs=["10.0.0.5"])
 
     match = find_correlated_incident("t1", _alert(iocs=["10.0.99.9"]))
@@ -162,8 +162,8 @@ def test_subnet_prefix_bits_supports_a_wider_real_world_range(monkeypatch, tmp_p
     """Real businesses don't all subnet on /24 boundaries -- confirm a
     /20 (a common mid-size office allocation) and a /27 (a small branch)
     both work, not just the default."""
-    monkeypatch.setenv("SENTINELOS_DATA_DIR", str(tmp_path))
-    monkeypatch.setenv("SENTINELOS_CORRELATION_SUBNET_PREFIX_BITS", "20")
+    monkeypatch.setenv("CAVENDEX_DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("CAVENDEX_CORRELATION_SUBNET_PREFIX_BITS", "20")
     _seed("inc-1", iocs=["10.4.0.5"])
 
     match = find_correlated_incident("t1", _alert(iocs=["10.4.15.200"]))  # same /20, different /24
@@ -172,8 +172,8 @@ def test_subnet_prefix_bits_supports_a_wider_real_world_range(monkeypatch, tmp_p
 
 
 def test_narrow_subnet_prefix_correctly_excludes_a_wider_neighbor(monkeypatch, tmp_path):
-    monkeypatch.setenv("SENTINELOS_DATA_DIR", str(tmp_path))
-    monkeypatch.setenv("SENTINELOS_CORRELATION_SUBNET_PREFIX_BITS", "27")
+    monkeypatch.setenv("CAVENDEX_DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("CAVENDEX_CORRELATION_SUBNET_PREFIX_BITS", "27")
     _seed("inc-1", iocs=["10.4.0.5"])
 
     match = find_correlated_incident("t1", _alert(iocs=["10.4.0.40"]))  # same /24, different /27
@@ -181,7 +181,7 @@ def test_narrow_subnet_prefix_correctly_excludes_a_wider_neighbor(monkeypatch, t
 
 
 def test_ipv6_addresses_in_the_same_default_64_correlate(monkeypatch, tmp_path):
-    monkeypatch.setenv("SENTINELOS_DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("CAVENDEX_DATA_DIR", str(tmp_path))
     _seed("inc-1", iocs=["2001:db8:1234:5678::1"])
 
     match = find_correlated_incident("t1", _alert(iocs=["2001:db8:1234:5678::dead:beef"]))
@@ -190,7 +190,7 @@ def test_ipv6_addresses_in_the_same_default_64_correlate(monkeypatch, tmp_path):
 
 
 def test_ipv6_addresses_outside_the_default_64_do_not_correlate(monkeypatch, tmp_path):
-    monkeypatch.setenv("SENTINELOS_DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("CAVENDEX_DATA_DIR", str(tmp_path))
     _seed("inc-1", iocs=["2001:db8:1234:5678::1"])
 
     match = find_correlated_incident("t1", _alert(iocs=["2001:db8:1234:9999::1"]))
@@ -201,9 +201,9 @@ def test_ipv6_subnet_prefix_bits_is_independently_configurable(monkeypatch, tmp_
     """Was hardcoded to /64 with no way to change it -- now matches
     IPv4's flexibility, and the two settings are independent of each
     other (setting the v4 one must not affect v6 grouping)."""
-    monkeypatch.setenv("SENTINELOS_DATA_DIR", str(tmp_path))
-    monkeypatch.setenv("SENTINELOS_CORRELATION_SUBNET_PREFIX_BITS", "8")  # a v4-only change
-    monkeypatch.setenv("SENTINELOS_CORRELATION_SUBNET_PREFIX_BITS_V6", "48")
+    monkeypatch.setenv("CAVENDEX_DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("CAVENDEX_CORRELATION_SUBNET_PREFIX_BITS", "8")  # a v4-only change
+    monkeypatch.setenv("CAVENDEX_CORRELATION_SUBNET_PREFIX_BITS_V6", "48")
     _seed("inc-1", iocs=["2001:db8:1234:5678::1"])
 
     # Same /48 (2001:db8:1234::/48) but a different /64 than the seed --
@@ -217,7 +217,7 @@ def test_ipv6_subnet_prefix_bits_is_independently_configurable(monkeypatch, tmp_
 
 
 def test_subdomains_of_same_registered_domain_correlate(monkeypatch, tmp_path):
-    monkeypatch.setenv("SENTINELOS_DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("CAVENDEX_DATA_DIR", str(tmp_path))
     _seed("inc-1", iocs=["mail.evil-c2.com"])
 
     match = find_correlated_incident("t1", _alert(iocs=["cdn.evil-c2.com"]))
@@ -226,7 +226,7 @@ def test_subdomains_of_same_registered_domain_correlate(monkeypatch, tmp_path):
 
 
 def test_unrelated_domains_do_not_correlate(monkeypatch, tmp_path):
-    monkeypatch.setenv("SENTINELOS_DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("CAVENDEX_DATA_DIR", str(tmp_path))
     _seed("inc-1", iocs=["mail.evil-c2.com"])
 
     match = find_correlated_incident("t1", _alert(iocs=["totally-unrelated.example"]))
@@ -237,7 +237,7 @@ def test_multi_part_tld_domains_are_not_over_grouped(monkeypatch, tmp_path):
     """foo.co.uk and bar.co.uk must NOT be treated as the same registered
     domain just because they share a naive last-two-labels split — this
     is exactly the bug a real Public Suffix List lookup fixes."""
-    monkeypatch.setenv("SENTINELOS_DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("CAVENDEX_DATA_DIR", str(tmp_path))
     _seed("inc-1", iocs=["mail.foo.co.uk"])
 
     match = find_correlated_incident("t1", _alert(iocs=["cdn.bar.co.uk"]))
@@ -245,7 +245,7 @@ def test_multi_part_tld_domains_are_not_over_grouped(monkeypatch, tmp_path):
 
 
 def test_multi_part_tld_subdomains_of_the_same_domain_still_correlate(monkeypatch, tmp_path):
-    monkeypatch.setenv("SENTINELOS_DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("CAVENDEX_DATA_DIR", str(tmp_path))
     _seed("inc-1", iocs=["mail.evil-c2.co.uk"])
 
     match = find_correlated_incident("t1", _alert(iocs=["cdn.evil-c2.co.uk"]))
@@ -257,7 +257,7 @@ def test_multi_part_tld_subdomains_of_the_same_domain_still_correlate(monkeypatc
 
 
 def test_exact_match_preferred_over_fuzzy_match(monkeypatch, tmp_path):
-    monkeypatch.setenv("SENTINELOS_DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("CAVENDEX_DATA_DIR", str(tmp_path))
     _seed("inc-fuzzy", iocs=["10.0.0.5"])
     _seed("inc-exact", iocs=["10.0.0.9"])
 
@@ -267,8 +267,8 @@ def test_exact_match_preferred_over_fuzzy_match(monkeypatch, tmp_path):
 
 
 def test_fuzzy_tier_disabled_by_env_var(monkeypatch, tmp_path):
-    monkeypatch.setenv("SENTINELOS_DATA_DIR", str(tmp_path))
-    monkeypatch.setenv("SENTINELOS_CORRELATION_FUZZY_ENABLED", "false")
+    monkeypatch.setenv("CAVENDEX_DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("CAVENDEX_CORRELATION_FUZZY_ENABLED", "false")
     _seed("inc-1", iocs=["10.0.0.5"])
 
     match = find_correlated_incident("t1", _alert(iocs=["10.0.0.9"]))
@@ -276,8 +276,8 @@ def test_fuzzy_tier_disabled_by_env_var(monkeypatch, tmp_path):
 
 
 def test_exact_match_still_works_when_fuzzy_disabled(monkeypatch, tmp_path):
-    monkeypatch.setenv("SENTINELOS_DATA_DIR", str(tmp_path))
-    monkeypatch.setenv("SENTINELOS_CORRELATION_FUZZY_ENABLED", "false")
+    monkeypatch.setenv("CAVENDEX_DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("CAVENDEX_CORRELATION_FUZZY_ENABLED", "false")
     _seed("inc-1", iocs=["1.2.3.4"])
 
     match = find_correlated_incident("t1", _alert(iocs=["1.2.3.4"]))
@@ -290,7 +290,7 @@ def test_hash_iocs_never_participate_in_fuzzy_matching(monkeypatch, tmp_path):
     never fuzzy-match — fuzzy tier only ever looks at ip/domain-classified
     IOCs, never arbitrary strings (including the verbose free-text an LLM
     sometimes writes into incident.iocs)."""
-    monkeypatch.setenv("SENTINELOS_DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("CAVENDEX_DATA_DIR", str(tmp_path))
     _seed("inc-1", iocs=["a" * 32])
 
     match = find_correlated_incident("t1", _alert(iocs=["b" * 32]))

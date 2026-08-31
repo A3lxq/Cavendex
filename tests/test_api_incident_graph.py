@@ -33,8 +33,8 @@ def _seed_incident(tenant_id, thread_id, iocs=None, affected_assets=None):
 
 
 def test_empty_tenant_returns_an_empty_graph(monkeypatch, tmp_path):
-    monkeypatch.delenv("SENTINELOS_API_KEY", raising=False)
-    monkeypatch.setenv("SENTINELOS_DATA_DIR", str(tmp_path))
+    monkeypatch.delenv("CAVENDEX_API_KEY", raising=False)
+    monkeypatch.setenv("CAVENDEX_DATA_DIR", str(tmp_path))
     tenant = _tenant()
 
     response = client.get(f"/tenants/{tenant}/incidents/graph")
@@ -43,8 +43,8 @@ def test_empty_tenant_returns_an_empty_graph(monkeypatch, tmp_path):
 
 
 def test_two_incidents_sharing_an_ioc_are_linked_by_one_shared_node(monkeypatch, tmp_path):
-    monkeypatch.delenv("SENTINELOS_API_KEY", raising=False)
-    monkeypatch.setenv("SENTINELOS_DATA_DIR", str(tmp_path))
+    monkeypatch.delenv("CAVENDEX_API_KEY", raising=False)
+    monkeypatch.setenv("CAVENDEX_DATA_DIR", str(tmp_path))
     tenant = _tenant()
     _seed_incident(tenant, "inc-1", iocs=["1.2.3.4"])
     _seed_incident(tenant, "inc-2", iocs=["1.2.3.4"])
@@ -60,8 +60,8 @@ def test_two_incidents_sharing_an_ioc_are_linked_by_one_shared_node(monkeypatch,
 
 
 def test_default_tenant_route_matches_tenant_scoped_route(monkeypatch, tmp_path):
-    monkeypatch.delenv("SENTINELOS_API_KEY", raising=False)
-    monkeypatch.setenv("SENTINELOS_DATA_DIR", str(tmp_path))
+    monkeypatch.delenv("CAVENDEX_API_KEY", raising=False)
+    monkeypatch.setenv("CAVENDEX_DATA_DIR", str(tmp_path))
     _seed_incident("default", "inc-default-1", iocs=["9.9.9.9"])
 
     default_response = client.get("/incidents/graph")
@@ -71,7 +71,7 @@ def test_default_tenant_route_matches_tenant_scoped_route(monkeypatch, tmp_path)
 
 
 def test_route_requires_auth_when_configured(monkeypatch, tmp_path):
-    monkeypatch.setenv("SENTINELOS_API_KEY", "secret-key-123")
-    monkeypatch.setenv("SENTINELOS_DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("CAVENDEX_API_KEY", "secret-key-123")
+    monkeypatch.setenv("CAVENDEX_DATA_DIR", str(tmp_path))
     response = client.get(f"/tenants/{_tenant()}/incidents/graph")
     assert response.status_code == 401

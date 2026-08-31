@@ -1,4 +1,4 @@
-"""Obsidian vault reporting — SentinelOS's structured, durable logging layer.
+"""Obsidian vault reporting — Cavendex's structured, durable logging layer.
 
 Every pipeline run (and every human approve/deny decision) is rendered as a
 linked set of Markdown notes instead of a flat log line: one note per
@@ -206,7 +206,7 @@ def _update_index(folder: str, label: str, tenant_id: str = DEFAULT_TENANT) -> N
     names = sorted(
         f[:-3] for f in os.listdir(folder_path) if f.endswith(".md") and f != "_Index.md"
     )
-    lines = ["---\ntags: [index]\n---\n", f"# SentinelOS {label} Index\n"]
+    lines = ["---\ntags: [index]\n---\n", f"# Cavendex {label} Index\n"]
     lines += [f"- [[{n}]]" for n in names] if names else ["_None yet._"]
     with open(os.path.join(folder_path, "_Index.md"), "w", encoding="utf-8") as f:
         f.write("\n".join(lines) + "\n")
@@ -296,7 +296,7 @@ def write_incident_report(state, report_type: str = "incident") -> str:
         f"source: {source_yaml}\n"
         f"tenant: {json.dumps(tenant_id)}\n"
         f"updated: {generated_at}\n"
-        f"tags: [sentinelos, {report_type}]\n"
+        f"tags: [cavendex, {report_type}]\n"
         "---\n\n"
         f"# {note_name}\n\n"
         f"**Severity:** {incident.severity}  \n"

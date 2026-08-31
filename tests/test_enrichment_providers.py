@@ -96,7 +96,7 @@ def test_virustotal_invalid_key_returns_error_verdict_live(monkeypatch):
 
 
 def test_shodan_returns_none_when_disabled_by_default(monkeypatch):
-    monkeypatch.delenv("SENTINELOS_SHODAN_ENABLED", raising=False)
+    monkeypatch.delenv("CAVENDEX_SHODAN_ENABLED", raising=False)
 
     def _fail(*a, **kw):
         raise AssertionError("must not call the network when Shodan is disabled")
@@ -106,7 +106,7 @@ def test_shodan_returns_none_when_disabled_by_default(monkeypatch):
 
 
 def test_shodan_explicitly_disabled(monkeypatch):
-    monkeypatch.setenv("SENTINELOS_SHODAN_ENABLED", "false")
+    monkeypatch.setenv("CAVENDEX_SHODAN_ENABLED", "false")
     assert lookup_ip_shodan("8.8.8.8") is None
 
 
@@ -116,7 +116,7 @@ def test_shodan_live_success_path_against_real_internetdb(monkeypatch):
     endpoint for a stable, always-scanned IP (Google Public DNS) — proves
     the success-path field parsing (ports/vulns/hostnames/tags) matches
     the real response shape, not a guessed one."""
-    monkeypatch.setenv("SENTINELOS_SHODAN_ENABLED", "true")
+    monkeypatch.setenv("CAVENDEX_SHODAN_ENABLED", "true")
     result = lookup_ip_shodan("8.8.8.8")
     assert result is not None
     assert result.source == "shodan"
@@ -127,7 +127,7 @@ def test_shodan_live_success_path_against_real_internetdb(monkeypatch):
 
 
 def test_shodan_404_returns_unknown_verdict(monkeypatch):
-    monkeypatch.setenv("SENTINELOS_SHODAN_ENABLED", "true")
+    monkeypatch.setenv("CAVENDEX_SHODAN_ENABLED", "true")
 
     class _FakeResponse:
         status_code = 404
@@ -139,7 +139,7 @@ def test_shodan_404_returns_unknown_verdict(monkeypatch):
 
 
 def test_shodan_error_status_returns_error_verdict(monkeypatch):
-    monkeypatch.setenv("SENTINELOS_SHODAN_ENABLED", "true")
+    monkeypatch.setenv("CAVENDEX_SHODAN_ENABLED", "true")
 
     class _FakeResponse:
         status_code = 503
@@ -152,7 +152,7 @@ def test_shodan_error_status_returns_error_verdict(monkeypatch):
 
 
 def test_shodan_request_exception_returns_error_verdict(monkeypatch):
-    monkeypatch.setenv("SENTINELOS_SHODAN_ENABLED", "true")
+    monkeypatch.setenv("CAVENDEX_SHODAN_ENABLED", "true")
 
     import requests
 
@@ -166,7 +166,7 @@ def test_shodan_request_exception_returns_error_verdict(monkeypatch):
 
 
 def test_shodan_known_vuln_maps_to_suspicious(monkeypatch):
-    monkeypatch.setenv("SENTINELOS_SHODAN_ENABLED", "true")
+    monkeypatch.setenv("CAVENDEX_SHODAN_ENABLED", "true")
 
     class _FakeResponse:
         status_code = 200
@@ -189,7 +189,7 @@ def test_shodan_known_vuln_maps_to_suspicious(monkeypatch):
 
 
 def test_shodan_no_vulns_maps_to_harmless(monkeypatch):
-    monkeypatch.setenv("SENTINELOS_SHODAN_ENABLED", "true")
+    monkeypatch.setenv("CAVENDEX_SHODAN_ENABLED", "true")
 
     class _FakeResponse:
         status_code = 200
@@ -203,7 +203,7 @@ def test_shodan_no_vulns_maps_to_harmless(monkeypatch):
 
 
 def test_shodan_results_are_cached(monkeypatch):
-    monkeypatch.setenv("SENTINELOS_SHODAN_ENABLED", "true")
+    monkeypatch.setenv("CAVENDEX_SHODAN_ENABLED", "true")
     call_count = {"n": 0}
 
     class _FakeResponse:

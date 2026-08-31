@@ -40,7 +40,7 @@ Nothing is ever silently discarded — every outcome, including suppressed
 and deduped events, is appended to the tenant's ingestion_log.jsonl so
 "continuous monitoring" doesn't quietly mean "continuously ignored."
 
-A per-tenant rate limit (SENTINELOS_INGEST_RATE_LIMIT_PER_MINUTE) is the
+A per-tenant rate limit (CAVENDEX_INGEST_RATE_LIMIT_PER_MINUTE) is the
 very first check in ingest_normalized_alert(), ahead of dedup — the one
 piece of this gate that exists purely for abuse resistance rather than
 noise reduction. It matters most for syslog_listener.py and
@@ -66,13 +66,13 @@ from utils.tenancy import DEFAULT_TENANT, sanitize_tenant_id
 
 
 def _min_severity_rank() -> int:
-    threshold = os.getenv("SENTINELOS_INGEST_MIN_SEVERITY", "medium")
+    threshold = os.getenv("CAVENDEX_INGEST_MIN_SEVERITY", "medium")
     return SEVERITY_RANK.get(threshold, 1)
 
 
 def _ingest_rate_limit_per_minute() -> int:
     try:
-        return int(os.getenv("SENTINELOS_INGEST_RATE_LIMIT_PER_MINUTE", "60"))
+        return int(os.getenv("CAVENDEX_INGEST_RATE_LIMIT_PER_MINUTE", "60"))
     except ValueError:
         return 60
 
@@ -126,7 +126,7 @@ def ingest_normalized_alert(alert: NormalizedAlert, tenant_id: str = DEFAULT_TEN
 
     Returns a dict describing what happened — always has an "outcome" key:
 
-    - "rate_limited": this tenant exceeded SENTINELOS_INGEST_RATE_LIMIT_PER_MINUTE
+    - "rate_limited": this tenant exceeded CAVENDEX_INGEST_RATE_LIMIT_PER_MINUTE
     - "deduped": an identical (tenant, dedup_key) was seen recently
     - "correlated": merged into an already-open incident — exact IOC/asset
       match, fuzzy subnet/domain-family match, an identity match (a
@@ -134,7 +134,7 @@ def ingest_normalized_alert(alert: NormalizedAlert, tenant_id: str = DEFAULT_TEN
       identity — see ingestion/identity_correlation.py), or (opt-in) a
       semantic match from an LLM judgment call; includes thread_id/status
       of the incident it joined plus match_type/reason
-    - "suppressed_low_severity": below SENTINELOS_INGEST_MIN_SEVERITY
+    - "suppressed_low_severity": below CAVENDEX_INGEST_MIN_SEVERITY
     - "promoted": a full incident was created; includes thread_id/status
 
     This is THE choke point every ingestion path shares — the API's

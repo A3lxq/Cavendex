@@ -356,7 +356,7 @@ _SHODAN_MAX_TAGS_SHOWN = 5
 
 
 def _shodan_enabled() -> bool:
-    return os.getenv("SENTINELOS_SHODAN_ENABLED", "false").strip().lower() in ("1", "true", "yes")
+    return os.getenv("CAVENDEX_SHODAN_ENABLED", "false").strip().lower() in ("1", "true", "yes")
 
 
 def lookup_ip_shodan(ip: str) -> Optional[EnrichmentResult]:
@@ -364,7 +364,7 @@ def lookup_ip_shodan(ip: str) -> Optional[EnrichmentResult]:
     Shodan's free InternetDB endpoint (https://internetdb.shodan.io) —
     unlike AbuseIPDB/VirusTotal, this needs no API key at all.
 
-    That's exactly why it's gated by SENTINELOS_SHODAN_ENABLED (default
+    That's exactly why it's gated by CAVENDEX_SHODAN_ENABLED (default
     off) instead of "is a key configured": querying a third party with an
     IP a SOC is actively investigating is a real operational-security
     choice — it tells Shodan (and anyone watching Shodan's query logs)
@@ -796,7 +796,7 @@ def lookup_url_urlhaus(url: str) -> Optional[EnrichmentResult]:
     point and what payload it served, rather than a generic "malicious
     URL" verdict. Requires ABUSECH_API_KEY (shared with
     MalwareBazaar/ThreatFox). The URL itself is only ever sent as POST
-    body data to URLhaus's own API — SentinelOS never fetches it.
+    body data to URLhaus's own API — Cavendex never fetches it.
     """
     api_key = _abusech_key()
     if not api_key:

@@ -36,8 +36,8 @@ def _seed_incident(tenant_id, thread_id, attack_technique=None):
 
 
 def test_empty_tenant_returns_no_tactics(monkeypatch, tmp_path):
-    monkeypatch.delenv("SENTINELOS_API_KEY", raising=False)
-    monkeypatch.setenv("SENTINELOS_DATA_DIR", str(tmp_path))
+    monkeypatch.delenv("CAVENDEX_API_KEY", raising=False)
+    monkeypatch.setenv("CAVENDEX_DATA_DIR", str(tmp_path))
     tenant = _tenant()
 
     response = client.get(f"/tenants/{tenant}/incidents/attack-overview")
@@ -46,8 +46,8 @@ def test_empty_tenant_returns_no_tactics(monkeypatch, tmp_path):
 
 
 def test_verified_techniques_grouped_by_tactic_in_kill_chain_order(monkeypatch, tmp_path):
-    monkeypatch.delenv("SENTINELOS_API_KEY", raising=False)
-    monkeypatch.setenv("SENTINELOS_DATA_DIR", str(tmp_path))
+    monkeypatch.delenv("CAVENDEX_API_KEY", raising=False)
+    monkeypatch.setenv("CAVENDEX_DATA_DIR", str(tmp_path))
     tenant = _tenant()
 
     # T1566 (Phishing / Initial Access) comes after T1595 (Active Scanning /
@@ -70,8 +70,8 @@ def test_verified_techniques_grouped_by_tactic_in_kill_chain_order(monkeypatch, 
 
 
 def test_unverified_and_uncited_incidents_excluded(monkeypatch, tmp_path):
-    monkeypatch.delenv("SENTINELOS_API_KEY", raising=False)
-    monkeypatch.setenv("SENTINELOS_DATA_DIR", str(tmp_path))
+    monkeypatch.delenv("CAVENDEX_API_KEY", raising=False)
+    monkeypatch.setenv("CAVENDEX_DATA_DIR", str(tmp_path))
     tenant = _tenant()
 
     _seed_incident(tenant, "inc-1", {"id": "T1566", "name": "Phishing", "verified": False})
@@ -83,8 +83,8 @@ def test_unverified_and_uncited_incidents_excluded(monkeypatch, tmp_path):
 
 
 def test_default_tenant_route_matches_tenant_scoped_route(monkeypatch, tmp_path):
-    monkeypatch.delenv("SENTINELOS_API_KEY", raising=False)
-    monkeypatch.setenv("SENTINELOS_DATA_DIR", str(tmp_path))
+    monkeypatch.delenv("CAVENDEX_API_KEY", raising=False)
+    monkeypatch.setenv("CAVENDEX_DATA_DIR", str(tmp_path))
     _seed_incident("default", "inc-default-1", {"id": "T1078", "name": "Valid Accounts", "verified": True})
 
     default_response = client.get("/incidents/attack-overview")

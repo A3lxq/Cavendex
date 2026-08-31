@@ -32,8 +32,8 @@ def _seed_incident(tenant_id, thread_id="inc-1"):
 
 
 def test_notes_empty_for_a_fresh_incident(monkeypatch, tmp_path):
-    monkeypatch.delenv("SENTINELOS_API_KEY", raising=False)
-    monkeypatch.setenv("SENTINELOS_DATA_DIR", str(tmp_path))
+    monkeypatch.delenv("CAVENDEX_API_KEY", raising=False)
+    monkeypatch.setenv("CAVENDEX_DATA_DIR", str(tmp_path))
     tenant = _tenant()
     _seed_incident(tenant)
 
@@ -43,8 +43,8 @@ def test_notes_empty_for_a_fresh_incident(monkeypatch, tmp_path):
 
 
 def test_add_note_then_list_returns_it(monkeypatch, tmp_path):
-    monkeypatch.delenv("SENTINELOS_API_KEY", raising=False)
-    monkeypatch.setenv("SENTINELOS_DATA_DIR", str(tmp_path))
+    monkeypatch.delenv("CAVENDEX_API_KEY", raising=False)
+    monkeypatch.setenv("CAVENDEX_DATA_DIR", str(tmp_path))
     tenant = _tenant()
     _seed_incident(tenant)
 
@@ -62,8 +62,8 @@ def test_add_note_then_list_returns_it(monkeypatch, tmp_path):
 
 
 def test_add_note_to_unknown_incident_returns_404(monkeypatch, tmp_path):
-    monkeypatch.delenv("SENTINELOS_API_KEY", raising=False)
-    monkeypatch.setenv("SENTINELOS_DATA_DIR", str(tmp_path))
+    monkeypatch.delenv("CAVENDEX_API_KEY", raising=False)
+    monkeypatch.setenv("CAVENDEX_DATA_DIR", str(tmp_path))
     tenant = _tenant()
 
     response = client.post(f"/tenants/{tenant}/incidents/never-existed/notes", json={"text": "x"})
@@ -71,8 +71,8 @@ def test_add_note_to_unknown_incident_returns_404(monkeypatch, tmp_path):
 
 
 def test_add_empty_note_returns_400(monkeypatch, tmp_path):
-    monkeypatch.delenv("SENTINELOS_API_KEY", raising=False)
-    monkeypatch.setenv("SENTINELOS_DATA_DIR", str(tmp_path))
+    monkeypatch.delenv("CAVENDEX_API_KEY", raising=False)
+    monkeypatch.setenv("CAVENDEX_DATA_DIR", str(tmp_path))
     tenant = _tenant()
     _seed_incident(tenant)
 
@@ -83,8 +83,8 @@ def test_add_empty_note_returns_400(monkeypatch, tmp_path):
 def test_default_tenant_notes_routes_also_work(monkeypatch, tmp_path):
     from utils.tenancy import DEFAULT_TENANT
 
-    monkeypatch.delenv("SENTINELOS_API_KEY", raising=False)
-    monkeypatch.setenv("SENTINELOS_DATA_DIR", str(tmp_path))
+    monkeypatch.delenv("CAVENDEX_API_KEY", raising=False)
+    monkeypatch.setenv("CAVENDEX_DATA_DIR", str(tmp_path))
     _seed_incident(DEFAULT_TENANT, thread_id="inc-default-1")
 
     client.post("/incidents/inc-default-1/notes", json={"text": "a default-tenant note"})
@@ -94,8 +94,8 @@ def test_default_tenant_notes_routes_also_work(monkeypatch, tmp_path):
 
 
 def test_assign_incident_reflects_in_the_list(monkeypatch, tmp_path):
-    monkeypatch.delenv("SENTINELOS_API_KEY", raising=False)
-    monkeypatch.setenv("SENTINELOS_DATA_DIR", str(tmp_path))
+    monkeypatch.delenv("CAVENDEX_API_KEY", raising=False)
+    monkeypatch.setenv("CAVENDEX_DATA_DIR", str(tmp_path))
     tenant = _tenant()
     _seed_incident(tenant)
 
@@ -108,8 +108,8 @@ def test_assign_incident_reflects_in_the_list(monkeypatch, tmp_path):
 
 
 def test_unassign_with_no_body_clears_it(monkeypatch, tmp_path):
-    monkeypatch.delenv("SENTINELOS_API_KEY", raising=False)
-    monkeypatch.setenv("SENTINELOS_DATA_DIR", str(tmp_path))
+    monkeypatch.delenv("CAVENDEX_API_KEY", raising=False)
+    monkeypatch.setenv("CAVENDEX_DATA_DIR", str(tmp_path))
     tenant = _tenant()
     _seed_incident(tenant)
     client.post(f"/tenants/{tenant}/incidents/inc-1/assign", json={"assigned_to": "j.smith"})
@@ -123,8 +123,8 @@ def test_unassign_with_no_body_clears_it(monkeypatch, tmp_path):
 
 
 def test_assign_unknown_incident_returns_404(monkeypatch, tmp_path):
-    monkeypatch.delenv("SENTINELOS_API_KEY", raising=False)
-    monkeypatch.setenv("SENTINELOS_DATA_DIR", str(tmp_path))
+    monkeypatch.delenv("CAVENDEX_API_KEY", raising=False)
+    monkeypatch.setenv("CAVENDEX_DATA_DIR", str(tmp_path))
     tenant = _tenant()
 
     response = client.post(f"/tenants/{tenant}/incidents/never-existed/assign", json={"assigned_to": "j.smith"})
@@ -132,8 +132,8 @@ def test_assign_unknown_incident_returns_404(monkeypatch, tmp_path):
 
 
 def test_notes_and_assign_require_auth_when_configured(monkeypatch, tmp_path):
-    monkeypatch.setenv("SENTINELOS_API_KEY", "secret-key-123")
-    monkeypatch.setenv("SENTINELOS_DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("CAVENDEX_API_KEY", "secret-key-123")
+    monkeypatch.setenv("CAVENDEX_DATA_DIR", str(tmp_path))
     tenant = _tenant()
 
     assert client.get(f"/tenants/{tenant}/incidents/inc-1/notes").status_code == 401

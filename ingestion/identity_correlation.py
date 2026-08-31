@@ -24,7 +24,7 @@ this project:
   operator-supplied CMDB/inventory export (utils.asset_inventory). Two
   alerts naming differently-named assets that resolve to the same
   canonical ID are the same asset under a different name.
-- **Domain identity** (opt-in via SENTINELOS_CORRELATION_IDENTITY_DNS_ENABLED,
+- **Domain identity** (opt-in via CAVENDEX_CORRELATION_IDENTITY_DNS_ENABLED,
   default off): real passive DNS via VirusTotal's domain-resolutions
   endpoint (enrichment.providers). Two lexically-unrelated domains that
   have both resolved to the same IP are plausibly the same C2
@@ -44,7 +44,7 @@ from utils.asset_inventory import resolve_asset_identity
 
 
 def _dns_identity_enabled() -> bool:
-    return os.getenv("SENTINELOS_CORRELATION_IDENTITY_DNS_ENABLED", "false").strip().lower() in (
+    return os.getenv("CAVENDEX_CORRELATION_IDENTITY_DNS_ENABLED", "false").strip().lower() in (
         "1",
         "true",
         "yes",
@@ -59,7 +59,7 @@ def _max_dns_lookups() -> int:
     # lookup_domain_resolutions_virustotal() calls one
     # _first_domain_identity_match() invocation can make (alert-domain
     # lookups + candidate-domain lookups combined) — mirroring
-    # enrichment/pipeline.py's SENTINELOS_ENRICHMENT_MAX_LOOKUPS_PER_INCIDENT
+    # enrichment/pipeline.py's CAVENDEX_ENRICHMENT_MAX_LOOKUPS_PER_INCIDENT
     # pattern. Without this, one ingested alert with many domain IOCs,
     # matched against many open-incident candidates (each with their own
     # domain IOCs), could turn into an unbounded burst of real outbound
@@ -67,7 +67,7 @@ def _max_dns_lookups() -> int:
     # VirusTotal's free-tier quota in one shot and blocking the
     # ingestion worker handling it.
     try:
-        return int(os.getenv("SENTINELOS_IDENTITY_DNS_MAX_LOOKUPS", str(_DEFAULT_MAX_DNS_LOOKUPS)))
+        return int(os.getenv("CAVENDEX_IDENTITY_DNS_MAX_LOOKUPS", str(_DEFAULT_MAX_DNS_LOOKUPS)))
     except ValueError:
         return _DEFAULT_MAX_DNS_LOOKUPS
 

@@ -8,7 +8,7 @@ Source" in README) — there's no single CMDB API shape to build against.
 Instead, an operator with a real inventory system exports one small JSON
 file mapping any alias they track (an old hostname, a serial number,
 whatever their inventory uses) to one canonical ID, and points
-SENTINELOS_ASSET_INVENTORY_PATH at it:
+CAVENDEX_ASSET_INVENTORY_PATH at it:
 
     {"WEB-01": "asset-042", "WEB-01-RENAMED": "asset-042", "DC-01": "asset-001"}
 
@@ -34,7 +34,7 @@ _cached_map: dict = {}
 
 
 def _load_if_needed() -> dict:
-    path = os.getenv("SENTINELOS_ASSET_INVENTORY_PATH")
+    path = os.getenv("CAVENDEX_ASSET_INVENTORY_PATH")
     if not path:
         return {}
 

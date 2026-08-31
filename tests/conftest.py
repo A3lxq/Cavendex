@@ -7,7 +7,7 @@ obsidian_vault/ the app uses in normal operation.
 import os
 import tempfile
 
-_TEST_DIR = tempfile.mkdtemp(prefix="sentinelos_test_")
-os.environ["SENTINELOS_DATA_DIR"] = os.path.join(_TEST_DIR, "data")
+_TEST_DIR = tempfile.mkdtemp(prefix="cavendex_test_")
+os.environ["CAVENDEX_DATA_DIR"] = os.path.join(_TEST_DIR, "data")
 os.environ["CHROMA_PERSIST_DIR"] = os.path.join(_TEST_DIR, "chroma")
 os.environ["OBSIDIAN_VAULT_PATH"] = os.path.join(_TEST_DIR, "vault")

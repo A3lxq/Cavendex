@@ -3,29 +3,29 @@
 /* ---------- Settings (tenant + API key), persisted in localStorage ---------- */
 
 const settings = {
-  tenant: localStorage.getItem("sentinelos.tenant") || "default",
-  apiKey: localStorage.getItem("sentinelos.apiKey") || "",
+  tenant: localStorage.getItem("cavendex.tenant") || "default",
+  apiKey: localStorage.getItem("cavendex.apiKey") || "",
   // Recorded on every approve/deny decision. Freely typed unless a real
   // session is active (below), in which case it's locked to the
   // authenticated username instead — a real identity is strictly better
   // attribution than a typed label.
-  analystName: localStorage.getItem("sentinelos.analystName") || "",
+  analystName: localStorage.getItem("cavendex.analystName") || "",
   // A real per-user session (see utils/user_accounts.py) — optional.
   // Unset, the dashboard behaves exactly as it always did (API key +
   // freely-typed analyst name). Logging in issues a token used as the
   // Authorization bearer credential in place of the API key.
-  sessionToken: localStorage.getItem("sentinelos.sessionToken") || "",
-  sessionUsername: localStorage.getItem("sentinelos.sessionUsername") || "",
-  sessionRole: localStorage.getItem("sentinelos.sessionRole") || "",
+  sessionToken: localStorage.getItem("cavendex.sessionToken") || "",
+  sessionUsername: localStorage.getItem("cavendex.sessionUsername") || "",
+  sessionRole: localStorage.getItem("cavendex.sessionRole") || "",
 };
 
 function saveSettings() {
-  localStorage.setItem("sentinelos.tenant", settings.tenant);
-  localStorage.setItem("sentinelos.apiKey", settings.apiKey);
-  localStorage.setItem("sentinelos.analystName", settings.analystName);
-  localStorage.setItem("sentinelos.sessionToken", settings.sessionToken);
-  localStorage.setItem("sentinelos.sessionUsername", settings.sessionUsername);
-  localStorage.setItem("sentinelos.sessionRole", settings.sessionRole);
+  localStorage.setItem("cavendex.tenant", settings.tenant);
+  localStorage.setItem("cavendex.apiKey", settings.apiKey);
+  localStorage.setItem("cavendex.analystName", settings.analystName);
+  localStorage.setItem("cavendex.sessionToken", settings.sessionToken);
+  localStorage.setItem("cavendex.sessionUsername", settings.sessionUsername);
+  localStorage.setItem("cavendex.sessionRole", settings.sessionRole);
 }
 
 function clearSession() {
@@ -385,7 +385,7 @@ function initOnboardingBanner() {
   const banner = document.getElementById("onboarding-banner");
   let dismissed = false;
   try {
-    dismissed = localStorage.getItem("sentinelos.onboardingDismissed") === "true";
+    dismissed = localStorage.getItem("cavendex.onboardingDismissed") === "true";
   } catch (err) {
     // Private browsing / storage blocked -- fail open (show it once per
     // page load) rather than crash the whole dashboard over a banner.
@@ -394,7 +394,7 @@ function initOnboardingBanner() {
   document.getElementById("onboarding-dismiss-btn").addEventListener("click", () => {
     banner.hidden = true;
     try {
-      localStorage.setItem("sentinelos.onboardingDismissed", "true");
+      localStorage.setItem("cavendex.onboardingDismissed", "true");
     } catch (err) {
       // Ignore -- worst case it reappears next visit, not a functional problem.
     }

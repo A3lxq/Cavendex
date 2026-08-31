@@ -14,7 +14,7 @@ from typing import List
 
 from utils.tenancy import DEFAULT_TENANT, sanitize_tenant_id
 
-_COLLECTION_NAME = "sentinelos_incidents"
+_COLLECTION_NAME = "cavendex_incidents"
 
 _collections: dict = {}
 _collections_lock = threading.Lock()

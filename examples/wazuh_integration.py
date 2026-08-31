@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 """Wazuh custom-integration script: forwards a Wazuh alert straight to
-SentinelOS's /ingest/wazuh endpoint as its own real JSON shape — no field
+Cavendex's /ingest/wazuh endpoint as its own real JSON shape — no field
 remapping needed, since ingestion/normalizers.py:normalize_wazuh() already
 understands Wazuh's native alert schema (rule/agent/data).
 
 This is the PUSH alternative to tailing /var/ossec/logs/alerts/alerts.json
-with ingest_watch.py — use this one if SentinelOS doesn't have (or
+with ingest_watch.py — use this one if Cavendex doesn't have (or
 shouldn't have) filesystem access to the Wazuh manager, or if you only
 want alerts at/above a specific rule level forwarded, which Wazuh's own
 <level> integration setting already filters for you before this script
@@ -20,15 +20,15 @@ environment's actual Wazuh version before relying on it; the exact
 number/order of arguments has shifted across Wazuh versions before.
 
 Install (on the Wazuh manager host):
-    sudo cp wazuh_integration.py /var/ossec/integrations/custom-sentinelos.py
-    sudo chmod 750 /var/ossec/integrations/custom-sentinelos.py
-    sudo chown root:wazuh /var/ossec/integrations/custom-sentinelos.py
+    sudo cp wazuh_integration.py /var/ossec/integrations/custom-cavendex.py
+    sudo chmod 750 /var/ossec/integrations/custom-cavendex.py
+    sudo chown root:wazuh /var/ossec/integrations/custom-cavendex.py
 
 Add to /var/ossec/ossec.conf (inside <ossec_config>):
     <integration>
-      <name>custom-sentinelos</name>
-      <hook_url>http://sentinelos-host:8000/ingest/wazuh</hook_url>
-      <api_key>your-sentinelos-api-key-if-set</api_key>
+      <name>custom-cavendex</name>
+      <hook_url>http://cavendex-host:8000/ingest/wazuh</hook_url>
+      <api_key>your-cavendex-api-key-if-set</api_key>
       <alert_format>json</alert_format>
       <level>7</level>
     </integration>
@@ -36,8 +36,8 @@ Add to /var/ossec/ossec.conf (inside <ossec_config>):
 Then restart the manager: sudo systemctl restart wazuh-manager
 
 <level>7</level> above means "only forward alerts at rule level 7+" —
-tune it, or drop it to forward everything and let SentinelOS's own
-SENTINELOS_INGEST_MIN_SEVERITY do the filtering instead.
+tune it, or drop it to forward everything and let Cavendex's own
+CAVENDEX_INGEST_MIN_SEVERITY do the filtering instead.
 """
 
 import json
@@ -48,7 +48,7 @@ import requests
 
 def main():
     if len(sys.argv) < 3:
-        sys.stderr.write("usage: custom-sentinelos.py <alert_file> <api_key> <hook_url>\n")
+        sys.stderr.write("usage: custom-cavendex.py <alert_file> <api_key> <hook_url>\n")
         sys.exit(1)
 
     alert_file = sys.argv[1]
@@ -74,7 +74,7 @@ def main():
         response = requests.post(hook_url, json=alert, headers=headers, timeout=10)
         response.raise_for_status()
     except requests.RequestException as exc:
-        sys.stderr.write(f"failed to forward alert to SentinelOS: {exc}\n")
+        sys.stderr.write(f"failed to forward alert to Cavendex: {exc}\n")
         sys.exit(1)
 
 

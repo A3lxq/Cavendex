@@ -1,4 +1,4 @@
-# Getting Started with SentinelOS
+# Getting Started with Cavendex
 
 This is the friendly, no-assumptions walkthrough. If you've never used an
 AI agent tool before, or you're a SOC analyst who just wants to see this
@@ -13,7 +13,7 @@ term? Check the **[GLOSSARY.md](GLOSSARY.md)**.
 
 ## What is this, actually?
 
-SentinelOS reads a security alert (a suspicious login, a malware hit, a
+Cavendex reads a security alert (a suspicious login, a malware hit, a
 weird outbound connection) and does the first hour of an analyst's work
 for you:
 
@@ -104,7 +104,7 @@ If an incident reaches the Responder stage, it proposes an action (e.g.
 "block 1.2.3.4 at the firewall") and stops. You'll see **Approve** /
 **Deny** buttons in the incident's detail pane.
 
-**Nothing happens to a real system either way** — SentinelOS never has
+**Nothing happens to a real system either way** — Cavendex never has
 firewall/EDR/IAM access. Approving just records the decision; wiring a
 real system action to it is future work, and always will require this
 same approval step.
@@ -130,13 +130,13 @@ useful once you have more than a handful of incidents.
 
 ## Step 5 (optional): Get notified instead of checking the dashboard
 
-By default, SentinelOS doesn't tell anyone anything — you have to go
+By default, Cavendex doesn't tell anyone anything — you have to go
 look. If you want a Slack/Discord/Teams message (or your own webhook
 relay) whenever an incident needs your approval or hits high/critical
 severity, set one line in `.env`:
 
 ```env
-SENTINELOS_ALERT_WEBHOOK_URL=https://hooks.slack.com/services/your/webhook/url
+CAVENDEX_ALERT_WEBHOOK_URL=https://hooks.slack.com/services/your/webhook/url
 ```
 
 That's it. No code changes, no vendor-specific setup — it POSTs a plain
@@ -147,7 +147,7 @@ all render natively.
 
 ## Step 6 (optional): Back up your incident vault to GitHub
 
-Your incident vault is the durable record of everything SentinelOS has
+Your incident vault is the durable record of everything Cavendex has
 ever seen — worth having a copy somewhere other than this one machine.
 `vault_backup.py` commits and pushes it to a git remote of your choice on
 an interval:
@@ -183,7 +183,7 @@ dashboard is just a webpage that talks to that process. Check that
 terminal for a Python traceback.
 
 **Every dashboard action returns a 401 error**
-You set `SENTINELOS_API_KEY` in `.env` but haven't entered the same key
+You set `CAVENDEX_API_KEY` in `.env` but haven't entered the same key
 in the dashboard's own **API Key** field (top bar) — it's a separate,
 browser-side value.
 
@@ -193,7 +193,7 @@ genuinely take several minutes on modest hardware. Check `top`/`htop` for
 CPU activity from the Ollama process before assuming it's stuck.
 
 **Still stuck?** Re-read this guide's Step 1–2 first — most issues are a
-missing/misplaced `.env` value. For anything about *why* SentinelOS
+missing/misplaced `.env` value. For anything about *why* Cavendex
 behaves a certain way (not just how to run it), README.md's Known Gaps
 and Security Notes sections are the honest source of truth.
 
@@ -205,5 +205,5 @@ and Security Notes sections are the honest source of truth.
   of what this tool does *not* do yet.
 - **DEPLOYMENT.md** — running this as an always-on service that watches
   real logs, with systemd units and a TLS reverse-proxy setup.
-- **GLOSSARY.md** — every SentinelOS-specific term (tenant, IOC,
+- **GLOSSARY.md** — every Cavendex-specific term (tenant, IOC,
   correlation, etc.) in one place.

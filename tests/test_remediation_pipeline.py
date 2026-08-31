@@ -23,8 +23,8 @@ def _action(**overrides):
 
 
 def test_not_automatable_returns_none_without_attempting_anything(monkeypatch, tmp_path):
-    monkeypatch.setenv("SENTINELOS_DATA_DIR", str(tmp_path))
-    monkeypatch.delenv("SENTINELOS_REMEDIATION_ENABLED", raising=False)
+    monkeypatch.setenv("CAVENDEX_DATA_DIR", str(tmp_path))
+    monkeypatch.delenv("CAVENDEX_REMEDIATION_ENABLED", raising=False)
 
     def _fail(*a, **kw):
         raise AssertionError("must not attempt to send when not automatable")
@@ -37,18 +37,18 @@ def test_not_automatable_returns_none_without_attempting_anything(monkeypatch, t
 
 
 def test_other_action_type_is_never_automatable(monkeypatch, tmp_path):
-    monkeypatch.setenv("SENTINELOS_DATA_DIR", str(tmp_path))
-    monkeypatch.setenv("SENTINELOS_REMEDIATION_ENABLED", "true")
-    monkeypatch.setenv("SENTINELOS_REMEDIATION_ACTION_TYPES", "other")
+    monkeypatch.setenv("CAVENDEX_DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("CAVENDEX_REMEDIATION_ENABLED", "true")
+    monkeypatch.setenv("CAVENDEX_REMEDIATION_ACTION_TYPES", "other")
 
     executed, detail = execute_if_eligible(_incident(), _action(action_type="other"), "t1")
     assert executed is None
 
 
 def test_eligible_dry_run_reports_executed_true(monkeypatch, tmp_path):
-    monkeypatch.setenv("SENTINELOS_DATA_DIR", str(tmp_path))
-    monkeypatch.setenv("SENTINELOS_REMEDIATION_ENABLED", "true")
-    monkeypatch.delenv("SENTINELOS_REMEDIATION_DRY_RUN", raising=False)  # defaults to true
+    monkeypatch.setenv("CAVENDEX_DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("CAVENDEX_REMEDIATION_ENABLED", "true")
+    monkeypatch.delenv("CAVENDEX_REMEDIATION_DRY_RUN", raising=False)  # defaults to true
 
     executed, detail = execute_if_eligible(_incident(), _action(), "t1")
     assert executed is True
@@ -56,10 +56,10 @@ def test_eligible_dry_run_reports_executed_true(monkeypatch, tmp_path):
 
 
 def test_eligible_real_send_failure_reports_executed_false(monkeypatch, tmp_path):
-    monkeypatch.setenv("SENTINELOS_DATA_DIR", str(tmp_path))
-    monkeypatch.setenv("SENTINELOS_REMEDIATION_ENABLED", "true")
-    monkeypatch.setenv("SENTINELOS_REMEDIATION_DRY_RUN", "false")
-    monkeypatch.setenv("SENTINELOS_REMEDIATION_WEBHOOK_URL", "http://127.0.0.1:1/unreachable")
+    monkeypatch.setenv("CAVENDEX_DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("CAVENDEX_REMEDIATION_ENABLED", "true")
+    monkeypatch.setenv("CAVENDEX_REMEDIATION_DRY_RUN", "false")
+    monkeypatch.setenv("CAVENDEX_REMEDIATION_WEBHOOK_URL", "http://127.0.0.1:1/unreachable")
 
     executed, detail = execute_if_eligible(_incident(), _action(), "t1")
     assert executed is False
@@ -70,8 +70,8 @@ def test_executor_exception_is_caught_and_reported_as_not_executed(monkeypatch, 
     """A broken/misbehaving executor call must never propagate out of
     execute_if_eligible -- this is called from the approve flow, which
     must never be broken by a remediation-side bug."""
-    monkeypatch.setenv("SENTINELOS_DATA_DIR", str(tmp_path))
-    monkeypatch.setenv("SENTINELOS_REMEDIATION_ENABLED", "true")
+    monkeypatch.setenv("CAVENDEX_DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("CAVENDEX_REMEDIATION_ENABLED", "true")
 
     def _raise(*a, **kw):
         raise RuntimeError("boom")
@@ -84,8 +84,8 @@ def test_executor_exception_is_caught_and_reported_as_not_executed(monkeypatch, 
 
 
 def test_writes_a_durable_remediation_log_record(monkeypatch, tmp_path):
-    monkeypatch.setenv("SENTINELOS_DATA_DIR", str(tmp_path))
-    monkeypatch.setenv("SENTINELOS_REMEDIATION_ENABLED", "true")
+    monkeypatch.setenv("CAVENDEX_DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("CAVENDEX_REMEDIATION_ENABLED", "true")
 
     execute_if_eligible(_incident(), _action(), "log-tenant")
 
@@ -99,8 +99,8 @@ def test_writes_a_durable_remediation_log_record(monkeypatch, tmp_path):
 
 
 def test_not_automatable_writes_no_log_record(monkeypatch, tmp_path):
-    monkeypatch.setenv("SENTINELOS_DATA_DIR", str(tmp_path))
-    monkeypatch.delenv("SENTINELOS_REMEDIATION_ENABLED", raising=False)
+    monkeypatch.setenv("CAVENDEX_DATA_DIR", str(tmp_path))
+    monkeypatch.delenv("CAVENDEX_REMEDIATION_ENABLED", raising=False)
 
     execute_if_eligible(_incident(), _action(), "no-log-tenant")
 
@@ -119,12 +119,12 @@ def test_build_remediation_payload_shape():
 
 
 def test_build_remediation_payload_includes_dashboard_link_when_configured(monkeypatch):
-    monkeypatch.setenv("SENTINELOS_DASHBOARD_BASE_URL", "https://sentinelos.example.com")
+    monkeypatch.setenv("CAVENDEX_DASHBOARD_BASE_URL", "https://cavendex.example.com")
     payload = build_remediation_payload(_incident(), _action(), "t1")
-    assert payload["dashboard_url"] == "https://sentinelos.example.com/tenants/t1/incidents/inc-1"
+    assert payload["dashboard_url"] == "https://cavendex.example.com/tenants/t1/incidents/inc-1"
 
 
 def test_build_remediation_payload_omits_dashboard_link_when_not_configured(monkeypatch):
-    monkeypatch.delenv("SENTINELOS_DASHBOARD_BASE_URL", raising=False)
+    monkeypatch.delenv("CAVENDEX_DASHBOARD_BASE_URL", raising=False)
     payload = build_remediation_payload(_incident(), _action(), "t1")
     assert "dashboard_url" not in payload

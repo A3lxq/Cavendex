@@ -24,7 +24,7 @@ load_dotenv(override=True)
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Poll a SIEM/EDR REST API into SentinelOS")
+    parser = argparse.ArgumentParser(description="Poll a SIEM/EDR REST API into Cavendex")
     parser.add_argument("--config", required=True, help="Path to a poller config JSON file")
     parser.add_argument("--once", action="store_true", help="Poll a single batch and exit")
     args = parser.parse_args()

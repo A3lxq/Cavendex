@@ -8,7 +8,7 @@ This tier is fundamentally different from the other two, and that
 difference drives every design decision below:
 
 - **It costs a real LLM call**, so it is opt-in
-  (SENTINELOS_CORRELATION_SEMANTIC_ENABLED, default off) and only ever
+  (CAVENDEX_CORRELATION_SEMANTIC_ENABLED, default off) and only ever
   runs for an alert that already passed the severity floor — i.e. one
   that's about to trigger a full, far more expensive agent pipeline run
   anyway. Checked here, a match *replaces* that expensive run with a
@@ -22,7 +22,7 @@ difference drives every design decision below:
   (validated against the real candidate list — a hallucinated or
   out-of-list thread_id is rejected, the same "verify before trust"
   principle enrichment/mitre_attack.py already applies to technique
-  citations), and a confidence below SENTINELOS_CORRELATION_SEMANTIC_MIN_CONFIDENCE
+  citations), and a confidence below CAVENDEX_CORRELATION_SEMANTIC_MIN_CONFIDENCE
   is treated as no match at all.
 - **It never fabricates evidence for the model to reason over.** A
   candidate's MITRE ATT&CK technique is only ever shown if
@@ -94,7 +94,7 @@ never invent a thread_id that isn't listed here):
 
 
 def _semantic_enabled() -> bool:
-    return os.getenv("SENTINELOS_CORRELATION_SEMANTIC_ENABLED", "false").strip().lower() in (
+    return os.getenv("CAVENDEX_CORRELATION_SEMANTIC_ENABLED", "false").strip().lower() in (
         "1",
         "true",
         "yes",
@@ -103,14 +103,14 @@ def _semantic_enabled() -> bool:
 
 def _max_candidates() -> int:
     try:
-        n = int(os.getenv("SENTINELOS_CORRELATION_SEMANTIC_MAX_CANDIDATES", "5"))
+        n = int(os.getenv("CAVENDEX_CORRELATION_SEMANTIC_MAX_CANDIDATES", "5"))
     except ValueError:
         return 5
     return max(1, n)
 
 
 def _min_confidence_rank() -> int:
-    threshold = os.getenv("SENTINELOS_CORRELATION_SEMANTIC_MIN_CONFIDENCE", "medium").strip().lower()
+    threshold = os.getenv("CAVENDEX_CORRELATION_SEMANTIC_MIN_CONFIDENCE", "medium").strip().lower()
     return _CONFIDENCE_RANK.get(threshold, 1)
 
 

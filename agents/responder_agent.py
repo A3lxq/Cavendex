@@ -1,11 +1,11 @@
 from langchain_core.prompts import ChatPromptTemplate
 
 from agents.schemas import ResponsePlan
-from state import ProposedAction, SentinelState
+from state import ProposedAction, CavendexState
 from utils.llm import accumulate_usage, get_llm, invoke_structured, safe_error_message, usage_from_exception
 
 prompt = ChatPromptTemplate.from_template(
-    """You are the Sentinel Responder Agent — you propose concrete remediation
+    """You are the Cavendex Responder Agent — you propose concrete remediation
 actions for an incident. You NEVER execute anything yourself: every action you
 propose requires explicit human approval before anything happens.
 
@@ -24,7 +24,7 @@ the action, its target, your rationale, and its action_type category."""
 )
 
 
-def responder_agent(state: SentinelState) -> SentinelState:
+def responder_agent(state: CavendexState) -> CavendexState:
     incident = state.get("incident")
 
     try:

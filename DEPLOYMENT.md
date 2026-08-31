@@ -1,9 +1,9 @@
-# SentinelOS Deployment Guide
+# Cavendex Deployment Guide
 
 This is the "install it on a real machine and run it continuously" guide.
 `README.md` covers architecture, features, and a quick local dev
 walkthrough — start there if you just want to try it. This file is for
-standing SentinelOS up as a service that watches real logs and stays
+standing Cavendex up as a service that watches real logs and stays
 running.
 
 Read **Section 14 (Known Limitations to Plan Around)** before you point
@@ -30,7 +30,7 @@ gate, not an unattended SOC.
 - **(Optional) AbuseIPDB and/or VirusTotal API keys** — free tiers exist
   for both — for real IOC reputation lookups instead of LLM recall alone.
 - **A reverse proxy** (nginx or Caddy) if this will be reachable by
-  anyone other than you on localhost. SentinelOS itself does not
+  anyone other than you on localhost. Cavendex itself does not
   terminate TLS.
 - A Linux host with `systemd`, if you want it to run as a proper service
   and survive a reboot (the instructions below assume this; adapt as
@@ -41,8 +41,8 @@ gate, not an unattended SOC.
 ## 2. Install
 
 ```bash
-git clone <your-fork-or-repo-url> /opt/sentinelos
-cd /opt/sentinelos
+git clone <your-fork-or-repo-url> /opt/cavendex
+cd /opt/cavendex
 
 python3 -m venv venv
 source venv/bin/activate
@@ -68,18 +68,18 @@ Edit `.env`:
   `ANTHROPIC_API_KEY`, `GOOGLE_API_KEY`, or `OLLAMA_MODEL` +
   `OLLAMA_BASE_URL`). `utils/llm.py` tries them in that order and uses
   the first one that's configured.
-- Set `SENTINELOS_API_KEY` to a long random value
+- Set `CAVENDEX_API_KEY` to a long random value
   (`python -c "import secrets; print(secrets.token_urlsafe(32))"`) —
   **do this before exposing the API to any network beyond your own
   laptop.** Unset, every route except `/health`, `/`, and `/static/*`
   runs unauthenticated. **If you'll run more than one tenant and they
-  shouldn't see each other's data, also set `SENTINELOS_TENANT_API_KEYS`**
+  shouldn't see each other's data, also set `CAVENDEX_TENANT_API_KEYS`**
   (a JSON object mapping each tenant_id to its own key) — without it, this
   one key authorizes every tenant, not just the one it's meant for.
-- Point `SENTINELOS_DATA_DIR`, `CHROMA_PERSIST_DIR`, and
+- Point `CAVENDEX_DATA_DIR`, `CHROMA_PERSIST_DIR`, and
   `OBSIDIAN_VAULT_PATH` at real, persistent paths outside the repo
   checkout if you're deploying to a directory that might get wiped on
-  redeploy — e.g. `/var/lib/sentinelos/{data,chroma,vault}`. These three
+  redeploy — e.g. `/var/lib/cavendex/{data,chroma,vault}`. These three
   directories are the entire state of the system; see Section 12.
 - Optionally set `ABUSEIPDB_API_KEY` / `VIRUSTOTAL_API_KEY` for real
   threat-intel lookups — and optionally any of the 8 further opt-in
@@ -90,11 +90,11 @@ Edit `.env`:
   what each one actually adds, and real honesty caveats for the last
   three specifically before depending on them in production). Configure
   only the ones you want; every one is inert without its key, same as
-  the two above. Then tune `SENTINELOS_INGEST_MIN_SEVERITY`,
-  `SENTINELOS_DEDUP_WINDOW_SECONDS`, `SENTINELOS_CORRELATION_*` to your
+  the two above. Then tune `CAVENDEX_INGEST_MIN_SEVERITY`,
+  `CAVENDEX_DEDUP_WINDOW_SECONDS`, `CAVENDEX_CORRELATION_*` to your
   actual alert volume — the shipped defaults are reasonable starting
   points, not tuned to any specific environment. **In particular, set
-  `SENTINELOS_CORRELATION_SUBNET_PREFIX_BITS`/`_V6` to match how your
+  `CAVENDEX_CORRELATION_SUBNET_PREFIX_BITS`/`_V6` to match how your
   network is actually subnetted** — the `/24`/`/64` defaults assume a
   size most real businesses don't use; see README's "IP Ranges and
   Subnet Support" for a sizing guide.
@@ -117,7 +117,7 @@ pytest                      # should show "149 passed" (or more) with no LLM con
 Then a real smoke test against your configured provider:
 
 ```bash
-python cli.py new "Test incident: verifying SentinelOS install" --severity low --stream
+python cli.py new "Test incident: verifying Cavendex install" --severity low --stream
 ```
 
 You should see Triage run and produce a real decision. If it errors,
@@ -129,7 +129,7 @@ working.
 
 ## 4. Run it as a service
 
-**Default (no `SENTINELOS_REDIS_URL`): run SentinelOS as one `uvicorn`
+**Default (no `CAVENDEX_REDIS_URL`): run Cavendex as one `uvicorn`
 process, not multiple workers or multiple replicas behind a load
 balancer.** Rate limiting and the alert dedup window
 (`utils/rate_limit.py`, `utils/dedup.py`) keep their state in-process by
@@ -137,12 +137,12 @@ default — a second worker has its own separate copy of that state, so
 `--workers 4` doesn't scale this app, it silently breaks dedup and rate
 limiting across whichever worker happens to handle each request.
 
-**Set `SENTINELOS_REDIS_URL` and both switch to a real Redis-backed
+**Set `CAVENDEX_REDIS_URL` and both switch to a real Redis-backed
 implementation, safe to run behind `--workers N` or multiple host
 replicas:**
 
 ```env
-SENTINELOS_REDIS_URL=redis://redis.internal.example.com:6379/0
+CAVENDEX_REDIS_URL=redis://redis.internal.example.com:6379/0
 ```
 
 Same function signatures, same semantics — every caller of
@@ -167,7 +167,7 @@ candidate pool reads from `utils/incident_index.py`'s SQLite file, which
 is durable and already shared correctly by multiple worker processes on
 *one* host — a `--workers 4` setup was never silently breaking
 correlation the way it broke rate limiting/dedup. What it doesn't do is
-extend across multiple *hosts* without pointing `SENTINELOS_DATA_DIR` at
+extend across multiple *hosts* without pointing `CAVENDEX_DATA_DIR` at
 genuinely shared/networked storage, which introduces its own real
 caveats (SQLite's locking model is not a great fit for a networked
 filesystem like NFS under concurrent writers). If you need true
@@ -179,19 +179,19 @@ actual job (structured queries with `WHERE`/`ORDER BY` across incident
 fields the dashboard's search/filter/stats also depend on), not merely
 an unbuilt feature.
 
-Create `/etc/systemd/system/sentinelos-api.service`:
+Create `/etc/systemd/system/cavendex-api.service`:
 
 ```ini
 [Unit]
-Description=SentinelOS API + dashboard
+Description=Cavendex API + dashboard
 After=network.target
 
 [Service]
 Type=simple
-User=sentinelos
-WorkingDirectory=/opt/sentinelos
-EnvironmentFile=/opt/sentinelos/.env
-ExecStart=/opt/sentinelos/venv/bin/uvicorn api:api --host 127.0.0.1 --port 8000
+User=cavendex
+WorkingDirectory=/opt/cavendex
+EnvironmentFile=/opt/cavendex/.env
+ExecStart=/opt/cavendex/venv/bin/uvicorn api:api --host 127.0.0.1 --port 8000
 Restart=on-failure
 RestartSec=5
 
@@ -205,11 +205,11 @@ section) rather than exposing uvicorn directly.
 Create the dedicated user and enable the service:
 
 ```bash
-sudo useradd --system --no-create-home --shell /usr/sbin/nologin sentinelos
-sudo chown -R sentinelos:sentinelos /opt/sentinelos
+sudo useradd --system --no-create-home --shell /usr/sbin/nologin cavendex
+sudo chown -R cavendex:cavendex /opt/cavendex
 sudo systemctl daemon-reload
-sudo systemctl enable --now sentinelos-api
-sudo systemctl status sentinelos-api
+sudo systemctl enable --now cavendex-api
+sudo systemctl status cavendex-api
 curl http://127.0.0.1:8000/health   # {"status": "ok"}
 ```
 
@@ -217,7 +217,7 @@ curl http://127.0.0.1:8000/health   # {"status": "ok"}
 
 ## 5. Put a reverse proxy in front (TLS)
 
-SentinelOS's SSE streaming endpoints (`/incidents/stream`, the
+Cavendex's SSE streaming endpoints (`/incidents/stream`, the
 dashboard's live "New Incident"/"Threat Hunt" forms, and `/incidents/events`
 behind the dashboard's real-time incident list) need two settings most
 default reverse-proxy configs get wrong: **response buffering must be
@@ -236,15 +236,15 @@ with backoff, and falls back to its existing 15-second polling in the
 meantime, so a periodic proxy-forced disconnect on this one endpoint is
 invisible to an analyst using the dashboard normally.
 
-**nginx** (`/etc/nginx/sites-available/sentinelos`):
+**nginx** (`/etc/nginx/sites-available/cavendex`):
 
 ```nginx
 server {
     listen 443 ssl http2;
-    server_name sentinelos.internal.example.com;
+    server_name cavendex.internal.example.com;
 
-    ssl_certificate     /etc/letsencrypt/live/sentinelos.internal.example.com/fullchain.pem;
-    ssl_certificate_key /etc/letsencrypt/live/sentinelos.internal.example.com/privkey.pem;
+    ssl_certificate     /etc/letsencrypt/live/cavendex.internal.example.com/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/cavendex.internal.example.com/privkey.pem;
 
     location / {
         proxy_pass http://127.0.0.1:8000;
@@ -266,7 +266,7 @@ server {
 
 server {
     listen 80;
-    server_name sentinelos.internal.example.com;
+    server_name cavendex.internal.example.com;
     return 301 https://$host$request_uri;
 }
 ```
@@ -275,7 +275,7 @@ server {
 the box:
 
 ```caddyfile
-sentinelos.internal.example.com {
+cavendex.internal.example.com {
     reverse_proxy 127.0.0.1:8000 {
         flush_interval -1
     }
@@ -298,24 +298,24 @@ syslog, or generic JSON):
 ### Tailing a log file
 
 One `ingest_watch.py` process per source/tenant. Create
-`/etc/systemd/system/sentinelos-ingest-suricata.service`:
+`/etc/systemd/system/cavendex-ingest-suricata.service`:
 
 ```ini
 [Unit]
-Description=SentinelOS ingestion - Suricata eve.json
-After=network.target sentinelos-api.service
+Description=Cavendex ingestion - Suricata eve.json
+After=network.target cavendex-api.service
 
 [Service]
 Type=simple
-User=sentinelos
-WorkingDirectory=/opt/sentinelos
-EnvironmentFile=/opt/sentinelos/.env
-ExecStart=/opt/sentinelos/venv/bin/python ingest_watch.py \
+User=cavendex
+WorkingDirectory=/opt/cavendex
+EnvironmentFile=/opt/cavendex/.env
+ExecStart=/opt/cavendex/venv/bin/python ingest_watch.py \
     --path /var/log/suricata/eve.json \
     --source suricata \
     --tenant default \
     --api-url http://127.0.0.1:8000 \
-    --api-key ${SENTINELOS_API_KEY}
+    --api-key ${CAVENDEX_API_KEY}
 Restart=on-failure
 RestartSec=5
 
@@ -331,25 +331,25 @@ size-guarded the way the API route is.)
 Enable one such unit per log file/tenant you're watching:
 
 ```bash
-sudo systemctl enable --now sentinelos-ingest-suricata
+sudo systemctl enable --now cavendex-ingest-suricata
 ```
 
 **Running Wazuh?** Same mechanism, same unit shape — swap the path and
 source:
 
 ```ini
-ExecStart=/opt/sentinelos/venv/bin/python ingest_watch.py \
+ExecStart=/opt/cavendex/venv/bin/python ingest_watch.py \
     --path /var/ossec/logs/alerts/alerts.json \
     --source wazuh \
     --tenant default \
     --api-url http://127.0.0.1:8000 \
-    --api-key ${SENTINELOS_API_KEY}
+    --api-key ${CAVENDEX_API_KEY}
 ```
 
-This needs the `sentinelos` user to have read access to the Wazuh
+This needs the `cavendex` user to have read access to the Wazuh
 manager's alert log — either run both on the same host and add
-`sentinelos` to the appropriate group, or ship a copy of the file to
-wherever SentinelOS runs. If SentinelOS doesn't have (or shouldn't have)
+`cavendex` to the appropriate group, or ship a copy of the file to
+wherever Cavendex runs. If Cavendex doesn't have (or shouldn't have)
 filesystem access to the Wazuh manager at all, use Wazuh's own
 push-based integration instead — see README's "Wazuh Integration"
 section and `examples/wazuh_integration.py` for the `ossec.conf` config
@@ -372,15 +372,15 @@ mitigations you should actually use in production:
 
 ```ini
 [Unit]
-Description=SentinelOS syslog listener
+Description=Cavendex syslog listener
 After=network.target
 
 [Service]
 Type=simple
-User=sentinelos
-WorkingDirectory=/opt/sentinelos
-EnvironmentFile=/opt/sentinelos/.env
-ExecStart=/opt/sentinelos/venv/bin/python syslog_listener.py \
+User=cavendex
+WorkingDirectory=/opt/cavendex
+EnvironmentFile=/opt/cavendex/.env
+ExecStart=/opt/cavendex/venv/bin/python syslog_listener.py \
     --protocol udp \
     --bind 10.0.5.10 \
     --port 5514 \
@@ -420,21 +420,21 @@ specifically):
 
 ```bash
 openssl req -x509 -newkey rsa:2048 -keyout server.key -out server.crt \
-    -days 825 -nodes -subj "/CN=sentinelos-syslog.internal"
+    -days 825 -nodes -subj "/CN=cavendex-syslog.internal"
 ```
 
 **2. Run the listener with `--tls-cert`/`--tls-key`:**
 
 ```ini
-ExecStart=/opt/sentinelos/venv/bin/python syslog_listener.py \
+ExecStart=/opt/cavendex/venv/bin/python syslog_listener.py \
     --protocol tcp \
     --bind 10.0.5.10 \
     --port 6514 \
     --source syslog_cef \
     --tenant default \
     --allow-from 10.0.5.0/24 \
-    --tls-cert /opt/sentinelos/tls/server.crt \
-    --tls-key /opt/sentinelos/tls/server.key
+    --tls-cert /opt/cavendex/tls/server.crt \
+    --tls-key /opt/cavendex/tls/server.key
 ```
 
 Port 6514 is IANA's registered "syslog-tls" port, used here by
@@ -445,7 +445,7 @@ listener's 5514 default).
 with a `gtls` `StreamDriver` is the common case:
 
 ```
-action(type="omfwd" target="sentinelos-syslog.internal" port="6514"
+action(type="omfwd" target="cavendex-syslog.internal" port="6514"
        protocol="tcp"
        StreamDriver="gtls" StreamDriverMode="1" StreamDriverAuthMode="anon")
 ```
@@ -461,7 +461,7 @@ expected cert and completes a real handshake without needing a full
 sender configured yet:
 
 ```bash
-openssl s_client -connect sentinelos-syslog.internal:6514 -brief
+openssl s_client -connect cavendex-syslog.internal:6514 -brief
 ```
 
 **Mutual TLS** (`--tls-client-ca <CA file>`) additionally requires and
@@ -500,12 +500,12 @@ local plaintext connection (run `syslog_listener.py` without
 `--tls-cert` in this setup):
 
 ```ini
-# stunnel.conf on the SentinelOS host (server side)
+# stunnel.conf on the Cavendex host (server side)
 [syslog-tls]
 accept = 6514
 connect = 127.0.0.1:5514
-cert = /opt/sentinelos/tls/server.crt
-key = /opt/sentinelos/tls/server.key
+cert = /opt/cavendex/tls/server.crt
+key = /opt/cavendex/tls/server.key
 ```
 
 ```ini
@@ -513,7 +513,7 @@ key = /opt/sentinelos/tls/server.key
 [syslog-tls]
 client = yes
 accept = 127.0.0.1:5514
-connect = sentinelos-syslog.internal:6514
+connect = cavendex-syslog.internal:6514
 ```
 
 The sending appliance then points its plain syslog output at
@@ -538,21 +538,21 @@ it returns, described by a JSON config rather than vendor-specific code
 — see `examples/poller_config.example.json` and README's "Syslog
 Listener and SIEM/EDR Polling Connectors" for what a config can express.
 Put your real config outside the repo checkout (e.g.
-`/etc/sentinelos/my-siem.json`) and reference the environment variable
+`/etc/cavendex/my-siem.json`) and reference the environment variable
 holding your API token from it, never the token itself:
 
 ```ini
 [Unit]
-Description=SentinelOS polling connector - my-siem
+Description=Cavendex polling connector - my-siem
 After=network.target
 
 [Service]
 Type=simple
-User=sentinelos
-WorkingDirectory=/opt/sentinelos
-EnvironmentFile=/opt/sentinelos/.env
-ExecStart=/opt/sentinelos/venv/bin/python poll_connector.py \
-    --config /etc/sentinelos/my-siem.json
+User=cavendex
+WorkingDirectory=/opt/cavendex
+EnvironmentFile=/opt/cavendex/.env
+ExecStart=/opt/cavendex/venv/bin/python poll_connector.py \
+    --config /etc/cavendex/my-siem.json
 Restart=on-failure
 RestartSec=5
 
@@ -573,7 +573,7 @@ ATT&CK annotations — instead of a flat `field_map`. See README's "Splunk
 Integration" for the full config and the Webhook-alert-action push
 alternative. Auth is a long-lived Splunk token (Settings → Tokens);
 `SPLUNK_API_TOKEN` is the environment variable the shipped example
-config expects, set in `/opt/sentinelos/.env` the same as any other
+config expects, set in `/opt/cavendex/.env` the same as any other
 credential in this project.
 
 ### Polling CrowdStrike Falcon's Detects API
@@ -588,16 +588,16 @@ an annotated config (including the real per-region base URLs).
 
 ```ini
 [Unit]
-Description=SentinelOS CrowdStrike Falcon connector
+Description=Cavendex CrowdStrike Falcon connector
 After=network.target
 
 [Service]
 Type=simple
-User=sentinelos
-WorkingDirectory=/opt/sentinelos
-EnvironmentFile=/opt/sentinelos/.env
-ExecStart=/opt/sentinelos/venv/bin/python crowdstrike_connector.py \
-    --config /etc/sentinelos/crowdstrike.json
+User=cavendex
+WorkingDirectory=/opt/cavendex
+EnvironmentFile=/opt/cavendex/.env
+ExecStart=/opt/cavendex/venv/bin/python crowdstrike_connector.py \
+    --config /etc/cavendex/crowdstrike.json
 Restart=on-failure
 RestartSec=5
 
@@ -612,8 +612,8 @@ Read" scope. Same `--once` cron alternative as `poll_connector.py`.
 
 ### Pushing from a webhook or forwarder
 
-Point it at `POST https://sentinelos.internal.example.com/ingest/{source}`
-with your `SENTINELOS_API_KEY` as a Bearer token. This is the integration
+Point it at `POST https://cavendex.internal.example.com/ingest/{source}`
+with your `CAVENDEX_API_KEY` as a Bearer token. This is the integration
 point for anything that can make an HTTP call: a SIEM's webhook/
 notification action, a small relay script reading from a message queue,
 etc.
@@ -623,10 +623,10 @@ severity-prefilter gate before spending an LLM call — see README's
 Architecture Overview and "Alert Correlation" section for exactly how
 that decision is made, and `data/{tenant}/ingestion_log.jsonl` for a
 record of every alert and what happened to it, including the ones that
-never became an incident. Tune `SENTINELOS_INGEST_RATE_LIMIT_PER_MINUTE`
+never became an incident. Tune `CAVENDEX_INGEST_RATE_LIMIT_PER_MINUTE`
 if your real alert volume needs a higher (or lower) ceiling than the
 default 60/minute — this limiter is separate from
-`SENTINELOS_RATE_LIMIT_PER_MINUTE` (the API layer's own limit on
+`CAVENDEX_RATE_LIMIT_PER_MINUTE` (the API layer's own limit on
 manually-created incidents) and is what actually protects
 `syslog_listener.py`/`poll_connector.py`, which never touch the API.
 
@@ -634,13 +634,13 @@ manually-created incidents) and is what actually protects
 
 ## 7. Get notified instead of watching the dashboard
 
-Set one line in `.env` and SentinelOS sends a webhook POST whenever an
+Set one line in `.env` and Cavendex sends a webhook POST whenever an
 incident reaches `pending_approval` or crosses a severity threshold:
 
 ```env
-SENTINELOS_ALERT_WEBHOOK_URL=https://hooks.slack.com/services/your/webhook/url
-SENTINELOS_ALERT_MIN_SEVERITY=high
-SENTINELOS_DASHBOARD_BASE_URL=https://sentinelos.internal.example.com
+CAVENDEX_ALERT_WEBHOOK_URL=https://hooks.slack.com/services/your/webhook/url
+CAVENDEX_ALERT_MIN_SEVERITY=high
+CAVENDEX_DASHBOARD_BASE_URL=https://cavendex.internal.example.com
 ```
 
 No vendor is hardcoded — this works with Slack, Discord, and Microsoft
@@ -648,13 +648,13 @@ Teams incoming webhooks (they all render the payload's `"text"` field
 with no setup), PagerDuty's Events API, or your own relay script that
 does something more specific (page on-call, open a ticket, etc.) with
 the structured fields in the payload (`severity`, `status`, `thread_id`,
-`tenant_id`). `SENTINELOS_DASHBOARD_BASE_URL` is optional — set it and
+`tenant_id`). `CAVENDEX_DASHBOARD_BASE_URL` is optional — set it and
 every notification includes a direct link back to the incident.
 
 If your relay script needs to verify a notification genuinely came from
 this instance (rather than anyone who obtained the webhook URL), also
-set `SENTINELOS_WEBHOOK_SIGNING_SECRET` — every request then carries an
-`X-SentinelOS-Signature: sha256=<hex>` header, an HMAC-SHA256 of the raw
+set `CAVENDEX_WEBHOOK_SIGNING_SECRET` — every request then carries an
+`X-Cavendex-Signature: sha256=<hex>` header, an HMAC-SHA256 of the raw
 request body. Slack/Discord/Teams ignore headers they don't check, so
 enabling this never breaks them.
 
@@ -664,7 +664,7 @@ after an incident is persisted, and a webhook failure never blocks or
 fails the incident itself; it's swallowed and printed nowhere by
 default, so if notifications seem to have silently stopped, test the URL
 directly with `curl -X POST -d '{"text":"test"}' -H "Content-Type:
-application/json" "$SENTINELOS_ALERT_WEBHOOK_URL"` rather than assuming
+application/json" "$CAVENDEX_ALERT_WEBHOOK_URL"` rather than assuming
 the pipeline is broken.
 
 ---
@@ -673,28 +673,28 @@ the pipeline is broken.
 
 By default, an approved proposed action stays exactly what it's always
 been: data (action/target/rationale) an analyst reads, not something
-SentinelOS acts on. `remediation/` (see README's "Remediation" section
+Cavendex acts on. `remediation/` (see README's "Remediation" section
 for the full design) can go one step further — POSTing an already-
 approved, eligible action to your own webhook so your own SOAR
 platform, firewall API gateway, or custom script can actually carry it
-out. SentinelOS never runs a local command or calls one specific
+out. Cavendex never runs a local command or calls one specific
 vendor's API itself; it only ever asks whatever's on the other end of
 this webhook.
 
 **Two independent switches, both required, plus a literal sandbox mode:**
 
 ```env
-SENTINELOS_REMEDIATION_ENABLED=true
-SENTINELOS_REMEDIATION_ACTION_TYPES=block_ip,isolate_host
-SENTINELOS_REMEDIATION_WEBHOOK_URL=https://your-soar.internal.example.com/hooks/sentinelos
-SENTINELOS_REMEDIATION_WEBHOOK_SIGNING_SECRET=a-different-secret-than-the-alert-webhook
+CAVENDEX_REMEDIATION_ENABLED=true
+CAVENDEX_REMEDIATION_ACTION_TYPES=block_ip,isolate_host
+CAVENDEX_REMEDIATION_WEBHOOK_URL=https://your-soar.internal.example.com/hooks/cavendex
+CAVENDEX_REMEDIATION_WEBHOOK_SIGNING_SECRET=a-different-secret-than-the-alert-webhook
 # Leave this at its default (true) until you've confirmed the wiring below.
-SENTINELOS_REMEDIATION_DRY_RUN=true
+CAVENDEX_REMEDIATION_DRY_RUN=true
 ```
 
-**Verify the wiring before it's live.** With `SENTINELOS_REMEDIATION_DRY_RUN=true` (the default whenever `SENTINELOS_REMEDIATION_ENABLED` is set at all), nothing is ever sent over the network — approve a test incident's eligible action and check `data/{tenant}/remediation_log.jsonl` for a `"outcome": "dry_run"` record showing exactly what *would* have been sent, and the incident's audit log for the matching `Remediation -> ...` line. Only once that looks right should you set `SENTINELOS_REMEDIATION_DRY_RUN=false` to actually start sending requests.
+**Verify the wiring before it's live.** With `CAVENDEX_REMEDIATION_DRY_RUN=true` (the default whenever `CAVENDEX_REMEDIATION_ENABLED` is set at all), nothing is ever sent over the network — approve a test incident's eligible action and check `data/{tenant}/remediation_log.jsonl` for a `"outcome": "dry_run"` record showing exactly what *would* have been sent, and the incident's audit log for the matching `Remediation -> ...` line. Only once that looks right should you set `CAVENDEX_REMEDIATION_DRY_RUN=false` to actually start sending requests.
 
-`action_type` is the Responder Agent's own structured classification of what it proposed (`block_ip`/`isolate_host`/`disable_account`/`reset_credentials`/`other`) — not guessed from the free-text action description afterward. `SENTINELOS_REMEDIATION_ACTION_TYPES` is the allowlist of which of those are actually eligible for automated execution; `"other"` (the Responder's fallback when nothing cleaner fits) is never eligible no matter what you put here. The shipped default (`block_ip,isolate_host`) deliberately excludes `disable_account`/`reset_credentials` — those two typically need more receiver-side context (which identity system, what "reset" actually means there) than a firewall block does, so they're left as manual-approval-only categories until you've confirmed your receiver can handle them safely.
+`action_type` is the Responder Agent's own structured classification of what it proposed (`block_ip`/`isolate_host`/`disable_account`/`reset_credentials`/`other`) — not guessed from the free-text action description afterward. `CAVENDEX_REMEDIATION_ACTION_TYPES` is the allowlist of which of those are actually eligible for automated execution; `"other"` (the Responder's fallback when nothing cleaner fits) is never eligible no matter what you put here. The shipped default (`block_ip,isolate_host`) deliberately excludes `disable_account`/`reset_credentials` — those two typically need more receiver-side context (which identity system, what "reset" actually means there) than a firewall block does, so they're left as manual-approval-only categories until you've confirmed your receiver can handle them safely.
 
 A broken or unreachable remediation receiver never blocks the approve call itself — the same "never block real processing" contract every other external call in this project follows — but the failure is real and visible: `executed: false` on the action, the failure detail in both the audit log and `remediation_log.jsonl`. Test the webhook directly the same way Section 7 recommends for the alert webhook if executions seem to be silently failing.
 
@@ -702,7 +702,7 @@ A broken or unreachable remediation receiver never blocks the approve call itsel
 
 ## 9. Set up real user accounts and dashboard sessions (opt-in)
 
-`SENTINELOS_API_KEY` still works exactly as before and remains the simplest option for a single analyst or a scripted/automation setup. `utils/user_accounts.py` adds real per-tenant usernames/passwords and a dashboard login on top of that — never instead of it.
+`CAVENDEX_API_KEY` still works exactly as before and remains the simplest option for a single analyst or a scripted/automation setup. `utils/user_accounts.py` adds real per-tenant usernames/passwords and a dashboard login on top of that — never instead of it.
 
 **Bootstrap the first user** (a tenant's very first user account is the one and only thing this feature lets through unauthenticated, since there's no admin session yet to require):
 
@@ -710,12 +710,12 @@ A broken or unreachable remediation receiver never blocks the approve call itsel
 python cli.py --tenant default create-user j.smith 'a-real-password' --role admin
 ```
 
-Log in from the dashboard's Sign In form (username + password, next to the existing API Key field), or via `POST /auth/login` — either way you get back a session token good for `SENTINELOS_SESSION_TTL_SECONDS` (default 8 hours). The dashboard stores it and uses it as the `Authorization` bearer credential in place of the API key, and locks the "Analyst name" field to your authenticated username instead of a freely-typed label.
+Log in from the dashboard's Sign In form (username + password, next to the existing API Key field), or via `POST /auth/login` — either way you get back a session token good for `CAVENDEX_SESSION_TTL_SECONDS` (default 8 hours). The dashboard stores it and uses it as the `Authorization` bearer credential in place of the API key, and locks the "Analyst name" field to your authenticated username instead of a freely-typed label.
 
-**Creating a user does NOT, by itself, lock out unauthenticated callers.** This is deliberate, and was a real mistake caught during this feature's own live testing — see README's "User Accounts and Sessions" for the story. If you want account creation itself to be the access-control switch (instead of, or in addition to, `SENTINELOS_API_KEY`):
+**Creating a user does NOT, by itself, lock out unauthenticated callers.** This is deliberate, and was a real mistake caught during this feature's own live testing — see README's "User Accounts and Sessions" for the story. If you want account creation itself to be the access-control switch (instead of, or in addition to, `CAVENDEX_API_KEY`):
 
 ```env
-SENTINELOS_REQUIRE_LOGIN=true
+CAVENDEX_REQUIRE_LOGIN=true
 ```
 
 With this set, any tenant that has at least one real user account requires a valid credential (a session or the API key) for every request — a tenant with no user accounts yet is unaffected.
@@ -725,8 +725,8 @@ With this set, any tenant that has at least one real user account requires a val
 **Tune the password hashing cost and login rate limit if needed:**
 
 ```env
-SENTINELOS_PASSWORD_HASH_ITERATIONS=600000
-SENTINELOS_LOGIN_RATE_LIMIT_PER_MINUTE=5
+CAVENDEX_PASSWORD_HASH_ITERATIONS=600000
+CAVENDEX_LOGIN_RATE_LIMIT_PER_MINUTE=5
 ```
 
 The default iteration count (roughly OWASP's 2023 PBKDF2-SHA256 guidance) costs a few hundred milliseconds per login/user-creation call — a real, deliberate cost, not an oversight, and one you shouldn't lower just to make logins feel snappier.
@@ -740,11 +740,11 @@ The default iteration count (roughly OWASP's 2023 PBKDF2-SHA256 guidance) costs 
 **Point at a directory of `*.json` files:**
 
 ```env
-SENTINELOS_PLAYBOOKS_DIR=/etc/sentinelos/playbooks
-SENTINELOS_PLAYBOOKS_MODE=append
+CAVENDEX_PLAYBOOKS_DIR=/etc/cavendex/playbooks
+CAVENDEX_PLAYBOOKS_MODE=append
 ```
 
-Each file is one playbook — a match rule plus an ordered list of steps. A minimal example, `/etc/sentinelos/playbooks/ransomware-response.json`:
+Each file is one playbook — a match rule plus an ordered list of steps. A minimal example, `/etc/cavendex/playbooks/ransomware-response.json`:
 
 ```json
 {
@@ -760,7 +760,7 @@ Each file is one playbook — a match rule plus an ordered list of steps. A mini
 }
 ```
 
-**Trust model**: a playbook file is operator-authored local config, the same trust tier as `SENTINELOS_ASSET_INVENTORY_PATH`'s CMDB export or `SENTINELOS_TENANT_API_KEYS` — treat it like any other file that controls what SentinelOS proposes/executes, not like untrusted input. There's no code-execution surface in a playbook file: `target_template` only ever substitutes `{ioc}`/`{asset}` or passes a literal string through unchanged, never `eval` or a general-purpose template language.
+**Trust model**: a playbook file is operator-authored local config, the same trust tier as `CAVENDEX_ASSET_INVENTORY_PATH`'s CMDB export or `CAVENDEX_TENANT_API_KEYS` — treat it like any other file that controls what Cavendex proposes/executes, not like untrusted input. There's no code-execution surface in a playbook file: `target_template` only ever substitutes `{ioc}`/`{asset}` or passes a literal string through unchanged, never `eval` or a general-purpose template language.
 
 **Check what's currently loaded before relying on it:**
 
@@ -770,7 +770,7 @@ python cli.py list-playbooks
 
 This prints every valid playbook (id, priority, match summary, step count) and, just as importantly, *why* any file was skipped — a malformed or schema-invalid file is always skipped with a logged warning rather than breaking ingestion, so this is the way to catch a typo before it silently does nothing in production.
 
-**`SENTINELOS_PLAYBOOKS_MODE=append`** (the default) adds a matched playbook's steps alongside whatever the Responder Agent itself proposed; `replace` uses only the playbook's steps. Steps execute in order on approval — a real attempted-and-failed send halts that playbook's remaining steps by default (`on_failure: "halt"`); set `"on_failure": "continue"` per playbook if independent steps should still run regardless of an earlier one failing.
+**`CAVENDEX_PLAYBOOKS_MODE=append`** (the default) adds a matched playbook's steps alongside whatever the Responder Agent itself proposed; `replace` uses only the playbook's steps. Steps execute in order on approval — a real attempted-and-failed send halts that playbook's remaining steps by default (`on_failure: "halt"`); set `"on_failure": "continue"` per playbook if independent steps should still run regardless of an earlier one failing.
 
 ---
 
@@ -787,15 +787,15 @@ anywhere `git push` reaches), then:
 
 ```ini
 [Unit]
-Description=SentinelOS vault backup
+Description=Cavendex vault backup
 After=network.target
 
 [Service]
 Type=simple
-User=sentinelos
-WorkingDirectory=/opt/sentinelos
-EnvironmentFile=/opt/sentinelos/.env
-ExecStart=/opt/sentinelos/venv/bin/python vault_backup.py \
+User=cavendex
+WorkingDirectory=/opt/cavendex
+EnvironmentFile=/opt/cavendex/.env
+ExecStart=/opt/cavendex/venv/bin/python vault_backup.py \
     --remote git@github.com:you/your-private-vault-repo.git \
     --interval-seconds 300
 Restart=on-failure
@@ -806,11 +806,11 @@ WantedBy=multi-user.target
 ```
 
 ```bash
-sudo systemctl enable --now sentinelos-vault-backup
+sudo systemctl enable --now cavendex-vault-backup
 ```
 
 Authentication is entirely your own git setup's responsibility — an SSH
-key already loaded for the `sentinelos` user (`sudo -u sentinelos
+key already loaded for the `cavendex` user (`sudo -u cavendex
 ssh-keygen`, then add the public key as a GitHub/GitLab deploy key with
 write access), an HTTPS token embedded in the remote URL, or a
 credential helper. `vault_backup.py` never stores or manages a
@@ -829,13 +829,13 @@ schedule instead of `--interval-seconds`.
 
 ## 12. Persistent data and backups
 
-Everything SentinelOS knows lives in three places — back all three up
+Everything Cavendex knows lives in three places — back all three up
 together, since a per-tenant incident's checkpoint, vector memory, and
 vault report are meant to stay in sync:
 
 | Path (via env var)     | What's in it                                                          |
 |-------------------------|------------------------------------------------------------------------|
-| `SENTINELOS_DATA_DIR`   | Per-tenant SQLite: incident checkpoints (`sentinelos.db`), the dashboard/correlation index (`incident_index.db`), user accounts + sessions (`user_accounts.db`), `ingestion_log.jsonl`, `audit_chain_ledger.jsonl`, `remediation_log.jsonl`, polling-connector cursor state (`poller_state/`); tenant-independent `auth_failures.jsonl` at the root |
+| `CAVENDEX_DATA_DIR`   | Per-tenant SQLite: incident checkpoints (`cavendex.db`), the dashboard/correlation index (`incident_index.db`), user accounts + sessions (`user_accounts.db`), `ingestion_log.jsonl`, `audit_chain_ledger.jsonl`, `remediation_log.jsonl`, polling-connector cursor state (`poller_state/`); tenant-independent `auth_failures.jsonl` at the root |
 | `CHROMA_PERSIST_DIR`    | Per-tenant ChromaDB collections — long-term incident memory used for recall |
 | `OBSIDIAN_VAULT_PATH`   | Markdown incident/hunt reports with wikilinks — the durable, human-readable audit trail |
 
@@ -848,8 +848,8 @@ guaranteed-consistent copy while the service is running.
 
 The JSONL logs above (`ingestion_log.jsonl`, `audit_chain_ledger.jsonl`,
 `remediation_log.jsonl`, `auth_failures.jsonl`) rotate automatically once they cross
-`SENTINELOS_LOG_MAX_BYTES` (default 10MB), keeping up to
-`SENTINELOS_LOG_BACKUP_COUNT` (default 3) old copies as `.1`, `.2`, etc.
+`CAVENDEX_LOG_MAX_BYTES` (default 10MB), keeping up to
+`CAVENDEX_LOG_BACKUP_COUNT` (default 3) old copies as `.1`, `.2`, etc.
 — back those up too if you rely on historical ingestion/audit data
 beyond what's in the active file.
 
@@ -865,7 +865,7 @@ data, real restore, real integrity check) before being written down.
 **The Obsidian vault (from `vault_backup.py`'s git remote):**
 
 ```bash
-git clone --branch main git@github.com:you/your-vault-repo.git /var/lib/sentinelos/vault
+git clone --branch main git@github.com:you/your-vault-repo.git /var/lib/cavendex/vault
 ```
 
 **Use `--branch main` explicitly — don't just `git clone <remote>`.**
@@ -880,18 +880,18 @@ actually run `vault_backup.py` with) sidesteps this entirely. If you've
 already cloned without it and got nothing, `git checkout main` in that
 same directory recovers it — no need to re-clone.
 
-**The SQLite databases (`SENTINELOS_DATA_DIR`) and ChromaDB
+**The SQLite databases (`CAVENDEX_DATA_DIR`) and ChromaDB
 (`CHROMA_PERSIST_DIR`), from an `rsync`/snapshot or a `sqlite3 .backup`
 file:** both are just files — restoring is copying them back to where
-`SENTINELOS_DATA_DIR`/`CHROMA_PERSIST_DIR` point, with the service
+`CAVENDEX_DATA_DIR`/`CHROMA_PERSIST_DIR` point, with the service
 stopped:
 
 ```bash
-sudo systemctl stop sentinelos-api sentinelos-ingest-* sentinelos-vault-backup
-cp /path/to/your/backup/incident_index.db  /var/lib/sentinelos/data/<tenant>/incident_index.db
-cp /path/to/your/backup/sentinelos.db      /var/lib/sentinelos/data/<tenant>/sentinelos.db
+sudo systemctl stop cavendex-api cavendex-ingest-* cavendex-vault-backup
+cp /path/to/your/backup/incident_index.db  /var/lib/cavendex/data/<tenant>/incident_index.db
+cp /path/to/your/backup/cavendex.db      /var/lib/cavendex/data/<tenant>/cavendex.db
 # ...same for CHROMA_PERSIST_DIR's per-tenant collection directories
-sudo systemctl start sentinelos-api sentinelos-ingest-* sentinelos-vault-backup
+sudo systemctl start cavendex-api cavendex-ingest-* cavendex-vault-backup
 ```
 
 A `sqlite3 <file> ".backup <dest>"` output file *is* a complete,
@@ -900,7 +900,7 @@ back over the original path is the whole operation. Verify a restored
 database is actually intact before trusting it:
 
 ```bash
-sqlite3 /var/lib/sentinelos/data/<tenant>/incident_index.db "PRAGMA integrity_check;"
+sqlite3 /var/lib/cavendex/data/<tenant>/incident_index.db "PRAGMA integrity_check;"
 # expect: ok
 ```
 
@@ -915,11 +915,11 @@ the real incident, not a 404.
 Everything here is already discussed in more depth in README's Security
 Notes — this is the short, do-it-before-go-live version:
 
-- [ ] `SENTINELOS_API_KEY` is set to a real random value, not left unset.
+- [ ] `CAVENDEX_API_KEY` is set to a real random value, not left unset.
 - [ ] If more than one tenant runs on this deployment and they shouldn't
       see each other's incidents: each tenant that needs real isolation
-      has its own entry in `SENTINELOS_TENANT_API_KEYS`. Without this,
-      the single `SENTINELOS_API_KEY` authorizes every tenant — fine for
+      has its own entry in `CAVENDEX_TENANT_API_KEYS`. Without this,
+      the single `CAVENDEX_API_KEY` authorizes every tenant — fine for
       one trusted operator organizing their own data, not a boundary
       between organizations.
 - [ ] The service binds to `127.0.0.1`; only the reverse proxy is
@@ -929,14 +929,14 @@ Notes — this is the short, do-it-before-go-live version:
 - [ ] `.env` is `chmod 600` and owned by the service user, never
       committed to version control (the shipped `.gitignore` already
       excludes it).
-- [ ] The service runs as a dedicated non-root user (`sentinelos` above),
+- [ ] The service runs as a dedicated non-root user (`cavendex` above),
       not root and not your own login user.
 - [ ] Exactly one `uvicorn` process — no `--workers`, no multiple
-      replicas — unless `SENTINELOS_REDIS_URL` is set, in which case
+      replicas — unless `CAVENDEX_REDIS_URL` is set, in which case
       multiple workers/replicas are safe for rate limiting and dedup
       (see Section 4; correlation has its own, separate multi-host
       caveat there regardless of Redis).
-- [ ] Backups of `SENTINELOS_DATA_DIR` / `CHROMA_PERSIST_DIR` /
+- [ ] Backups of `CAVENDEX_DATA_DIR` / `CHROMA_PERSIST_DIR` /
       `OBSIDIAN_VAULT_PATH` are actually running, not just planned —
       **and you've actually restored from one at least once** (see
       "Restoring from backup" in Section 12). An untested backup is a
@@ -949,12 +949,12 @@ Notes — this is the short, do-it-before-go-live version:
       auto-fills from an authenticated identity rather than a shared key.
 - [ ] If real user accounts are set up: passwords are strong (nothing
       enforces complexity beyond a length minimum), and
-      `SENTINELOS_REQUIRE_LOGIN` reflects what you actually intend —
+      `CAVENDEX_REQUIRE_LOGIN` reflects what you actually intend —
       off means account creation alone never restricts unauthenticated
       access; see Section 9.
 - [ ] Analysts without a real account know to set their name (dashboard's
       "Analyst name" field, the CLI's `--by`, or
-      `SENTINELOS_ANALYST_NAME`) before approving or denying — otherwise
+      `CAVENDEX_ANALYST_NAME`) before approving or denying — otherwise
       the audit trail honestly records that decision as "unspecified"
       rather than attributing it to anyone. This is a typed label, not a
       login; it doesn't stop anyone from typing the wrong name.
@@ -972,7 +972,7 @@ Notes — this is the short, do-it-before-go-live version:
       the repo checkout (or is at least gitignored), and its
       `auth_token_env` variable is set in `.env`/the service's
       `EnvironmentFile`, never written into the config file itself.
-- [ ] If `SENTINELOS_ALERT_WEBHOOK_URL` is set: the destination (Slack
+- [ ] If `CAVENDEX_ALERT_WEBHOOK_URL` is set: the destination (Slack
       workspace, relay endpoint, etc.) is one you'd trust with real
       incident descriptions and severities, since that's what the
       payload contains.
@@ -984,20 +984,20 @@ Notes — this is the short, do-it-before-go-live version:
 - [ ] Installed from `requirements.lock.txt`, not `requirements.txt` —
       a production host shouldn't resolve dependency versions fresh on
       every install.
-- [ ] If `SENTINELOS_ALERT_WEBHOOK_URL` is set and the receiver supports
-      it: `SENTINELOS_WEBHOOK_SIGNING_SECRET` is also set, so a forged
+- [ ] If `CAVENDEX_ALERT_WEBHOOK_URL` is set and the receiver supports
+      it: `CAVENDEX_WEBHOOK_SIGNING_SECRET` is also set, so a forged
       notification (from anyone who obtains the webhook URL) can be told
       apart from a real one.
-- [ ] If `SENTINELOS_REMEDIATION_ENABLED=true`: you've confirmed the
-      wiring under `SENTINELOS_REMEDIATION_DRY_RUN=true` first (Section 8)
-      before setting it to `false`, `SENTINELOS_REMEDIATION_ACTION_TYPES`
+- [ ] If `CAVENDEX_REMEDIATION_ENABLED=true`: you've confirmed the
+      wiring under `CAVENDEX_REMEDIATION_DRY_RUN=true` first (Section 8)
+      before setting it to `false`, `CAVENDEX_REMEDIATION_ACTION_TYPES`
       only lists categories your receiver actually knows how to act on
       safely, and — if the receiver supports it —
-      `SENTINELOS_REMEDIATION_WEBHOOK_SIGNING_SECRET` is set to a value
-      different from `SENTINELOS_WEBHOOK_SIGNING_SECRET` (a remediation
+      `CAVENDEX_REMEDIATION_WEBHOOK_SIGNING_SECRET` is set to a value
+      different from `CAVENDEX_WEBHOOK_SIGNING_SECRET` (a remediation
       receiver is a more sensitive trust boundary than a notification
       channel and may reasonably be a different system entirely).
-- [ ] If `SENTINELOS_PLAYBOOKS_DIR` is set: `python cli.py list-playbooks`
+- [ ] If `CAVENDEX_PLAYBOOKS_DIR` is set: `python cli.py list-playbooks`
       shows exactly the playbooks you expect, with no unexpectedly-skipped
       files (Section 10) — a playbook that silently failed to load is a
       response that silently never fires, which is worse than none at
@@ -1019,7 +1019,7 @@ affect a live deployment decision, not just a feature-completeness one:
   sensitive.
 - **Rate limiting and dedup are single-process, in-memory state by
   default — but a real Redis-backed alternative exists now.** Set
-  `SENTINELOS_REDIS_URL` (Section 4) and both become genuinely shared
+  `CAVENDEX_REDIS_URL` (Section 4) and both become genuinely shared
   across multiple `uvicorn` workers/replicas, live-verified with two
   independent processes. Unconfigured, the original limitation still
   applies exactly as before: fine for one process, doesn't survive a
@@ -1032,9 +1032,9 @@ affect a live deployment decision, not just a feature-completeness one:
 - **Per-user accounts exist now (Section 9) but stay a simple two-role system.** `analyst`/`admin` gates only user-management routes, not a general permission matrix — there's no per-feature access control, no dashboard UI for managing users (CLI/API only), no self-service password reset, and incident assignment/notes still use the older freely-typed-label pattern rather than a real session identity. Without setting up accounts at all, the dashboard's auth remains one shared key for everyone using it, same as always.
 - **Advanced playbooks (Section 10) are deterministic and additive, but deliberately narrow in three ways.** JSON files only, not YAML — a consistency choice, not a technical limit. Exactly one playbook applies per incident (the highest-priority match) — no merging steps from two conceptually-separate playbooks that both happen to match. Template substitution covers only the incident's *first* IOC/affected asset (`{ioc}`/`{asset}`) — there's no per-IOC fan-out yet. Matching also runs once, right after a new incident's pipeline finishes; a later correlated alert merged into that incident does not re-trigger matching.
 - **Cross-tenant authorization needs its own configuration step.**
-  `SENTINELOS_TENANT_API_KEYS` lets each tenant require its own key —
+  `CAVENDEX_TENANT_API_KEYS` lets each tenant require its own key —
   set it for every tenant you actually need isolated from the others.
-  Skip it and `SENTINELOS_API_KEY` alone still authorizes every tenant,
+  Skip it and `CAVENDEX_API_KEY` alone still authorizes every tenant,
   same as before this was added; storage isolation (separate DB/vault/
   vector-store per tenant) is unconditional, but authorization isolation
   is opt-in.
@@ -1065,7 +1065,7 @@ affect a live deployment decision, not just a feature-completeness one:
   instead. Test each against your own deployment before relying on it —
   a documented shape and a live one can diverge.
 - **Real remediation execution exists (Section 8) but only reaches as
-  far as your own webhook.** SentinelOS still never calls a firewall/
+  far as your own webhook.** Cavendex still never calls a firewall/
   EDR/IAM API directly, or runs a local command — an approved, eligible
   action is POSTed to an operator-configured receiver, off by default
   and dry-run by default even when enabled. Whatever real action
@@ -1080,7 +1080,7 @@ affect a live deployment decision, not just a feature-completeness one:
   access needed to edit `audit_log` in the first place could, in
   principle, also rewrite the ledger to match, since both live on the
   same host with no external immutable anchor backing them. Back the
-  ledger up alongside `SENTINELOS_DATA_DIR` and treat a `MISMATCH` as a
+  ledger up alongside `CAVENDEX_DATA_DIR` and treat a `MISMATCH` as a
   serious signal, not "no detected tampering" as an absolute guarantee.
 - **"Air-gapped" doesn't extend to enrichment or alerting.** The
   dashboard's own assets have no CDN dependency, but `enrichment/` (all
@@ -1124,16 +1124,16 @@ project's stated goal, not a hedge.
   python cli.py hunt "<question about a broader campaign>"
   ```
   Add `--tenant <id>` to any command to operate on a specific tenant
-  instead of the default one. Set `SENTINELOS_ANALYST_NAME` in a
+  instead of the default one. Set `CAVENDEX_ANALYST_NAME` in a
   personal shell profile (not the shared service `.env`) if the same
   person always runs the CLI, so `--by` isn't needed every time.
-- **Logs to watch**: `journalctl -u sentinelos-api -f`,
-  `journalctl -u sentinelos-ingest-<source> -f`, and
-  `journalctl -u sentinelos-vault-backup -f` for service-level issues;
+- **Logs to watch**: `journalctl -u cavendex-api -f`,
+  `journalctl -u cavendex-ingest-<source> -f`, and
+  `journalctl -u cavendex-vault-backup -f` for service-level issues;
   `data/{tenant}/ingestion_log.jsonl` for what happened to every ingested
   alert (promoted / correlated / suppressed / deduped / rate-limited), so
   "continuous monitoring" never quietly means "continuously ignored."
-- **Alerting**: if `SENTINELOS_ALERT_WEBHOOK_URL` is set, high/critical
+- **Alerting**: if `CAVENDEX_ALERT_WEBHOOK_URL` is set, high/critical
   incidents and anything reaching `pending_approval` show up there too —
   you shouldn't need to keep the dashboard open just to notice something
   needs attention.
@@ -1143,16 +1143,16 @@ project's stated goal, not a hedge.
 ## 16. Upgrading
 
 ```bash
-sudo systemctl stop sentinelos-api sentinelos-ingest-*
-cd /opt/sentinelos
+sudo systemctl stop cavendex-api cavendex-ingest-*
+cd /opt/cavendex
 git pull
 source venv/bin/activate
 pip install --require-hashes -r requirements.lock.txt
 pytest   # confirm the upgrade didn't break anything before restarting
-sudo systemctl start sentinelos-api sentinelos-ingest-*
+sudo systemctl start cavendex-api cavendex-ingest-*
 ```
 
-Back up `SENTINELOS_DATA_DIR` before upgrading. The incident-index
+Back up `CAVENDEX_DATA_DIR` before upgrading. The incident-index
 schema migrates itself in place (an idempotent `ALTER TABLE` in
 `utils/incident_index.py`), so no manual migration step is expected, but
 a backup costs a minute and a bad one costs a lot more.
@@ -1161,7 +1161,7 @@ a backup costs a minute and a bad one costs a lot more.
 
 ## 17. Troubleshooting
 
-- **`/health` doesn't respond**: check `journalctl -u sentinelos-api -e`
+- **`/health` doesn't respond**: check `journalctl -u cavendex-api -e`
   for a Python traceback — usually a missing/misconfigured provider
   variable in `.env`, or the venv path in the systemd unit not matching
   where you actually installed it.
@@ -1170,14 +1170,14 @@ a backup costs a minute and a bad one costs a lot more.
   `htop`) — a genuine run can take minutes; a truly hung one shows zero
   CPU activity. `python cli.py show <thread_id>` shows the incident's
   current status without waiting for the stream.
-- **The dashboard loads but every action 401s**: `SENTINELOS_API_KEY` is
+- **The dashboard loads but every action 401s**: `CAVENDEX_API_KEY` is
   set server-side but the dashboard's own API Key field (top bar) is
   empty or wrong — it's a separate, client-side value you enter once
   and it's kept in the browser's `localStorage`.
 - **SSE stream cuts off partway through a long run**: your reverse proxy
   is buffering or timing out the response — revisit Section 5.
 - **Approve/deny decisions show up as "unspecified" in the audit log**:
-  no `--by`, no `SENTINELOS_ANALYST_NAME`, and no dashboard "Analyst
+  no `--by`, no `CAVENDEX_ANALYST_NAME`, and no dashboard "Analyst
   name" value was set at the time of the decision — this is recorded
   honestly rather than silently attributed to anyone; set one of those
   going forward.
@@ -1186,11 +1186,11 @@ a backup costs a minute and a bad one costs a lot more.
   processing — test the URL directly (see Section 7) rather than
   assuming the pipeline itself is broken. Also confirm the incident
   actually met a trigger condition (`pending_approval`, or severity at/
-  above `SENTINELOS_ALERT_MIN_SEVERITY`) — most other status changes
+  above `CAVENDEX_ALERT_MIN_SEVERITY`) — most other status changes
   intentionally don't notify.
 - **`vault_backup.py` commits locally but never pushes**: check its
-  service logs (`journalctl -u sentinelos-vault-backup -e`) for the git
+  service logs (`journalctl -u cavendex-vault-backup -e`) for the git
   push error — almost always an SSH key that isn't loaded for the
-  `sentinelos` user, or a deploy key without write access. The commit
+  `cavendex` user, or a deploy key without write access. The commit
   itself still succeeded and isn't lost; fix the credential and the next
   interval's push will include it.

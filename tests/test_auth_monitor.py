@@ -51,8 +51,8 @@ def _isolate():
 
 
 def test_every_failure_is_logged(monkeypatch, tmp_path):
-    monkeypatch.setenv("SENTINELOS_DATA_DIR", str(tmp_path))
-    monkeypatch.setenv("SENTINELOS_AUTH_FAILURE_ALERT_THRESHOLD", "0")  # logging only, no alert
+    monkeypatch.setenv("CAVENDEX_DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("CAVENDEX_AUTH_FAILURE_ALERT_THRESHOLD", "0")  # logging only, no alert
 
     record_auth_failure("1.2.3.4", "/incidents/x", tenant_id="acme")
 
@@ -65,10 +65,10 @@ def test_every_failure_is_logged(monkeypatch, tmp_path):
 
 
 def test_alert_fires_once_threshold_is_reached(monkeypatch, tmp_path, http_server):
-    monkeypatch.setenv("SENTINELOS_DATA_DIR", str(tmp_path))
-    monkeypatch.setenv("SENTINELOS_ALERT_WEBHOOK_URL", http_server.url)
-    monkeypatch.setenv("SENTINELOS_AUTH_FAILURE_ALERT_THRESHOLD", "3")
-    monkeypatch.setenv("SENTINELOS_AUTH_FAILURE_WINDOW_SECONDS", "300")
+    monkeypatch.setenv("CAVENDEX_DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("CAVENDEX_ALERT_WEBHOOK_URL", http_server.url)
+    monkeypatch.setenv("CAVENDEX_AUTH_FAILURE_ALERT_THRESHOLD", "3")
+    monkeypatch.setenv("CAVENDEX_AUTH_FAILURE_WINDOW_SECONDS", "300")
 
     for _ in range(2):
         record_auth_failure("9.9.9.9", "/incidents")
@@ -83,9 +83,9 @@ def test_alert_fires_once_threshold_is_reached(monkeypatch, tmp_path, http_serve
 
 
 def test_alert_does_not_refire_every_failure_after_threshold(monkeypatch, tmp_path, http_server):
-    monkeypatch.setenv("SENTINELOS_DATA_DIR", str(tmp_path))
-    monkeypatch.setenv("SENTINELOS_ALERT_WEBHOOK_URL", http_server.url)
-    monkeypatch.setenv("SENTINELOS_AUTH_FAILURE_ALERT_THRESHOLD", "2")
+    monkeypatch.setenv("CAVENDEX_DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("CAVENDEX_ALERT_WEBHOOK_URL", http_server.url)
+    monkeypatch.setenv("CAVENDEX_AUTH_FAILURE_ALERT_THRESHOLD", "2")
 
     for _ in range(5):
         record_auth_failure("9.9.9.9", "/incidents")
@@ -94,9 +94,9 @@ def test_alert_does_not_refire_every_failure_after_threshold(monkeypatch, tmp_pa
 
 
 def test_different_sources_tracked_independently(monkeypatch, tmp_path, http_server):
-    monkeypatch.setenv("SENTINELOS_DATA_DIR", str(tmp_path))
-    monkeypatch.setenv("SENTINELOS_ALERT_WEBHOOK_URL", http_server.url)
-    monkeypatch.setenv("SENTINELOS_AUTH_FAILURE_ALERT_THRESHOLD", "3")
+    monkeypatch.setenv("CAVENDEX_DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("CAVENDEX_ALERT_WEBHOOK_URL", http_server.url)
+    monkeypatch.setenv("CAVENDEX_AUTH_FAILURE_ALERT_THRESHOLD", "3")
 
     for _ in range(2):
         record_auth_failure("1.1.1.1", "/incidents")
@@ -107,9 +107,9 @@ def test_different_sources_tracked_independently(monkeypatch, tmp_path, http_ser
 
 
 def test_disabled_when_threshold_is_zero(monkeypatch, tmp_path, http_server):
-    monkeypatch.setenv("SENTINELOS_DATA_DIR", str(tmp_path))
-    monkeypatch.setenv("SENTINELOS_ALERT_WEBHOOK_URL", http_server.url)
-    monkeypatch.setenv("SENTINELOS_AUTH_FAILURE_ALERT_THRESHOLD", "0")
+    monkeypatch.setenv("CAVENDEX_DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("CAVENDEX_ALERT_WEBHOOK_URL", http_server.url)
+    monkeypatch.setenv("CAVENDEX_AUTH_FAILURE_ALERT_THRESHOLD", "0")
 
     for _ in range(10):
         record_auth_failure("9.9.9.9", "/incidents")
@@ -122,7 +122,7 @@ def test_never_raises_when_data_dir_is_unwritable(monkeypatch, tmp_path):
     # with a real OSError, not a guessed one.
     blocker = tmp_path / "blocks-the-directory"
     blocker.write_text("x")
-    monkeypatch.setenv("SENTINELOS_DATA_DIR", str(blocker))
-    monkeypatch.delenv("SENTINELOS_ALERT_WEBHOOK_URL", raising=False)
+    monkeypatch.setenv("CAVENDEX_DATA_DIR", str(blocker))
+    monkeypatch.delenv("CAVENDEX_ALERT_WEBHOOK_URL", raising=False)
 
     record_auth_failure("1.2.3.4", "/incidents")  # must not raise

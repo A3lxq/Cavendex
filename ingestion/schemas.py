@@ -2,7 +2,7 @@
 
 The whole point of the ingestion layer is that agents/schemas.py, the
 graph, and the vault never need to know anything about Suricata, syslog,
-or whatever SIEM you're pointing at SentinelOS — every source normalizer
+or whatever SIEM you're pointing at Cavendex — every source normalizer
 in ingestion/normalizers.py converts its own vendor format into one of
 these, and everything downstream (ingestion/pipeline.py onward) only
 ever deals with NormalizedAlert.

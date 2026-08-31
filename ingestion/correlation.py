@@ -17,8 +17,8 @@ mail.evil-c2.com got flagged. This module handles both:
   string similarity:
   - *Subnet*: two IPs in the same network — /24 for IPv4, /64 for IPv6 by
     default, but both independently configurable
-    (SENTINELOS_CORRELATION_SUBNET_PREFIX_BITS /
-    SENTINELOS_CORRELATION_SUBNET_PREFIX_BITS_V6), since real networks
+    (CAVENDEX_CORRELATION_SUBNET_PREFIX_BITS /
+    CAVENDEX_CORRELATION_SUBNET_PREFIX_BITS_V6), since real networks
     aren't all sized the same way a /24 default assumes — rotating
     source IPs from one attacker-controlled range is a textbook evasion
     of exact-IP dedup/correlation regardless of how that range is sized.
@@ -84,13 +84,13 @@ _TLD_EXTRACTOR = tldextract.TLDExtract(suffix_list_urls=(), cache_dir=None)
 
 def _window_seconds() -> float:
     try:
-        return float(os.getenv("SENTINELOS_CORRELATION_WINDOW_SECONDS", "3600"))
+        return float(os.getenv("CAVENDEX_CORRELATION_WINDOW_SECONDS", "3600"))
     except ValueError:
         return 3600.0
 
 
 def _fuzzy_enabled() -> bool:
-    return os.getenv("SENTINELOS_CORRELATION_FUZZY_ENABLED", "true").strip().lower() not in (
+    return os.getenv("CAVENDEX_CORRELATION_FUZZY_ENABLED", "true").strip().lower() not in (
         "0",
         "false",
         "no",
@@ -103,7 +103,7 @@ def _subnet_prefix_bits() -> int:
     accepts any valid CIDR length (1-32), not just the /24 default.
     """
     try:
-        bits = int(os.getenv("SENTINELOS_CORRELATION_SUBNET_PREFIX_BITS", "24"))
+        bits = int(os.getenv("CAVENDEX_CORRELATION_SUBNET_PREFIX_BITS", "24"))
     except ValueError:
         return 24
     return min(max(bits, 1), 32)
@@ -118,7 +118,7 @@ def _subnet_prefix_bits_v6() -> int:
     IPv4 setting's flexibility (1-128 instead of 1-32).
     """
     try:
-        bits = int(os.getenv("SENTINELOS_CORRELATION_SUBNET_PREFIX_BITS_V6", "64"))
+        bits = int(os.getenv("CAVENDEX_CORRELATION_SUBNET_PREFIX_BITS_V6", "64"))
     except ValueError:
         return 64
     return min(max(bits, 1), 128)
@@ -167,7 +167,7 @@ def recent_open_candidates(tenant_id: str, window_seconds: Optional[float] = Non
     starts from, so "is this incident recent enough to plausibly still be
     the same story" is answered exactly once, the same way, everywhere.
 
-    Defaults to SENTINELOS_CORRELATION_WINDOW_SECONDS if `window_seconds`
+    Defaults to CAVENDEX_CORRELATION_WINDOW_SECONDS if `window_seconds`
     isn't given; a window of 0 (or negative) returns no candidates at all.
     """
     window = _window_seconds() if window_seconds is None else window_seconds
@@ -248,7 +248,7 @@ def find_correlated_incident(tenant_id: str, alert: NormalizedAlert) -> Optional
     back from utils.incident_index.list_open_incidents sorted that way.
 
     A window of 0 (or negative) disables correlation entirely.
-    SENTINELOS_CORRELATION_FUZZY_ENABLED=false disables the fuzzy tier
+    CAVENDEX_CORRELATION_FUZZY_ENABLED=false disables the fuzzy tier
     only, leaving exact matching active.
     """
     alert_iocs = list(dict.fromkeys(alert.iocs))

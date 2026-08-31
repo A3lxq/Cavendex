@@ -20,7 +20,7 @@ external immutable storage this project doesn't have (a remote
 write-once store, a blockchain anchor, etc.). It converts "silent,
 undetectable tampering" into "tampering that also requires rewriting
 ledger history," which is real protection worth having, not a claim of
-perfection. Back the ledger up alongside SENTINELOS_DATA_DIR and it's at
+perfection. Back the ledger up alongside CAVENDEX_DATA_DIR and it's at
 least as durable as everything else this project already protects that
 way.
 """
@@ -34,7 +34,7 @@ from typing import List, Optional
 from utils.log_rotation import append_line
 from utils.tenancy import sanitize_tenant_id
 
-_GENESIS = "sentinelos-audit-chain-v1"
+_GENESIS = "cavendex-audit-chain-v1"
 
 
 def compute_chain_hash(entries: List[str]) -> str:
@@ -57,7 +57,7 @@ def _ledger_path(tenant_id: str) -> str:
     # per-tenant data directory by one level. Sanitizing here, the sole
     # chokepoint every function in this module already goes through,
     # closes it regardless of what any current or future caller passes.
-    return os.path.join(os.getenv("SENTINELOS_DATA_DIR", "data"), sanitize_tenant_id(tenant_id), "audit_chain_ledger.jsonl")
+    return os.path.join(os.getenv("CAVENDEX_DATA_DIR", "data"), sanitize_tenant_id(tenant_id), "audit_chain_ledger.jsonl")
 
 
 def _ledger_paths_oldest_first(tenant_id: str) -> List[str]:
@@ -84,7 +84,7 @@ def _ledger_paths_oldest_first(tenant_id: str) -> List[str]:
 def record_chain(tenant_id: str, thread_id: str, audit_log: List[str]) -> None:
     """Append the current chain hash for this incident's audit_log to the
     ledger (rotating it first if it's grown past
-    SENTINELOS_LOG_MAX_BYTES — see utils/log_rotation.py). Never raises —
+    CAVENDEX_LOG_MAX_BYTES — see utils/log_rotation.py). Never raises —
     a ledger write failure must never block real incident processing,
     the same contract every other side-effect in this project follows
     (utils/incident_index.py, vault writes).

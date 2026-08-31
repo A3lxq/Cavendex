@@ -38,7 +38,7 @@ def test_ingest_low_severity_generic_alert_is_suppressed():
 
 
 def test_ingest_oversized_payload_is_rejected(monkeypatch):
-    monkeypatch.setenv("SENTINELOS_RATE_LIMIT_PER_MINUTE", "1000")
+    monkeypatch.setenv("CAVENDEX_RATE_LIMIT_PER_MINUTE", "1000")
     huge_payload = {"description": "A" * 200_000, "severity": "high", "source": "test"}
     response = client.post("/ingest/generic", json=huge_payload)
     assert response.status_code == 413

@@ -21,10 +21,10 @@ from utils.audit_chain import (
 def test_ledger_path_sanitizes_a_path_traversal_tenant_id(monkeypatch, tmp_path):
     """Security regression: an unsanitized tenant_id (e.g. reaching here
     from an API caller who supplies ".." in a /tenants/{tenant_id}/...
-    URL segment) must never escape SENTINELOS_DATA_DIR by one directory
+    URL segment) must never escape CAVENDEX_DATA_DIR by one directory
     level -- every other tenant-scoped module already sanitizes; this
     one didn't."""
-    monkeypatch.setenv("SENTINELOS_DATA_DIR", str(tmp_path / "data"))
+    monkeypatch.setenv("CAVENDEX_DATA_DIR", str(tmp_path / "data"))
     path = _ledger_path("..")
     assert ".." not in path.split(os.sep)
     assert path == str(tmp_path / "data" / "default" / "audit_chain_ledger.jsonl")
@@ -64,7 +64,7 @@ def test_empty_audit_log_has_a_stable_genesis_hash():
 
 
 def test_record_chain_writes_an_append_only_ledger_entry(monkeypatch, tmp_path):
-    monkeypatch.setenv("SENTINELOS_DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("CAVENDEX_DATA_DIR", str(tmp_path))
 
     record_chain("acme", "inc-1", ["entry one"])
     record_chain("acme", "inc-1", ["entry one", "entry two"])
@@ -77,7 +77,7 @@ def test_record_chain_writes_an_append_only_ledger_entry(monkeypatch, tmp_path):
 
 
 def test_latest_recorded_entry_returns_the_most_recent_one(monkeypatch, tmp_path):
-    monkeypatch.setenv("SENTINELOS_DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("CAVENDEX_DATA_DIR", str(tmp_path))
     record_chain("acme", "inc-1", ["a"])
     record_chain("acme", "inc-1", ["a", "b"])
 
@@ -88,7 +88,7 @@ def test_latest_recorded_entry_returns_the_most_recent_one(monkeypatch, tmp_path
 
 
 def test_latest_recorded_entry_scoped_per_thread(monkeypatch, tmp_path):
-    monkeypatch.setenv("SENTINELOS_DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("CAVENDEX_DATA_DIR", str(tmp_path))
     record_chain("acme", "inc-1", ["a"])
     record_chain("acme", "inc-2", ["z", "y"])
 
@@ -97,13 +97,13 @@ def test_latest_recorded_entry_scoped_per_thread(monkeypatch, tmp_path):
 
 
 def test_verify_returns_no_record_when_never_recorded(tmp_path, monkeypatch):
-    monkeypatch.setenv("SENTINELOS_DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("CAVENDEX_DATA_DIR", str(tmp_path))
     result = verify_incident_audit_log("acme", "never-recorded", ["x"])
     assert result["status"] == "no_record"
 
 
 def test_verify_returns_verified_when_unchanged(monkeypatch, tmp_path):
-    monkeypatch.setenv("SENTINELOS_DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("CAVENDEX_DATA_DIR", str(tmp_path))
     audit_log = ["Triage Agent -> escalated", "Responder Agent -> proposed action"]
     record_chain("acme", "inc-1", audit_log)
 
@@ -113,7 +113,7 @@ def test_verify_returns_verified_when_unchanged(monkeypatch, tmp_path):
 
 
 def test_verify_detects_a_tampered_entry(monkeypatch, tmp_path):
-    monkeypatch.setenv("SENTINELOS_DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("CAVENDEX_DATA_DIR", str(tmp_path))
     record_chain("acme", "inc-1", ["Triage Agent -> escalated"])
 
     tampered = ["Triage Agent -> closed (no threat found)"]  # edited after the fact
@@ -123,7 +123,7 @@ def test_verify_detects_a_tampered_entry(monkeypatch, tmp_path):
 
 
 def test_verify_detects_a_deleted_entry(monkeypatch, tmp_path):
-    monkeypatch.setenv("SENTINELOS_DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("CAVENDEX_DATA_DIR", str(tmp_path))
     record_chain("acme", "inc-1", ["entry one", "Human Reviewer (j.smith) -> approved 1 action(s)"])
 
     with_entry_removed = ["entry one"]
@@ -137,9 +137,9 @@ def test_latest_recorded_entry_survives_ledger_rotation(monkeypatch, tmp_path):
     confirm a thread's true latest entry is still found even after it's
     been pushed into a rotated-out backup file, not just the active one.
     """
-    monkeypatch.setenv("SENTINELOS_DATA_DIR", str(tmp_path))
-    monkeypatch.setenv("SENTINELOS_LOG_MAX_BYTES", "1")  # force rotation on every write
-    monkeypatch.setenv("SENTINELOS_LOG_BACKUP_COUNT", "5")
+    monkeypatch.setenv("CAVENDEX_DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("CAVENDEX_LOG_MAX_BYTES", "1")  # force rotation on every write
+    monkeypatch.setenv("CAVENDEX_LOG_BACKUP_COUNT", "5")
 
     record_chain("acme", "inc-1", ["first entry"])
     record_chain("acme", "inc-2", ["unrelated incident, written after inc-1"])
@@ -152,9 +152,9 @@ def test_latest_recorded_entry_survives_ledger_rotation(monkeypatch, tmp_path):
 
 
 def test_verify_still_works_correctly_after_rotation(monkeypatch, tmp_path):
-    monkeypatch.setenv("SENTINELOS_DATA_DIR", str(tmp_path))
-    monkeypatch.setenv("SENTINELOS_LOG_MAX_BYTES", "1")
-    monkeypatch.setenv("SENTINELOS_LOG_BACKUP_COUNT", "5")
+    monkeypatch.setenv("CAVENDEX_DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("CAVENDEX_LOG_MAX_BYTES", "1")
+    monkeypatch.setenv("CAVENDEX_LOG_BACKUP_COUNT", "5")
 
     audit_log = ["a", "b", "c"]
     record_chain("acme", "inc-1", ["a"])
@@ -168,6 +168,6 @@ def test_verify_still_works_correctly_after_rotation(monkeypatch, tmp_path):
 def test_record_chain_never_raises_when_data_dir_is_unwritable(monkeypatch, tmp_path):
     blocker = tmp_path / "blocks-the-directory"
     blocker.write_text("x")
-    monkeypatch.setenv("SENTINELOS_DATA_DIR", str(blocker))
+    monkeypatch.setenv("CAVENDEX_DATA_DIR", str(blocker))
 
     record_chain("acme", "inc-1", ["entry"])  # must not raise

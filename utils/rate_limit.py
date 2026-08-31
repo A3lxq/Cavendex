@@ -1,5 +1,5 @@
 """Sliding-window rate limiter — in-process by default, or Redis-backed
-(opt-in, `SENTINELOS_REDIS_URL`) so a multi-replica deployment shares one
+(opt-in, `CAVENDEX_REDIS_URL`) so a multi-replica deployment shares one
 real limit across every process instead of each replica enforcing its
 own independently (which lets a client multiply its effective quota by
 the number of replicas simply by round-robin-hitting all of them).
@@ -16,7 +16,7 @@ real, live-caught issue, not a hypothetical one.
 
 Unconfigured (the default), this is exactly what it always was: stdlib
 only, "good enough for a single-process local/internal deployment," not
-a distributed rate limiter. Set SENTINELOS_REDIS_URL and both this
+a distributed rate limiter. Set CAVENDEX_REDIS_URL and both this
 module and utils/dedup.py switch to a real Redis-backed implementation —
 same public function signature, same semantics, callers never know the
 difference.
@@ -87,7 +87,7 @@ return '0'
 
 
 def _redis_url() -> str:
-    return os.getenv("SENTINELOS_REDIS_URL", "").strip()
+    return os.getenv("CAVENDEX_REDIS_URL", "").strip()
 
 
 def _get_redis_client():
@@ -109,7 +109,7 @@ def _get_redis_client():
 
 
 def _check_rate_limit_redis(client, key: str, limit: int, now: Optional[float]) -> Optional[float]:
-    zkey = f"sentinelos:ratelimit:{key}"
+    zkey = f"cavendex:ratelimit:{key}"
     if now is None:
         seconds, microseconds = client.time()
         now = seconds + microseconds / 1_000_000
@@ -119,7 +119,7 @@ def _check_rate_limit_redis(client, key: str, limit: int, now: Optional[float]) 
 
 def _limit_per_minute() -> int:
     try:
-        return int(os.getenv("SENTINELOS_RATE_LIMIT_PER_MINUTE", "10"))
+        return int(os.getenv("CAVENDEX_RATE_LIMIT_PER_MINUTE", "10"))
     except ValueError:
         return 10
 
@@ -128,7 +128,7 @@ def check_rate_limit(key: str, now: float = None, limit: Optional[int] = None) -
     """Record one request for `key` and return None if it's allowed, or the
     number of seconds until the caller should retry if it's not.
 
-    `limit` overrides SENTINELOS_RATE_LIMIT_PER_MINUTE for this call — used
+    `limit` overrides CAVENDEX_RATE_LIMIT_PER_MINUTE for this call — used
     by ingestion/pipeline.py, which needs its own (typically higher, since
     real alert volume is expected) limit than the analyst-facing API
     routes, while sharing this same sliding-window implementation instead
@@ -163,7 +163,7 @@ def check_rate_limit(key: str, now: float = None, limit: Optional[int] = None) -
 def reset_for_tests() -> None:
     """Clear all rate-limit state, in-memory and (if a client was ever
     constructed) Redis — and drop the cached Redis client itself, so the
-    next check_rate_limit() call re-reads SENTINELOS_REDIS_URL fresh
+    next check_rate_limit() call re-reads CAVENDEX_REDIS_URL fresh
     rather than reusing a connection built under a different test's
     configuration. Test-only; application code never calls this.
     """
@@ -172,7 +172,7 @@ def reset_for_tests() -> None:
         _requests.clear()
     if _redis_client is not None:
         try:
-            for pattern in ("sentinelos:ratelimit:*",):
+            for pattern in ("cavendex:ratelimit:*",):
                 for k in _redis_client.scan_iter(pattern):
                     _redis_client.delete(k)
         except Exception:

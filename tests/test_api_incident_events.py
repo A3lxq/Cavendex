@@ -43,7 +43,7 @@ def _tenant():
 
 
 def test_first_chunk_is_a_connected_event(monkeypatch):
-    monkeypatch.setenv("SENTINELOS_EVENTS_HEARTBEAT_SECONDS", "5")
+    monkeypatch.setenv("CAVENDEX_EVENTS_HEARTBEAT_SECONDS", "5")
 
     async def run():
         gen = _incident_events_stream(_tenant())
@@ -57,7 +57,7 @@ def test_first_chunk_is_a_connected_event(monkeypatch):
 
 
 def test_an_idle_connection_gets_a_heartbeat_comment(monkeypatch):
-    monkeypatch.setenv("SENTINELOS_EVENTS_HEARTBEAT_SECONDS", "1")
+    monkeypatch.setenv("CAVENDEX_EVENTS_HEARTBEAT_SECONDS", "1")
 
     async def run():
         gen = _incident_events_stream(_tenant())
@@ -72,7 +72,7 @@ def test_an_idle_connection_gets_a_heartbeat_comment(monkeypatch):
 
 
 def test_a_real_concurrent_publish_is_delivered_to_the_stream(monkeypatch):
-    monkeypatch.setenv("SENTINELOS_EVENTS_HEARTBEAT_SECONDS", "5")
+    monkeypatch.setenv("CAVENDEX_EVENTS_HEARTBEAT_SECONDS", "5")
     tenant = _tenant()
 
     async def run():
@@ -96,7 +96,7 @@ def test_a_real_concurrent_publish_is_delivered_to_the_stream(monkeypatch):
 
 
 def test_two_tenants_stay_isolated_on_the_same_stream_generator_pair(monkeypatch):
-    monkeypatch.setenv("SENTINELOS_EVENTS_HEARTBEAT_SECONDS", "1")
+    monkeypatch.setenv("CAVENDEX_EVENTS_HEARTBEAT_SECONDS", "1")
     tenant_a, tenant_b = _tenant(), _tenant()
 
     async def run():
@@ -134,7 +134,7 @@ def test_closing_the_stream_unsubscribes_it():
 
 
 def test_events_route_requires_auth_when_configured(monkeypatch):
-    monkeypatch.setenv("SENTINELOS_API_KEY", "secret-key-123")
+    monkeypatch.setenv("CAVENDEX_API_KEY", "secret-key-123")
     # A plain (non-streaming) GET is safe here specifically because auth
     # rejection happens in the router dependency, before the route
     # function -- and its unbounded generator -- ever runs; the 401

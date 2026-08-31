@@ -92,7 +92,7 @@ class ProposedAction(BaseModel):
     on_failure: Optional[str] = None
 
 
-class SentinelState(TypedDict):
+class CavendexState(TypedDict):
     messages: Annotated[list, add_messages]
     incident: Optional[Incident]
     long_term_summary: str

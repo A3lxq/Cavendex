@@ -1,4 +1,4 @@
-"""SentinelOS command-line interface.
+"""Cavendex command-line interface.
 
 Usage:
     python cli.py new "Multiple failed logins from 1.2.3.4" --severity high --assets DC-01,WEB-01
@@ -8,9 +8,9 @@ Usage:
     python cli.py hunt "any signs of a broader credential-stuffing campaign?"
     python cli.py verify-audit <thread_id>
 
-    # --by records who approved/denied — set SENTINELOS_ANALYST_NAME once
+    # --by records who approved/denied — set CAVENDEX_ANALYST_NAME once
     # instead of typing --by every time:
-    export SENTINELOS_ANALYST_NAME="j.smith"
+    export CAVENDEX_ANALYST_NAME="j.smith"
     python cli.py approve <thread_id>
 
     # --tenant scopes the incident DB, vault, and memory to a specific org
@@ -218,10 +218,10 @@ def cmd_show(args):
 
 
 def _resolve_approved_by(args) -> str:
-    approved_by = args.by or os.getenv("SENTINELOS_ANALYST_NAME")
+    approved_by = args.by or os.getenv("CAVENDEX_ANALYST_NAME")
     if not approved_by:
         print(
-            "Warning: no --by given and SENTINELOS_ANALYST_NAME is unset — this decision "
+            "Warning: no --by given and CAVENDEX_ANALYST_NAME is unset — this decision "
             "will be recorded as 'unspecified' in the audit trail.\n"
         )
     return approved_by
@@ -302,7 +302,7 @@ def cmd_create_user(args):
 
 
 def cmd_list_playbooks(args):
-    """Loads SENTINELOS_PLAYBOOKS_DIR and prints what's currently valid
+    """Loads CAVENDEX_PLAYBOOKS_DIR and prints what's currently valid
     plus why anything was skipped — playbooks/loader.py itself only logs
     a warning and silently keeps running for the pipeline's sake, which
     is correct there but easy to miss without a command like this to
@@ -312,8 +312,8 @@ def cmd_list_playbooks(args):
 
     from playbooks.loader import load_playbooks
 
-    if not os.getenv("SENTINELOS_PLAYBOOKS_DIR", "").strip():
-        print("SENTINELOS_PLAYBOOKS_DIR is not set — playbooks are disabled.")
+    if not os.getenv("CAVENDEX_PLAYBOOKS_DIR", "").strip():
+        print("CAVENDEX_PLAYBOOKS_DIR is not set — playbooks are disabled.")
         return
 
     warnings = []
@@ -327,7 +327,7 @@ def cmd_list_playbooks(args):
         logger.removeHandler(handler)
 
     if not playbooks:
-        print("No valid playbooks found in SENTINELOS_PLAYBOOKS_DIR.")
+        print("No valid playbooks found in CAVENDEX_PLAYBOOKS_DIR.")
 
     for p in sorted(playbooks, key=lambda pb: (-pb.priority, pb.id)):
         match_bits = []
@@ -349,7 +349,7 @@ _REQUIRES_PROVIDER = {"new", "hunt"}
 
 
 def main():
-    parser = argparse.ArgumentParser(prog="sentinelos", description="SentinelOS CLI")
+    parser = argparse.ArgumentParser(prog="cavendex", description="Cavendex CLI")
     parser.add_argument(
         "--tenant",
         default="default",
@@ -377,14 +377,14 @@ def main():
     p_approve = sub.add_parser("approve", help="Approve a Responder Agent's proposed actions")
     p_approve.add_argument("thread_id")
     p_approve.add_argument(
-        "--by", default=None, help="Who's approving — recorded in the audit trail (default: SENTINELOS_ANALYST_NAME)"
+        "--by", default=None, help="Who's approving — recorded in the audit trail (default: CAVENDEX_ANALYST_NAME)"
     )
     p_approve.set_defaults(func=cmd_approve)
 
     p_deny = sub.add_parser("deny", help="Deny a Responder Agent's proposed actions")
     p_deny.add_argument("thread_id")
     p_deny.add_argument(
-        "--by", default=None, help="Who's denying — recorded in the audit trail (default: SENTINELOS_ANALYST_NAME)"
+        "--by", default=None, help="Who's denying — recorded in the audit trail (default: CAVENDEX_ANALYST_NAME)"
     )
     p_deny.set_defaults(func=cmd_deny)
 
@@ -410,7 +410,7 @@ def main():
 
     p_list_playbooks = sub.add_parser(
         "list-playbooks",
-        help="List currently-valid playbooks from SENTINELOS_PLAYBOOKS_DIR and why any file was skipped",
+        help="List currently-valid playbooks from CAVENDEX_PLAYBOOKS_DIR and why any file was skipped",
     )
     p_list_playbooks.set_defaults(func=cmd_list_playbooks)
 

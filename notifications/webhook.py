@@ -4,17 +4,17 @@ PagerDuty's Events API (all of which accept a plain webhook POST), or
 your own relay script, without this project picking a vendor — the same
 "pluggable, not vendor-locked" principle as ingestion/polling.py.
 
-Opt-in: nothing is ever sent unless SENTINELOS_ALERT_WEBHOOK_URL is set.
+Opt-in: nothing is ever sent unless CAVENDEX_ALERT_WEBHOOK_URL is set.
 Never raises into the caller — a broken or unreachable webhook endpoint
 must never block real incident processing, the same never-raise contract
 every other external call in this project follows (enrichment/providers.py,
 ingestion/semantic_correlation.py, etc.).
 
-Signing (opt-in, SENTINELOS_WEBHOOK_SIGNING_SECRET): without it, anyone
+Signing (opt-in, CAVENDEX_WEBHOOK_SIGNING_SECRET): without it, anyone
 who obtains (or guesses) the configured URL can send a receiver a
 convincing-looking fake incident notification, and the receiver has no
 way to tell it apart from a real one. Setting the secret HMAC-SHA256
-signs every request body and sends it as X-SentinelOS-Signature, the
+signs every request body and sends it as X-Cavendex-Signature, the
 same "sha256=<hex>" shape GitHub/Stripe/Slack's own outbound webhooks
 already use — additive, so it never breaks a receiver that doesn't check
 it.
@@ -27,11 +27,11 @@ import os
 
 
 def _webhook_url() -> str:
-    return os.getenv("SENTINELOS_ALERT_WEBHOOK_URL", "").strip()
+    return os.getenv("CAVENDEX_ALERT_WEBHOOK_URL", "").strip()
 
 
 def _signing_secret() -> str:
-    return os.getenv("SENTINELOS_WEBHOOK_SIGNING_SECRET", "").strip()
+    return os.getenv("CAVENDEX_WEBHOOK_SIGNING_SECRET", "").strip()
 
 
 def webhook_configured() -> bool:
@@ -50,10 +50,10 @@ def sign_payload(body: bytes, secret: str) -> str:
 
 
 def send_webhook_notification(payload: dict) -> bool:
-    """POST `payload` as JSON to SENTINELOS_ALERT_WEBHOOK_URL. Returns
+    """POST `payload` as JSON to CAVENDEX_ALERT_WEBHOOK_URL. Returns
     True if the request was sent and got a 2xx response, False for
     anything else (not configured, network failure, non-2xx) — never
-    raises. Signs the body with SENTINELOS_WEBHOOK_SIGNING_SECRET if set.
+    raises. Signs the body with CAVENDEX_WEBHOOK_SIGNING_SECRET if set.
     """
     url = _webhook_url()
     if not url:
@@ -65,7 +65,7 @@ def send_webhook_notification(payload: dict) -> bool:
     headers = {"Content-Type": "application/json"}
     secret = _signing_secret()
     if secret:
-        headers["X-SentinelOS-Signature"] = sign_payload(body, secret)
+        headers["X-Cavendex-Signature"] = sign_payload(body, secret)
 
     try:
         response = requests.post(url, data=body, headers=headers, timeout=10)

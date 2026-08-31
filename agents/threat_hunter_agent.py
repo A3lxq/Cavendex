@@ -2,11 +2,11 @@ from langchain_core.prompts import ChatPromptTemplate
 
 from agents.schemas import ThreatHuntFindings
 from enrichment.mitre_attack import validate_technique_citation
-from state import SentinelState
+from state import CavendexState
 from utils.llm import accumulate_usage, get_llm, invoke_structured, safe_error_message, usage_from_exception
 
 prompt = ChatPromptTemplate.from_template(
-    """You are the Sentinel Threat Hunter Agent — you proactively look for signs
+    """You are the Cavendex Threat Hunter Agent — you proactively look for signs
 that an incident is part of a broader, undetected campaign.
 
 Current Incident:
@@ -27,7 +27,7 @@ decide the next step:
 )
 
 
-def threat_hunter_agent(state: SentinelState) -> SentinelState:
+def threat_hunter_agent(state: CavendexState) -> CavendexState:
     incident = state.get("incident")
 
     try:

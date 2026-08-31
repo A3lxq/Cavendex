@@ -40,7 +40,7 @@ def _state(
 
 
 def test_upsert_then_list_returns_the_incident(monkeypatch, tmp_path):
-    monkeypatch.setenv("SENTINELOS_DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("CAVENDEX_DATA_DIR", str(tmp_path))
     upsert_incident_summary("t1", _state("inc-1", "first incident", severity="high"))
 
     rows = list_incidents("t1")
@@ -50,7 +50,7 @@ def test_upsert_then_list_returns_the_incident(monkeypatch, tmp_path):
 
 
 def test_upsert_updates_existing_row_not_duplicates(monkeypatch, tmp_path):
-    monkeypatch.setenv("SENTINELOS_DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("CAVENDEX_DATA_DIR", str(tmp_path))
     upsert_incident_summary("t1", _state("inc-1", "first incident", status="pending_approval"))
     upsert_incident_summary("t1", _state("inc-1", "first incident", status="contained"))
 
@@ -60,7 +60,7 @@ def test_upsert_updates_existing_row_not_duplicates(monkeypatch, tmp_path):
 
 
 def test_has_pending_actions_reflects_status(monkeypatch, tmp_path):
-    monkeypatch.setenv("SENTINELOS_DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("CAVENDEX_DATA_DIR", str(tmp_path))
     upsert_incident_summary("t1", _state("inc-1", "x", status="pending_approval"))
     upsert_incident_summary("t1", _state("inc-2", "y", status="closed"))
 
@@ -70,7 +70,7 @@ def test_has_pending_actions_reflects_status(monkeypatch, tmp_path):
 
 
 def test_tenants_have_independent_indexes(monkeypatch, tmp_path):
-    monkeypatch.setenv("SENTINELOS_DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("CAVENDEX_DATA_DIR", str(tmp_path))
     upsert_incident_summary("tenant-a", _state("inc-1", "x", tenant_id="tenant-a"))
     upsert_incident_summary("tenant-b", _state("inc-2", "y", tenant_id="tenant-b"))
 
@@ -86,7 +86,7 @@ def test_upsert_ignores_state_with_no_incident():
 
 
 def test_upsert_stores_iocs_and_affected_assets(monkeypatch, tmp_path):
-    monkeypatch.setenv("SENTINELOS_DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("CAVENDEX_DATA_DIR", str(tmp_path))
     upsert_incident_summary(
         "t1", _state("inc-1", "x", iocs=["1.2.3.4"], affected_assets=["FIN-SRV-02"])
     )
@@ -98,7 +98,7 @@ def test_upsert_stores_iocs_and_affected_assets(monkeypatch, tmp_path):
 
 
 def test_list_open_incidents_excludes_closed_and_contained(monkeypatch, tmp_path):
-    monkeypatch.setenv("SENTINELOS_DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("CAVENDEX_DATA_DIR", str(tmp_path))
     upsert_incident_summary("t1", _state("inc-open", "x", status="open"))
     upsert_incident_summary("t1", _state("inc-investigating", "x", status="investigating"))
     upsert_incident_summary("t1", _state("inc-pending", "x", status="pending_approval"))
@@ -110,7 +110,7 @@ def test_list_open_incidents_excludes_closed_and_contained(monkeypatch, tmp_path
 
 
 def test_list_open_incidents_scoped_by_tenant(monkeypatch, tmp_path):
-    monkeypatch.setenv("SENTINELOS_DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("CAVENDEX_DATA_DIR", str(tmp_path))
     upsert_incident_summary("tenant-a", _state("inc-1", "x", tenant_id="tenant-a"))
     upsert_incident_summary("tenant-b", _state("inc-2", "y", tenant_id="tenant-b"))
 
@@ -124,7 +124,7 @@ def test_list_open_incidents_is_capped_not_unbounded(monkeypatch, tmp_path):
     large number of open incidents could make the correlation candidate
     pool (and identity correlation's real per-candidate lookups)
     grow without bound."""
-    monkeypatch.setenv("SENTINELOS_DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("CAVENDEX_DATA_DIR", str(tmp_path))
     for i in range(5):
         upsert_incident_summary("t1", _state(f"inc-{i}", "x"))
 
@@ -133,7 +133,7 @@ def test_list_open_incidents_is_capped_not_unbounded(monkeypatch, tmp_path):
 
 
 def test_created_at_is_preserved_across_updates(monkeypatch, tmp_path):
-    monkeypatch.setenv("SENTINELOS_DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("CAVENDEX_DATA_DIR", str(tmp_path))
     upsert_incident_summary("t1", _state("inc-1", "x", status="open"))
     first = list_open_incidents("t1")[0]
 
@@ -146,7 +146,7 @@ def test_created_at_is_preserved_across_updates(monkeypatch, tmp_path):
 
 
 def test_verified_attack_technique_is_stored(monkeypatch, tmp_path):
-    monkeypatch.setenv("SENTINELOS_DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("CAVENDEX_DATA_DIR", str(tmp_path))
     upsert_incident_summary(
         "t1",
         _state(
@@ -163,7 +163,7 @@ def test_verified_attack_technique_is_stored(monkeypatch, tmp_path):
 def test_unverified_attack_technique_is_not_stored(monkeypatch, tmp_path):
     """An unverified (possibly hallucinated) citation must never become
     "known ground truth" for a later semantic-correlation judgment."""
-    monkeypatch.setenv("SENTINELOS_DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("CAVENDEX_DATA_DIR", str(tmp_path))
     upsert_incident_summary(
         "t1",
         _state("inc-1", "x", attack_technique={"id": "T9999", "name": "Fake", "verified": False}),
@@ -175,7 +175,7 @@ def test_unverified_attack_technique_is_not_stored(monkeypatch, tmp_path):
 
 
 def test_no_attack_technique_cited_stores_none(monkeypatch, tmp_path):
-    monkeypatch.setenv("SENTINELOS_DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("CAVENDEX_DATA_DIR", str(tmp_path))
     upsert_incident_summary("t1", _state("inc-1", "x"))
 
     rows = list_open_incidents("t1")
@@ -193,7 +193,7 @@ def _seed_mixed(tenant="t1"):
 
 
 def test_filter_by_severity(monkeypatch, tmp_path):
-    monkeypatch.setenv("SENTINELOS_DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("CAVENDEX_DATA_DIR", str(tmp_path))
     _seed_mixed()
 
     rows = list_incidents("t1", severity="critical")
@@ -202,7 +202,7 @@ def test_filter_by_severity(monkeypatch, tmp_path):
 
 
 def test_filter_by_status(monkeypatch, tmp_path):
-    monkeypatch.setenv("SENTINELOS_DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("CAVENDEX_DATA_DIR", str(tmp_path))
     _seed_mixed()
 
     rows = list_incidents("t1", status="closed")
@@ -211,7 +211,7 @@ def test_filter_by_status(monkeypatch, tmp_path):
 
 
 def test_filter_by_search_is_case_insensitive_substring(monkeypatch, tmp_path):
-    monkeypatch.setenv("SENTINELOS_DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("CAVENDEX_DATA_DIR", str(tmp_path))
     _seed_mixed()
 
     rows = list_incidents("t1", search="malware")
@@ -220,7 +220,7 @@ def test_filter_by_search_is_case_insensitive_substring(monkeypatch, tmp_path):
 
 
 def test_filters_combine_with_and_semantics(monkeypatch, tmp_path):
-    monkeypatch.setenv("SENTINELOS_DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("CAVENDEX_DATA_DIR", str(tmp_path))
     _seed_mixed()
 
     rows = list_incidents("t1", severity="high", search="brute")
@@ -234,7 +234,7 @@ def test_search_special_characters_are_escaped_not_treated_as_wildcards(monkeypa
     """A literal '%' or '_' in the search text must be matched literally,
     not treated as a SQL LIKE wildcard — otherwise searching for "100%"
     would match every description."""
-    monkeypatch.setenv("SENTINELOS_DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("CAVENDEX_DATA_DIR", str(tmp_path))
     upsert_incident_summary("t1", _state("inc-1", "CPU at 100% utilization"))
     upsert_incident_summary("t1", _state("inc-2", "CPU at 100X utilization"))
 
@@ -244,7 +244,7 @@ def test_search_special_characters_are_escaped_not_treated_as_wildcards(monkeypa
 
 
 def test_no_filters_returns_everything(monkeypatch, tmp_path):
-    monkeypatch.setenv("SENTINELOS_DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("CAVENDEX_DATA_DIR", str(tmp_path))
     _seed_mixed()
 
     rows = list_incidents("t1")
@@ -256,7 +256,7 @@ def test_no_filters_returns_everything(monkeypatch, tmp_path):
 
 
 def test_stats_on_empty_tenant(monkeypatch, tmp_path):
-    monkeypatch.setenv("SENTINELOS_DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("CAVENDEX_DATA_DIR", str(tmp_path))
 
     stats = get_incident_stats("t1")
 
@@ -269,7 +269,7 @@ def test_stats_on_empty_tenant(monkeypatch, tmp_path):
 
 
 def test_stats_reflect_seeded_incidents(monkeypatch, tmp_path):
-    monkeypatch.setenv("SENTINELOS_DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("CAVENDEX_DATA_DIR", str(tmp_path))
     _seed_mixed()
 
     stats = get_incident_stats("t1")
@@ -281,7 +281,7 @@ def test_stats_reflect_seeded_incidents(monkeypatch, tmp_path):
 
 
 def test_stats_scoped_per_tenant(monkeypatch, tmp_path):
-    monkeypatch.setenv("SENTINELOS_DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("CAVENDEX_DATA_DIR", str(tmp_path))
     _seed_mixed(tenant="t1")
     upsert_incident_summary("t2", _state("inc-x", "unrelated tenant's incident", severity="critical"))
 
@@ -296,7 +296,7 @@ def test_stats_scoped_per_tenant(monkeypatch, tmp_path):
 
 
 def test_assign_then_list_reflects_it(monkeypatch, tmp_path):
-    monkeypatch.setenv("SENTINELOS_DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("CAVENDEX_DATA_DIR", str(tmp_path))
     upsert_incident_summary("t1", _state("inc-1", "x"))
 
     result = set_assigned_to("t1", "inc-1", "j.smith")
@@ -307,7 +307,7 @@ def test_assign_then_list_reflects_it(monkeypatch, tmp_path):
 
 
 def test_unassign_clears_it(monkeypatch, tmp_path):
-    monkeypatch.setenv("SENTINELOS_DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("CAVENDEX_DATA_DIR", str(tmp_path))
     upsert_incident_summary("t1", _state("inc-1", "x"))
     set_assigned_to("t1", "inc-1", "j.smith")
 
@@ -318,14 +318,14 @@ def test_unassign_clears_it(monkeypatch, tmp_path):
 
 
 def test_assign_unknown_thread_returns_false(monkeypatch, tmp_path):
-    monkeypatch.setenv("SENTINELOS_DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("CAVENDEX_DATA_DIR", str(tmp_path))
     assert set_assigned_to("t1", "never-existed", "j.smith") is False
 
 
 def test_reupsert_never_wipes_an_existing_assignment(monkeypatch, tmp_path):
     """A routine pipeline re-upsert (a new agent step, a correlation
     merge) must never silently clear who's assigned to an incident."""
-    monkeypatch.setenv("SENTINELOS_DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("CAVENDEX_DATA_DIR", str(tmp_path))
     upsert_incident_summary("t1", _state("inc-1", "x", severity="low"))
     set_assigned_to("t1", "inc-1", "j.smith")
 
@@ -340,7 +340,7 @@ def test_reupsert_never_wipes_an_existing_assignment(monkeypatch, tmp_path):
 
 
 def test_attack_stats_counts_verified_techniques(monkeypatch, tmp_path):
-    monkeypatch.setenv("SENTINELOS_DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("CAVENDEX_DATA_DIR", str(tmp_path))
     verified = {"id": "T1110", "name": "Brute Force", "verified": True}
     upsert_incident_summary("t1", _state("inc-1", "x", attack_technique=verified))
     upsert_incident_summary("t1", _state("inc-2", "y", attack_technique=verified))
@@ -355,7 +355,7 @@ def test_attack_stats_counts_verified_techniques(monkeypatch, tmp_path):
 
 
 def test_attack_stats_excludes_unverified_and_uncited(monkeypatch, tmp_path):
-    monkeypatch.setenv("SENTINELOS_DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("CAVENDEX_DATA_DIR", str(tmp_path))
     upsert_incident_summary("t1", _state("inc-1", "x", attack_technique={"id": "T9999", "name": "Fake", "verified": False}))
     upsert_incident_summary("t1", _state("inc-2", "y"))  # no citation at all
 
@@ -363,7 +363,7 @@ def test_attack_stats_excludes_unverified_and_uncited(monkeypatch, tmp_path):
 
 
 def test_attack_stats_scoped_per_tenant(monkeypatch, tmp_path):
-    monkeypatch.setenv("SENTINELOS_DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("CAVENDEX_DATA_DIR", str(tmp_path))
     verified = {"id": "T1110", "name": "Brute Force", "verified": True}
     upsert_incident_summary("t1", _state("inc-1", "x", attack_technique=verified))
     upsert_incident_summary("t2", _state("inc-2", "y", attack_technique=verified))
@@ -376,13 +376,13 @@ def test_attack_stats_scoped_per_tenant(monkeypatch, tmp_path):
 
 
 def test_graph_on_an_empty_tenant_has_no_nodes_or_edges(monkeypatch, tmp_path):
-    monkeypatch.setenv("SENTINELOS_DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("CAVENDEX_DATA_DIR", str(tmp_path))
     graph = get_incident_graph("t1")
     assert graph == {"nodes": [], "edges": [], "incidents_included": 0, "incidents_total": 0}
 
 
 def test_a_single_incident_produces_an_incident_node_plus_its_iocs_and_assets(monkeypatch, tmp_path):
-    monkeypatch.setenv("SENTINELOS_DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("CAVENDEX_DATA_DIR", str(tmp_path))
     upsert_incident_summary(
         "t1",
         _state("inc-1", "brute force against DC-01", severity="high", iocs=["1.2.3.4"], affected_assets=["DC-01"]),
@@ -400,7 +400,7 @@ def test_a_single_incident_produces_an_incident_node_plus_its_iocs_and_assets(mo
 
 
 def test_two_incidents_sharing_an_ioc_share_one_node(monkeypatch, tmp_path):
-    monkeypatch.setenv("SENTINELOS_DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("CAVENDEX_DATA_DIR", str(tmp_path))
     upsert_incident_summary("t1", _state("inc-1", "x", iocs=["1.2.3.4"]))
     upsert_incident_summary("t1", _state("inc-2", "y", iocs=["1.2.3.4"]))
 
@@ -413,7 +413,7 @@ def test_two_incidents_sharing_an_ioc_share_one_node(monkeypatch, tmp_path):
 
 
 def test_ioc_matching_is_exact_string_not_case_folded(monkeypatch, tmp_path):
-    monkeypatch.setenv("SENTINELOS_DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("CAVENDEX_DATA_DIR", str(tmp_path))
     upsert_incident_summary("t1", _state("inc-1", "x", iocs=["evil.example.com"]))
     upsert_incident_summary("t1", _state("inc-2", "y", iocs=["EVIL.example.com"]))
 
@@ -424,7 +424,7 @@ def test_ioc_matching_is_exact_string_not_case_folded(monkeypatch, tmp_path):
 
 
 def test_graph_is_scoped_per_tenant(monkeypatch, tmp_path):
-    monkeypatch.setenv("SENTINELOS_DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("CAVENDEX_DATA_DIR", str(tmp_path))
     upsert_incident_summary("t1", _state("inc-1", "x", iocs=["1.2.3.4"]))
     upsert_incident_summary("t2", _state("inc-2", "y", iocs=["1.2.3.4"]))
 
@@ -434,7 +434,7 @@ def test_graph_is_scoped_per_tenant(monkeypatch, tmp_path):
 
 
 def test_limit_caps_included_incidents_but_reports_the_true_total(monkeypatch, tmp_path):
-    monkeypatch.setenv("SENTINELOS_DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("CAVENDEX_DATA_DIR", str(tmp_path))
     for i in range(5):
         upsert_incident_summary("t1", _state(f"inc-{i}", "x"))
 
@@ -445,7 +445,7 @@ def test_limit_caps_included_incidents_but_reports_the_true_total(monkeypatch, t
 
 
 def test_incident_with_no_iocs_or_assets_still_gets_its_own_node(monkeypatch, tmp_path):
-    monkeypatch.setenv("SENTINELOS_DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("CAVENDEX_DATA_DIR", str(tmp_path))
     upsert_incident_summary("t1", _state("inc-1", "x"))
 
     graph = get_incident_graph("t1")

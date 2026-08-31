@@ -28,24 +28,24 @@ def _write_playbook(path, **overrides):
 
 
 def test_returns_empty_when_unconfigured(monkeypatch):
-    monkeypatch.delenv("SENTINELOS_PLAYBOOKS_DIR", raising=False)
+    monkeypatch.delenv("CAVENDEX_PLAYBOOKS_DIR", raising=False)
     assert load_playbooks() == []
 
 
 def test_returns_empty_when_directory_does_not_exist(monkeypatch, tmp_path):
-    monkeypatch.setenv("SENTINELOS_PLAYBOOKS_DIR", str(tmp_path / "missing"))
+    monkeypatch.setenv("CAVENDEX_PLAYBOOKS_DIR", str(tmp_path / "missing"))
     assert load_playbooks() == []
 
 
 def test_returns_empty_for_directory_with_no_json_files(monkeypatch, tmp_path):
     (tmp_path / "readme.txt").write_text("not a playbook")
-    monkeypatch.setenv("SENTINELOS_PLAYBOOKS_DIR", str(tmp_path))
+    monkeypatch.setenv("CAVENDEX_PLAYBOOKS_DIR", str(tmp_path))
     assert load_playbooks() == []
 
 
 def test_loads_a_single_valid_playbook(monkeypatch, tmp_path):
     _write_playbook(tmp_path / "ransomware.json")
-    monkeypatch.setenv("SENTINELOS_PLAYBOOKS_DIR", str(tmp_path))
+    monkeypatch.setenv("CAVENDEX_PLAYBOOKS_DIR", str(tmp_path))
 
     playbooks = load_playbooks()
     assert len(playbooks) == 1
@@ -55,7 +55,7 @@ def test_loads_a_single_valid_playbook(monkeypatch, tmp_path):
 def test_loads_multiple_valid_playbooks(monkeypatch, tmp_path):
     _write_playbook(tmp_path / "a.json", id="pb-a")
     _write_playbook(tmp_path / "b.json", id="pb-b")
-    monkeypatch.setenv("SENTINELOS_PLAYBOOKS_DIR", str(tmp_path))
+    monkeypatch.setenv("CAVENDEX_PLAYBOOKS_DIR", str(tmp_path))
 
     ids = {p.id for p in load_playbooks()}
     assert ids == {"pb-a", "pb-b"}
@@ -64,7 +64,7 @@ def test_loads_multiple_valid_playbooks(monkeypatch, tmp_path):
 def test_malformed_json_file_is_skipped_valid_ones_still_load(monkeypatch, tmp_path):
     _write_playbook(tmp_path / "good.json", id="pb-good")
     (tmp_path / "bad.json").write_text("not valid json{{{")
-    monkeypatch.setenv("SENTINELOS_PLAYBOOKS_DIR", str(tmp_path))
+    monkeypatch.setenv("CAVENDEX_PLAYBOOKS_DIR", str(tmp_path))
 
     playbooks = load_playbooks()
     assert len(playbooks) == 1
@@ -74,7 +74,7 @@ def test_malformed_json_file_is_skipped_valid_ones_still_load(monkeypatch, tmp_p
 def test_schema_invalid_file_is_skipped_valid_ones_still_load(monkeypatch, tmp_path):
     _write_playbook(tmp_path / "good.json", id="pb-good")
     _write_playbook(tmp_path / "bad.json", id="pb-bad", steps=[])  # empty steps -> fails validation
-    monkeypatch.setenv("SENTINELOS_PLAYBOOKS_DIR", str(tmp_path))
+    monkeypatch.setenv("CAVENDEX_PLAYBOOKS_DIR", str(tmp_path))
 
     playbooks = load_playbooks()
     assert len(playbooks) == 1
@@ -88,7 +88,7 @@ def test_colliding_id_across_files_is_rejected_not_last_file_wins(monkeypatch, t
     silently let "last-listed file wins" happen."""
     _write_playbook(tmp_path / "a-first.json", id="dup-id", priority=1)
     _write_playbook(tmp_path / "b-second.json", id="dup-id", priority=99)
-    monkeypatch.setenv("SENTINELOS_PLAYBOOKS_DIR", str(tmp_path))
+    monkeypatch.setenv("CAVENDEX_PLAYBOOKS_DIR", str(tmp_path))
 
     playbooks = load_playbooks()
     assert len(playbooks) == 1
@@ -97,7 +97,7 @@ def test_colliding_id_across_files_is_rejected_not_last_file_wins(monkeypatch, t
 
 def test_reload_picks_up_a_new_file_via_mtime(monkeypatch, tmp_path):
     _write_playbook(tmp_path / "a.json", id="pb-a")
-    monkeypatch.setenv("SENTINELOS_PLAYBOOKS_DIR", str(tmp_path))
+    monkeypatch.setenv("CAVENDEX_PLAYBOOKS_DIR", str(tmp_path))
 
     assert {p.id for p in load_playbooks()} == {"pb-a"}
 
@@ -111,7 +111,7 @@ def test_reload_picks_up_a_new_file_via_mtime(monkeypatch, tmp_path):
 def test_reload_picks_up_an_edit_via_mtime(monkeypatch, tmp_path):
     path = tmp_path / "a.json"
     _write_playbook(path, id="pb-a", priority=0)
-    monkeypatch.setenv("SENTINELOS_PLAYBOOKS_DIR", str(tmp_path))
+    monkeypatch.setenv("CAVENDEX_PLAYBOOKS_DIR", str(tmp_path))
 
     assert load_playbooks()[0].priority == 0
 

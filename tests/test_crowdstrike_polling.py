@@ -225,7 +225,7 @@ def fake_ingest_normalized_alert(monkeypatch):
 def test_poll_once_returns_auth_failed_without_credentials(
     monkeypatch, falcon_server, fake_ingest_normalized_alert, tmp_path
 ):
-    monkeypatch.setenv("SENTINELOS_DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("CAVENDEX_DATA_DIR", str(tmp_path))
     monkeypatch.delenv("CROWDSTRIKE_CLIENT_ID", raising=False)
     monkeypatch.delenv("CROWDSTRIKE_CLIENT_SECRET", raising=False)
     config = _config(falcon_server.base_url)
@@ -238,7 +238,7 @@ def test_poll_once_returns_auth_failed_without_credentials(
 def test_poll_once_ingests_each_normalized_detection(
     monkeypatch, falcon_server, fake_ingest_normalized_alert, tmp_path
 ):
-    monkeypatch.setenv("SENTINELOS_DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("CAVENDEX_DATA_DIR", str(tmp_path))
     monkeypatch.setenv("CROWDSTRIKE_CLIENT_ID", "test-client-id")
     monkeypatch.setenv("CROWDSTRIKE_CLIENT_SECRET", "test-secret")
     falcon_server.responses["/oauth2/token"] = {"access_token": "tok", "expires_in": 1799}
@@ -266,7 +266,7 @@ def test_poll_once_ingests_each_normalized_detection(
 
 
 def test_poll_once_skips_non_dict_summaries(monkeypatch, falcon_server, fake_ingest_normalized_alert, tmp_path):
-    monkeypatch.setenv("SENTINELOS_DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("CAVENDEX_DATA_DIR", str(tmp_path))
     monkeypatch.setenv("CROWDSTRIKE_CLIENT_ID", "test-client-id")
     monkeypatch.setenv("CROWDSTRIKE_CLIENT_SECRET", "test-secret")
     falcon_server.responses["/oauth2/token"] = {"access_token": "tok", "expires_in": 1799}
@@ -282,7 +282,7 @@ def test_poll_once_skips_non_dict_summaries(monkeypatch, falcon_server, fake_ing
 def test_poll_once_persists_cursor_across_calls(
     monkeypatch, falcon_server, fake_ingest_normalized_alert, tmp_path
 ):
-    monkeypatch.setenv("SENTINELOS_DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("CAVENDEX_DATA_DIR", str(tmp_path))
     monkeypatch.setenv("CROWDSTRIKE_CLIENT_ID", "test-client-id")
     monkeypatch.setenv("CROWDSTRIKE_CLIENT_SECRET", "test-secret")
     falcon_server.responses["/oauth2/token"] = {"access_token": "tok", "expires_in": 1799}
@@ -307,7 +307,7 @@ def test_poll_once_persists_cursor_across_calls(
 
 
 def test_save_and_load_cursor_roundtrip(monkeypatch, tmp_path):
-    monkeypatch.setenv("SENTINELOS_DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("CAVENDEX_DATA_DIR", str(tmp_path))
     config = CrowdStrikeConfig(name="roundtrip-cs", tenant="roundtrip-tenant")
 
     assert load_cursor(config) is None

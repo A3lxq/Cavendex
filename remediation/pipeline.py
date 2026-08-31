@@ -15,7 +15,7 @@ from utils.log_rotation import append_line
 
 
 def _dashboard_link(tenant_id: str, thread_id: str) -> str:
-    base = os.getenv("SENTINELOS_DASHBOARD_BASE_URL", "").rstrip("/")
+    base = os.getenv("CAVENDEX_DASHBOARD_BASE_URL", "").rstrip("/")
     if not base:
         return ""
     tenant_segment = "" if tenant_id in (None, "default") else f"/tenants/{tenant_id}"

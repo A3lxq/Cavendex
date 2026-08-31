@@ -17,7 +17,7 @@
   "cursor_query_param": "since",
   "cursor_field": "timestamp",
 
-  "_comment_field_map": "Maps SentinelOS's own alert fields to a dotted path within ONE record, in your API's real field names. Only description is required in practice (everything else defaults sensibly if omitted).",
+  "_comment_field_map": "Maps Cavendex's own alert fields to a dotted path within ONE record, in your API's real field names. Only description is required in practice (everything else defaults sensibly if omitted).",
   "field_map": {
     "description": "title",
     "severity": "severity",

@@ -4,12 +4,12 @@ and utils/incident_index.py, extended to a directory since an operator
 naturally wants one file per incident category (ransomware, phishing,
 ...) rather than one giant file.
 
-SENTINELOS_PLAYBOOKS_DIR unset (the default) means this feature is
+CAVENDEX_PLAYBOOKS_DIR unset (the default) means this feature is
 fully inert: load_playbooks() returns [] immediately, at zero cost, and
 nothing downstream (workflows/incident_pipeline.py) ever calls into
 playbooks/matcher.py or playbooks/expander.py. JSON only, not YAML —
 consistent with this project's existing config-file convention
-(asset_inventory.json, SENTINELOS_TENANT_API_KEYS) and avoids a new
+(asset_inventory.json, CAVENDEX_TENANT_API_KEYS) and avoids a new
 dependency for a feature this size.
 
 A file that fails to parse or fails schema validation is skipped with a
@@ -79,14 +79,14 @@ def _load_all(directory: str, names: Tuple[str, ...]) -> List[Playbook]:
 
 
 def load_playbooks() -> List[Playbook]:
-    """All currently-valid playbooks in SENTINELOS_PLAYBOOKS_DIR, reloaded
+    """All currently-valid playbooks in CAVENDEX_PLAYBOOKS_DIR, reloaded
     whenever any *.json file in that directory is added/removed/modified
     (one stat() call per file per lookup — cheap for a config directory
     that's expected to hold a handful of files, not user data). Unset,
     missing, or fully-invalid directory all mean "no playbooks" — an
     empty list, never an exception.
     """
-    directory = os.getenv("SENTINELOS_PLAYBOOKS_DIR", "").strip()
+    directory = os.getenv("CAVENDEX_PLAYBOOKS_DIR", "").strip()
     if not directory:
         return []
 

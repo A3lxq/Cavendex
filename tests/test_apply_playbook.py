@@ -51,7 +51,7 @@ def _write_playbook(path, **overrides):
 
 
 def test_no_playbooks_configured_leaves_state_untouched(monkeypatch):
-    monkeypatch.delenv("SENTINELOS_PLAYBOOKS_DIR", raising=False)
+    monkeypatch.delenv("CAVENDEX_PLAYBOOKS_DIR", raising=False)
     tenant_id = _tenant()
     app = get_app(tenant_id)
     config = {"configurable": {"thread_id": "inc-1"}}
@@ -64,7 +64,7 @@ def test_no_playbooks_configured_leaves_state_untouched(monkeypatch):
 
 def test_no_matching_playbook_leaves_state_untouched(monkeypatch, tmp_path):
     _write_playbook(tmp_path / "pb.json", match={"severities": ["low"]})
-    monkeypatch.setenv("SENTINELOS_PLAYBOOKS_DIR", str(tmp_path))
+    monkeypatch.setenv("CAVENDEX_PLAYBOOKS_DIR", str(tmp_path))
     tenant_id = _tenant()
     app = get_app(tenant_id)
     config = {"configurable": {"thread_id": "inc-1"}}
@@ -77,8 +77,8 @@ def test_no_matching_playbook_leaves_state_untouched(monkeypatch, tmp_path):
 
 def test_matching_playbook_appends_actions_by_default(monkeypatch, tmp_path):
     _write_playbook(tmp_path / "pb.json")
-    monkeypatch.setenv("SENTINELOS_PLAYBOOKS_DIR", str(tmp_path))
-    monkeypatch.delenv("SENTINELOS_PLAYBOOKS_MODE", raising=False)
+    monkeypatch.setenv("CAVENDEX_PLAYBOOKS_DIR", str(tmp_path))
+    monkeypatch.delenv("CAVENDEX_PLAYBOOKS_MODE", raising=False)
     tenant_id = _tenant()
     app = get_app(tenant_id)
     config = {"configurable": {"thread_id": "inc-1"}}
@@ -98,8 +98,8 @@ def test_matching_playbook_appends_actions_by_default(monkeypatch, tmp_path):
 
 def test_matching_playbook_replaces_actions_when_mode_is_replace(monkeypatch, tmp_path):
     _write_playbook(tmp_path / "pb.json")
-    monkeypatch.setenv("SENTINELOS_PLAYBOOKS_DIR", str(tmp_path))
-    monkeypatch.setenv("SENTINELOS_PLAYBOOKS_MODE", "replace")
+    monkeypatch.setenv("CAVENDEX_PLAYBOOKS_DIR", str(tmp_path))
+    monkeypatch.setenv("CAVENDEX_PLAYBOOKS_MODE", "replace")
     tenant_id = _tenant()
     app = get_app(tenant_id)
     config = {"configurable": {"thread_id": "inc-1"}}
@@ -115,7 +115,7 @@ def test_matching_playbook_replaces_actions_when_mode_is_replace(monkeypatch, tm
 
 def test_persisted_state_is_retrievable_from_the_real_checkpoint(monkeypatch, tmp_path):
     _write_playbook(tmp_path / "pb.json")
-    monkeypatch.setenv("SENTINELOS_PLAYBOOKS_DIR", str(tmp_path))
+    monkeypatch.setenv("CAVENDEX_PLAYBOOKS_DIR", str(tmp_path))
     tenant_id = _tenant()
     app = get_app(tenant_id)
     config = {"configurable": {"thread_id": "inc-1"}}

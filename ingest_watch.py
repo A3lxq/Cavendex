@@ -1,11 +1,11 @@
 """Continuously tail a JSON-lines alert log (e.g. Suricata's eve.json) and
-feed each new line into SentinelOS's ingestion pipeline — this is the
+feed each new line into Cavendex's ingestion pipeline — this is the
 concrete "continuous monitoring" piece: point it at a real detection
 tool's log file and it keeps creating/deduping/suppressing incidents as
 new events arrive, indefinitely.
 
 Usage:
-    # In-process (same machine as SentinelOS's data/vault/db):
+    # In-process (same machine as Cavendex's data/vault/db):
     python ingest_watch.py --path /var/log/suricata/eve.json --source suricata
 
     python ingest_watch.py --path /var/log/suricata/eve.json --source suricata \
@@ -15,10 +15,10 @@ Usage:
     python ingest_watch.py --path /var/log/suricata/eve.json --source suricata \
         --from-start
 
-    # Remote — POST to a SentinelOS API running elsewhere instead of
+    # Remote — POST to a Cavendex API running elsewhere instead of
     # calling the ingestion pipeline in-process:
     python ingest_watch.py --path /var/log/suricata/eve.json --source suricata \
-        --api-url http://sentinelos-host:8000 --api-key secret
+        --api-url http://cavendex-host:8000 --api-key secret
 
 Only JSON-lines sources are supported here (suricata, wazuh, generic) —
 a raw CEF-formatted syslog line needs either a syslog-to-webhook
@@ -95,7 +95,7 @@ def _ingest_via_api(api_url: str, api_key: str, source: str, payload: dict, tena
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Tail a JSON-lines alert log into SentinelOS")
+    parser = argparse.ArgumentParser(description="Tail a JSON-lines alert log into Cavendex")
     parser.add_argument("--path", required=True, help="Path to the JSON-lines log file")
     parser.add_argument("--source", required=True, choices=["suricata", "wazuh", "generic"])
     parser.add_argument("--tenant", default="default")
@@ -103,7 +103,7 @@ def main():
         "--from-start", action="store_true", help="Process the whole existing file, not just new lines"
     )
     parser.add_argument(
-        "--api-url", default=None, help="POST to this SentinelOS API instead of ingesting in-process"
+        "--api-url", default=None, help="POST to this Cavendex API instead of ingesting in-process"
     )
     parser.add_argument("--api-key", default=None)
     args = parser.parse_args()

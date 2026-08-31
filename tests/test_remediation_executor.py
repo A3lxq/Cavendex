@@ -16,32 +16,32 @@ from remediation.executor import is_automatable, send_remediation_request, sign_
 
 
 def test_other_is_never_automatable_even_when_enabled_and_listed(monkeypatch):
-    monkeypatch.setenv("SENTINELOS_REMEDIATION_ENABLED", "true")
-    monkeypatch.setenv("SENTINELOS_REMEDIATION_ACTION_TYPES", "other,block_ip")
+    monkeypatch.setenv("CAVENDEX_REMEDIATION_ENABLED", "true")
+    monkeypatch.setenv("CAVENDEX_REMEDIATION_ACTION_TYPES", "other,block_ip")
     assert is_automatable("other") is False
 
 
 def test_disabled_by_default(monkeypatch):
-    monkeypatch.delenv("SENTINELOS_REMEDIATION_ENABLED", raising=False)
+    monkeypatch.delenv("CAVENDEX_REMEDIATION_ENABLED", raising=False)
     assert is_automatable("block_ip") is False
 
 
 def test_enabled_and_in_default_allowlist(monkeypatch):
-    monkeypatch.setenv("SENTINELOS_REMEDIATION_ENABLED", "true")
-    monkeypatch.delenv("SENTINELOS_REMEDIATION_ACTION_TYPES", raising=False)
+    monkeypatch.setenv("CAVENDEX_REMEDIATION_ENABLED", "true")
+    monkeypatch.delenv("CAVENDEX_REMEDIATION_ACTION_TYPES", raising=False)
     assert is_automatable("block_ip") is True
     assert is_automatable("isolate_host") is True
 
 
 def test_enabled_but_not_in_allowlist(monkeypatch):
-    monkeypatch.setenv("SENTINELOS_REMEDIATION_ENABLED", "true")
-    monkeypatch.setenv("SENTINELOS_REMEDIATION_ACTION_TYPES", "block_ip")
+    monkeypatch.setenv("CAVENDEX_REMEDIATION_ENABLED", "true")
+    monkeypatch.setenv("CAVENDEX_REMEDIATION_ACTION_TYPES", "block_ip")
     assert is_automatable("disable_account") is False
 
 
 def test_custom_allowlist_can_add_a_type(monkeypatch):
-    monkeypatch.setenv("SENTINELOS_REMEDIATION_ENABLED", "true")
-    monkeypatch.setenv("SENTINELOS_REMEDIATION_ACTION_TYPES", "disable_account,reset_credentials")
+    monkeypatch.setenv("CAVENDEX_REMEDIATION_ENABLED", "true")
+    monkeypatch.setenv("CAVENDEX_REMEDIATION_ACTION_TYPES", "disable_account,reset_credentials")
     assert is_automatable("disable_account") is True
     assert is_automatable("block_ip") is False
 
@@ -50,8 +50,8 @@ def test_custom_allowlist_can_add_a_type(monkeypatch):
 
 
 def test_dry_run_is_the_default_and_never_calls_the_network(monkeypatch):
-    monkeypatch.delenv("SENTINELOS_REMEDIATION_DRY_RUN", raising=False)
-    monkeypatch.setenv("SENTINELOS_REMEDIATION_WEBHOOK_URL", "http://127.0.0.1:1/should-never-be-hit")
+    monkeypatch.delenv("CAVENDEX_REMEDIATION_DRY_RUN", raising=False)
+    monkeypatch.setenv("CAVENDEX_REMEDIATION_WEBHOOK_URL", "http://127.0.0.1:1/should-never-be-hit")
 
     def _fail(*a, **kw):
         raise AssertionError("must not call the network in dry-run mode")
@@ -63,8 +63,8 @@ def test_dry_run_is_the_default_and_never_calls_the_network(monkeypatch):
 
 
 def test_explicit_dry_run_false_but_no_url_reports_not_configured(monkeypatch):
-    monkeypatch.setenv("SENTINELOS_REMEDIATION_DRY_RUN", "false")
-    monkeypatch.delenv("SENTINELOS_REMEDIATION_WEBHOOK_URL", raising=False)
+    monkeypatch.setenv("CAVENDEX_REMEDIATION_DRY_RUN", "false")
+    monkeypatch.delenv("CAVENDEX_REMEDIATION_WEBHOOK_URL", raising=False)
 
     result = send_remediation_request({"action_type": "block_ip"})
     assert result["outcome"] == "not_configured"
@@ -112,8 +112,8 @@ def http_server():
 
 
 def test_real_send_reaches_a_real_server_and_reports_sent(monkeypatch, http_server):
-    monkeypatch.setenv("SENTINELOS_REMEDIATION_DRY_RUN", "false")
-    monkeypatch.setenv("SENTINELOS_REMEDIATION_WEBHOOK_URL", http_server.url)
+    monkeypatch.setenv("CAVENDEX_REMEDIATION_DRY_RUN", "false")
+    monkeypatch.setenv("CAVENDEX_REMEDIATION_WEBHOOK_URL", http_server.url)
 
     result = send_remediation_request({"action_type": "block_ip", "target": "1.2.3.4"})
     assert result["outcome"] == "sent"
@@ -121,30 +121,30 @@ def test_real_send_reaches_a_real_server_and_reports_sent(monkeypatch, http_serv
 
 
 def test_real_send_signs_the_body_when_secret_configured(monkeypatch, http_server):
-    monkeypatch.setenv("SENTINELOS_REMEDIATION_DRY_RUN", "false")
-    monkeypatch.setenv("SENTINELOS_REMEDIATION_WEBHOOK_URL", http_server.url)
-    monkeypatch.setenv("SENTINELOS_REMEDIATION_WEBHOOK_SIGNING_SECRET", "shh")
+    monkeypatch.setenv("CAVENDEX_REMEDIATION_DRY_RUN", "false")
+    monkeypatch.setenv("CAVENDEX_REMEDIATION_WEBHOOK_URL", http_server.url)
+    monkeypatch.setenv("CAVENDEX_REMEDIATION_WEBHOOK_SIGNING_SECRET", "shh")
 
     send_remediation_request({"action_type": "block_ip"})
 
     sent = http_server.seen[0]
     expected = sign_payload(sent["raw_body"], "shh")
-    assert sent["headers"]["X-SentinelOS-Signature"] == expected
+    assert sent["headers"]["X-Cavendex-Signature"] == expected
 
 
 def test_real_send_no_signature_header_when_no_secret(monkeypatch, http_server):
-    monkeypatch.setenv("SENTINELOS_REMEDIATION_DRY_RUN", "false")
-    monkeypatch.setenv("SENTINELOS_REMEDIATION_WEBHOOK_URL", http_server.url)
-    monkeypatch.delenv("SENTINELOS_REMEDIATION_WEBHOOK_SIGNING_SECRET", raising=False)
+    monkeypatch.setenv("CAVENDEX_REMEDIATION_DRY_RUN", "false")
+    monkeypatch.setenv("CAVENDEX_REMEDIATION_WEBHOOK_URL", http_server.url)
+    monkeypatch.delenv("CAVENDEX_REMEDIATION_WEBHOOK_SIGNING_SECRET", raising=False)
 
     send_remediation_request({"action_type": "block_ip"})
-    assert "X-SentinelOS-Signature" not in http_server.seen[0]["headers"]
+    assert "X-Cavendex-Signature" not in http_server.seen[0]["headers"]
 
 
 def test_real_send_non_2xx_reports_http_error(monkeypatch, http_server):
     http_server.handler_cls.status_to_send = 503
-    monkeypatch.setenv("SENTINELOS_REMEDIATION_DRY_RUN", "false")
-    monkeypatch.setenv("SENTINELOS_REMEDIATION_WEBHOOK_URL", http_server.url)
+    monkeypatch.setenv("CAVENDEX_REMEDIATION_DRY_RUN", "false")
+    monkeypatch.setenv("CAVENDEX_REMEDIATION_WEBHOOK_URL", http_server.url)
 
     result = send_remediation_request({"action_type": "block_ip"})
     assert result["outcome"] == "http_error"
@@ -152,8 +152,8 @@ def test_real_send_non_2xx_reports_http_error(monkeypatch, http_server):
 
 
 def test_unreachable_url_reports_request_failed(monkeypatch):
-    monkeypatch.setenv("SENTINELOS_REMEDIATION_DRY_RUN", "false")
-    monkeypatch.setenv("SENTINELOS_REMEDIATION_WEBHOOK_URL", "http://127.0.0.1:1/unreachable")
+    monkeypatch.setenv("CAVENDEX_REMEDIATION_DRY_RUN", "false")
+    monkeypatch.setenv("CAVENDEX_REMEDIATION_WEBHOOK_URL", "http://127.0.0.1:1/unreachable")
 
     result = send_remediation_request({"action_type": "block_ip"})
     assert result["outcome"] == "request_failed"

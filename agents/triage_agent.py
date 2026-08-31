@@ -3,12 +3,12 @@ from langchain_core.prompts import ChatPromptTemplate
 from agents.schemas import TriageAssessment
 from enrichment.pipeline import enrich_iocs, format_for_prompt
 from memory.vector_store import recall_similar_incidents, remember_incident
-from state import SentinelState
+from state import CavendexState
 from utils.llm import accumulate_usage, get_llm, invoke_structured, safe_error_message, usage_from_exception
 from utils.tenancy import DEFAULT_TENANT
 
 prompt = ChatPromptTemplate.from_template(
-    """You are the Sentinel Triage Agent — a senior SOC analyst with 15+ years of experience.
+    """You are the Cavendex Triage Agent — a senior SOC analyst with 15+ years of experience.
 
 Current Incident:
 {incident}
@@ -28,7 +28,7 @@ needs escalation to the Investigator Agent or is resolved at triage."""
 )
 
 
-def triage_agent(state: SentinelState) -> SentinelState:
+def triage_agent(state: CavendexState) -> CavendexState:
     incident = state.get("incident")
     tenant_id = state.get("tenant_id") or DEFAULT_TENANT
 

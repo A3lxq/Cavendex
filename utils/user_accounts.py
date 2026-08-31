@@ -1,8 +1,8 @@
 """Real per-tenant user accounts and server-side dashboard sessions —
 closing the gap README's Known Gaps has stated plainly since the
 dashboard shipped: "no per-user accounts... the dashboard's auth is one
-shared key for everyone using it." A tenant's `SENTINELOS_API_KEY`/
-`SENTINELOS_TENANT_API_KEYS` credential still works exactly as before
+shared key for everyone using it." A tenant's `CAVENDEX_API_KEY`/
+`CAVENDEX_TENANT_API_KEYS` credential still works exactly as before
 (unchanged, and still treated as an implicit admin credential — see
 api.py's `require_admin`) — this is an *additional*, opt-in identity
 layer specifically for a human logging into the dashboard, replacing
@@ -17,7 +17,7 @@ no separate service.
 Passwords are hashed with PBKDF2-HMAC-SHA256 (stdlib `hashlib`, no new
 dependency for something the standard library already does correctly) —
 a random per-user salt, a high iteration count
-(SENTINELOS_PASSWORD_HASH_ITERATIONS, default 600,000, roughly OWASP's
+(CAVENDEX_PASSWORD_HASH_ITERATIONS, default 600,000, roughly OWASP's
 2023 PBKDF2-SHA256 guidance), stored in a self-describing
 `pbkdf2_sha256$<iterations>$<salt_hex>$<hash_hex>` format so a future
 iteration-count bump never invalidates hashes created under the old one.
@@ -92,7 +92,7 @@ def _get_connection(tenant_id: str) -> sqlite3.Connection:
 
 def _iterations() -> int:
     try:
-        return int(os.getenv("SENTINELOS_PASSWORD_HASH_ITERATIONS", "600000"))
+        return int(os.getenv("CAVENDEX_PASSWORD_HASH_ITERATIONS", "600000"))
     except ValueError:
         return 600000
 
@@ -220,7 +220,7 @@ def change_role(tenant_id: str, username: str, role: str) -> bool:
 
 def _session_ttl_seconds() -> float:
     try:
-        return float(os.getenv("SENTINELOS_SESSION_TTL_SECONDS", "28800"))  # 8 hours
+        return float(os.getenv("CAVENDEX_SESSION_TTL_SECONDS", "28800"))  # 8 hours
     except ValueError:
         return 28800.0
 

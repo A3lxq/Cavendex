@@ -33,9 +33,9 @@ def _candidate(thread_id="inc-1", **overrides):
 
 @pytest.fixture(autouse=True)
 def _isolate(monkeypatch):
-    monkeypatch.delenv("SENTINELOS_CORRELATION_SEMANTIC_ENABLED", raising=False)
-    monkeypatch.delenv("SENTINELOS_CORRELATION_SEMANTIC_MAX_CANDIDATES", raising=False)
-    monkeypatch.delenv("SENTINELOS_CORRELATION_SEMANTIC_MIN_CONFIDENCE", raising=False)
+    monkeypatch.delenv("CAVENDEX_CORRELATION_SEMANTIC_ENABLED", raising=False)
+    monkeypatch.delenv("CAVENDEX_CORRELATION_SEMANTIC_MAX_CANDIDATES", raising=False)
+    monkeypatch.delenv("CAVENDEX_CORRELATION_SEMANTIC_MIN_CONFIDENCE", raising=False)
 
 
 def test_disabled_by_default_never_calls_the_judge(monkeypatch):
@@ -49,7 +49,7 @@ def test_disabled_by_default_never_calls_the_judge(monkeypatch):
 
 
 def test_no_candidates_never_calls_the_judge(monkeypatch):
-    monkeypatch.setenv("SENTINELOS_CORRELATION_SEMANTIC_ENABLED", "true")
+    monkeypatch.setenv("CAVENDEX_CORRELATION_SEMANTIC_ENABLED", "true")
 
     def _fail(*a, **kw):
         raise AssertionError("must not call the LLM with no candidates")
@@ -61,7 +61,7 @@ def test_no_candidates_never_calls_the_judge(monkeypatch):
 
 
 def test_a_confident_correlating_match_is_returned(monkeypatch):
-    monkeypatch.setenv("SENTINELOS_CORRELATION_SEMANTIC_ENABLED", "true")
+    monkeypatch.setenv("CAVENDEX_CORRELATION_SEMANTIC_ENABLED", "true")
     candidates = [_candidate("inc-1")]
 
     def _fake(alert_summary, candidates_summary):
@@ -74,7 +74,7 @@ def test_a_confident_correlating_match_is_returned(monkeypatch):
 
 
 def test_correlates_false_returns_no_match_but_preserves_usage(monkeypatch):
-    monkeypatch.setenv("SENTINELOS_CORRELATION_SEMANTIC_ENABLED", "true")
+    monkeypatch.setenv("CAVENDEX_CORRELATION_SEMANTIC_ENABLED", "true")
 
     def _fake(alert_summary, candidates_summary):
         return sc.CampaignMatch(correlates=False, thread_id=None, confidence="low", reason="unrelated"), _USAGE
@@ -88,7 +88,7 @@ def test_correlates_false_returns_no_match_but_preserves_usage(monkeypatch):
 def test_hallucinated_thread_id_is_rejected(monkeypatch):
     """A thread_id the model invented (not in the candidate list) must
     never be trusted enough to merge into a real incident."""
-    monkeypatch.setenv("SENTINELOS_CORRELATION_SEMANTIC_ENABLED", "true")
+    monkeypatch.setenv("CAVENDEX_CORRELATION_SEMANTIC_ENABLED", "true")
 
     def _fake(alert_summary, candidates_summary):
         return (
@@ -103,8 +103,8 @@ def test_hallucinated_thread_id_is_rejected(monkeypatch):
 
 
 def test_low_confidence_below_threshold_is_rejected(monkeypatch):
-    monkeypatch.setenv("SENTINELOS_CORRELATION_SEMANTIC_ENABLED", "true")
-    monkeypatch.setenv("SENTINELOS_CORRELATION_SEMANTIC_MIN_CONFIDENCE", "medium")
+    monkeypatch.setenv("CAVENDEX_CORRELATION_SEMANTIC_ENABLED", "true")
+    monkeypatch.setenv("CAVENDEX_CORRELATION_SEMANTIC_MIN_CONFIDENCE", "medium")
 
     def _fake(alert_summary, candidates_summary):
         return sc.CampaignMatch(correlates=True, thread_id="inc-1", confidence="low", reason="x"), _USAGE
@@ -116,8 +116,8 @@ def test_low_confidence_below_threshold_is_rejected(monkeypatch):
 
 
 def test_confidence_threshold_is_configurable(monkeypatch):
-    monkeypatch.setenv("SENTINELOS_CORRELATION_SEMANTIC_ENABLED", "true")
-    monkeypatch.setenv("SENTINELOS_CORRELATION_SEMANTIC_MIN_CONFIDENCE", "low")
+    monkeypatch.setenv("CAVENDEX_CORRELATION_SEMANTIC_ENABLED", "true")
+    monkeypatch.setenv("CAVENDEX_CORRELATION_SEMANTIC_MIN_CONFIDENCE", "low")
 
     def _fake(alert_summary, candidates_summary):
         return sc.CampaignMatch(correlates=True, thread_id="inc-1", confidence="low", reason="x"), _USAGE
@@ -129,8 +129,8 @@ def test_confidence_threshold_is_configurable(monkeypatch):
 
 
 def test_candidates_are_capped_at_max_candidates(monkeypatch):
-    monkeypatch.setenv("SENTINELOS_CORRELATION_SEMANTIC_ENABLED", "true")
-    monkeypatch.setenv("SENTINELOS_CORRELATION_SEMANTIC_MAX_CANDIDATES", "2")
+    monkeypatch.setenv("CAVENDEX_CORRELATION_SEMANTIC_ENABLED", "true")
+    monkeypatch.setenv("CAVENDEX_CORRELATION_SEMANTIC_MAX_CANDIDATES", "2")
     candidates = [_candidate(f"inc-{i}") for i in range(5)]
 
     seen = {}
@@ -145,7 +145,7 @@ def test_candidates_are_capped_at_max_candidates(monkeypatch):
 
 
 def test_total_llm_failure_falls_through_to_no_match_preserving_partial_usage(monkeypatch):
-    monkeypatch.setenv("SENTINELOS_CORRELATION_SEMANTIC_ENABLED", "true")
+    monkeypatch.setenv("CAVENDEX_CORRELATION_SEMANTIC_ENABLED", "true")
 
     def _fake(alert_summary, candidates_summary):
         raise StructuredOutputError(RuntimeError("malformed response"), _USAGE)
@@ -157,7 +157,7 @@ def test_total_llm_failure_falls_through_to_no_match_preserving_partial_usage(mo
 
 
 def test_no_provider_configured_fails_open_with_zero_usage(monkeypatch):
-    monkeypatch.setenv("SENTINELOS_CORRELATION_SEMANTIC_ENABLED", "true")
+    monkeypatch.setenv("CAVENDEX_CORRELATION_SEMANTIC_ENABLED", "true")
     for key in ["GROQ_API_KEY", "OPENAI_API_KEY", "ANTHROPIC_API_KEY", "GOOGLE_API_KEY", "OLLAMA_MODEL"]:
         monkeypatch.delenv(key, raising=False)
 
@@ -167,7 +167,7 @@ def test_no_provider_configured_fails_open_with_zero_usage(monkeypatch):
 
 
 def test_a_verified_technique_is_shown_to_the_judge(monkeypatch):
-    monkeypatch.setenv("SENTINELOS_CORRELATION_SEMANTIC_ENABLED", "true")
+    monkeypatch.setenv("CAVENDEX_CORRELATION_SEMANTIC_ENABLED", "true")
     candidate = _candidate("inc-1", attack_technique_id="T1110", attack_technique_name="Brute Force")
 
     seen = {}
@@ -183,7 +183,7 @@ def test_a_verified_technique_is_shown_to_the_judge(monkeypatch):
 
 
 def test_no_technique_shows_as_none_cited(monkeypatch):
-    monkeypatch.setenv("SENTINELOS_CORRELATION_SEMANTIC_ENABLED", "true")
+    monkeypatch.setenv("CAVENDEX_CORRELATION_SEMANTIC_ENABLED", "true")
 
     seen = {}
 

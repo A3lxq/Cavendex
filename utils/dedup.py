@@ -1,5 +1,5 @@
 """Alert deduplication — in-process by default, or Redis-backed (opt-in,
-`SENTINELOS_REDIS_URL`, the same switch utils/rate_limit.py uses) so a
+`CAVENDEX_REDIS_URL`, the same switch utils/rate_limit.py uses) so a
 multi-replica deployment shares one real dedup window across every
 process instead of each replica tracking "last seen" independently,
 which would let the same alert slip through as a fresh incident on every
@@ -8,10 +8,10 @@ replica it happens to land on via round-robin.
 Suppresses repeat alerts sharing the same (tenant, dedup_key) within a
 short window, so a single ongoing scan/attack producing dozens of
 near-identical events doesn't spawn dozens of independent incidents (and
-LLM pipeline runs) for the same thing SentinelOS already knows about.
+LLM pipeline runs) for the same thing Cavendex already knows about.
 
 Unconfigured (the default), this is exactly what it always was: stdlib
-only, "good enough for a single process." Set SENTINELOS_REDIS_URL and
+only, "good enough for a single process." Set CAVENDEX_REDIS_URL and
 this switches to a real Redis-backed implementation — same public
 function signature and semantics, callers never know the difference.
 See utils/rate_limit.py's own docstring for why a Redis command/
@@ -58,7 +58,7 @@ return 0
 
 
 def _redis_url() -> str:
-    return os.getenv("SENTINELOS_REDIS_URL", "").strip()
+    return os.getenv("CAVENDEX_REDIS_URL", "").strip()
 
 
 def _get_redis_client():
@@ -74,7 +74,7 @@ def _get_redis_client():
 
 
 def _is_duplicate_redis(client, tenant_id: str, dedup_key: str, window: float, now: Optional[float]) -> bool:
-    key = f"sentinelos:dedup:{tenant_id}:{dedup_key}"
+    key = f"cavendex:dedup:{tenant_id}:{dedup_key}"
     if now is None:
         seconds, microseconds = client.time()
         now = seconds + microseconds / 1_000_000
@@ -83,7 +83,7 @@ def _is_duplicate_redis(client, tenant_id: str, dedup_key: str, window: float, n
 
 def _window_seconds() -> float:
     try:
-        return float(os.getenv("SENTINELOS_DEDUP_WINDOW_SECONDS", "300"))
+        return float(os.getenv("CAVENDEX_DEDUP_WINDOW_SECONDS", "300"))
     except ValueError:
         return 300.0
 
@@ -124,7 +124,7 @@ def reset_for_tests() -> None:
         _last_seen.clear()
     if _redis_client is not None:
         try:
-            for k in _redis_client.scan_iter("sentinelos:dedup:*"):
+            for k in _redis_client.scan_iter("cavendex:dedup:*"):
                 _redis_client.delete(k)
         except Exception:
             pass

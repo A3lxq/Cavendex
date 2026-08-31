@@ -25,21 +25,21 @@ _tenant_counter = itertools.count()
 
 @pytest.fixture
 def tenant(monkeypatch, tmp_path):
-    monkeypatch.setenv("SENTINELOS_DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("CAVENDEX_DATA_DIR", str(tmp_path))
     # A real PBKDF2-SHA256 hash at the production default (600,000
     # iterations) takes ~0.3-0.4s -- correct and deliberate for a real
     # login, but unnecessary cost across dozens of test cases that only
     # care about correctness, not the actual security margin. A
     # dedicated test below (test_production_default_iteration_count)
     # covers the real default explicitly.
-    monkeypatch.setenv("SENTINELOS_PASSWORD_HASH_ITERATIONS", "1000")
+    monkeypatch.setenv("CAVENDEX_PASSWORD_HASH_ITERATIONS", "1000")
     reset_for_tests()
     yield f"accounts-test-{next(_tenant_counter)}"
     reset_for_tests()
 
 
 def test_production_default_iteration_count(monkeypatch):
-    monkeypatch.delenv("SENTINELOS_PASSWORD_HASH_ITERATIONS", raising=False)
+    monkeypatch.delenv("CAVENDEX_PASSWORD_HASH_ITERATIONS", raising=False)
     import utils.user_accounts as ua
 
     assert ua._iterations() == 600000
@@ -98,7 +98,7 @@ def test_verify_password_fails_for_unknown_username(tenant):
 
 
 def test_password_hash_is_never_stored_in_plaintext(tenant, monkeypatch, tmp_path):
-    monkeypatch.setenv("SENTINELOS_DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("CAVENDEX_DATA_DIR", str(tmp_path))
     create_user(tenant, "alice", "correct-horse-battery")
 
     import utils.user_accounts as ua
@@ -187,7 +187,7 @@ def test_validate_session_rejects_empty_token(tenant):
 
 
 def test_session_token_is_never_stored_in_plaintext(tenant, monkeypatch, tmp_path):
-    monkeypatch.setenv("SENTINELOS_DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("CAVENDEX_DATA_DIR", str(tmp_path))
     session = create_session(tenant, "alice", "analyst")
 
     import utils.user_accounts as ua
@@ -198,7 +198,7 @@ def test_session_token_is_never_stored_in_plaintext(tenant, monkeypatch, tmp_pat
 
 
 def test_expired_session_is_rejected(tenant, monkeypatch):
-    monkeypatch.setenv("SENTINELOS_SESSION_TTL_SECONDS", "0")
+    monkeypatch.setenv("CAVENDEX_SESSION_TTL_SECONDS", "0")
     session = create_session(tenant, "alice", "analyst")
     assert validate_session(tenant, session["token"]) is None
 
@@ -217,7 +217,7 @@ def test_invalidate_unknown_session_is_a_safe_no_op(tenant):
 
 
 def test_users_are_isolated_per_tenant(tenant, monkeypatch, tmp_path):
-    monkeypatch.setenv("SENTINELOS_DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("CAVENDEX_DATA_DIR", str(tmp_path))
     other_tenant = f"{tenant}-other"
     create_user(tenant, "alice", "correct-horse-battery")
     assert has_any_users(other_tenant) is False
@@ -225,7 +225,7 @@ def test_users_are_isolated_per_tenant(tenant, monkeypatch, tmp_path):
 
 
 def test_sessions_are_isolated_per_tenant(tenant, monkeypatch, tmp_path):
-    monkeypatch.setenv("SENTINELOS_DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("CAVENDEX_DATA_DIR", str(tmp_path))
     other_tenant = f"{tenant}-other"
     session = create_session(tenant, "alice", "analyst")
     assert validate_session(other_tenant, session["token"]) is None

@@ -16,14 +16,14 @@ import os
 
 def _max_bytes() -> int:
     try:
-        return int(os.getenv("SENTINELOS_LOG_MAX_BYTES", str(10 * 1024 * 1024)))
+        return int(os.getenv("CAVENDEX_LOG_MAX_BYTES", str(10 * 1024 * 1024)))
     except ValueError:
         return 10 * 1024 * 1024
 
 
 def _backup_count() -> int:
     try:
-        return max(0, int(os.getenv("SENTINELOS_LOG_BACKUP_COUNT", "3")))
+        return max(0, int(os.getenv("CAVENDEX_LOG_BACKUP_COUNT", "3")))
     except ValueError:
         return 3
 
@@ -69,8 +69,8 @@ def _rotate_if_needed(path: str) -> None:
 
 def append_line(path: str, line: str) -> None:
     """Append one line to `path`, rotating to `path.1`, `path.2`, ... first
-    if it's at/over SENTINELOS_LOG_MAX_BYTES (default 10MB; 0 disables
-    rotation), keeping at most SENTINELOS_LOG_BACKUP_COUNT (default 3)
+    if it's at/over CAVENDEX_LOG_MAX_BYTES (default 10MB; 0 disables
+    rotation), keeping at most CAVENDEX_LOG_BACKUP_COUNT (default 3)
     old copies before the oldest is dropped. Never raises.
     """
     try:

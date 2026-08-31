@@ -1,6 +1,6 @@
 """Freeform analyst notes on an incident — separate from `audit_log`
 (agent/system-generated, append-only, part of the actual incident
-record) and separate from `state.py`'s `Incident`/`SentinelState`
+record) and separate from `state.py`'s `Incident`/`CavendexState`
 entirely. A note is commentary an analyst adds ("checked with the user,
 this login was expected"), not part of the pipeline's own decision
 trail — keeping it in its own small per-tenant SQLite table (the same

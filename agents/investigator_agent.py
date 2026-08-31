@@ -2,11 +2,11 @@ from langchain_core.prompts import ChatPromptTemplate
 
 from agents.schemas import InvestigationFindings
 from enrichment.mitre_attack import validate_technique_citation
-from state import SentinelState
+from state import CavendexState
 from utils.llm import accumulate_usage, get_llm, invoke_structured, safe_error_message, usage_from_exception
 
 prompt = ChatPromptTemplate.from_template(
-    """You are the Sentinel Investigator Agent — you perform deeper analysis on
+    """You are the Cavendex Investigator Agent — you perform deeper analysis on
 incidents escalated by Triage.
 
 Current Incident:
@@ -27,7 +27,7 @@ clearly applies (leave it blank rather than guessing), and decide the next step:
 )
 
 
-def investigator_agent(state: SentinelState) -> SentinelState:
+def investigator_agent(state: CavendexState) -> CavendexState:
     incident = state.get("incident")
 
     try:
