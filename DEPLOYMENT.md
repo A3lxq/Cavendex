@@ -1136,13 +1136,18 @@ Everything here is already discussed in more depth in README's
 Pulled forward from README's **[Known Gaps](README.md#known-gaps--honest-limitations)** section because they specifically
 affect a live deployment decision, not just a feature-completeness one:
 
-- **Local models are genuinely slow on modest hardware.** During this
+- **Local models are genuinely slow on modest hardware — but a fast-path
+  escape hatch for high/critical incidents now exists.** During this
   project's own development, a full 4-agent incident run against a local
   Ollama model took anywhere from ~12 to ~14 minutes on a shared,
   loaded sandbox — this is a real, measured number, not a worst case.
   If you need fast turnaround and are running Ollama, budget for a real
-  GPU host, or use a hosted API provider for anything response-time
-  sensitive.
+  GPU host, use a hosted API provider for anything response-time
+  sensitive, or set README's **["Fast-Path Mode for Time-Critical Incidents"](README.md#fast-path-mode-for-time-critical-incidents)**
+  (`CAVENDEX_FASTPATH_ENABLED`/`CAVENDEX_FASTPATH_PROVIDER`/`CAVENDEX_FASTPATH_API_KEY`)
+  to reserve a separate cloud credential purely for high/critical
+  severity, without switching the deployment's everyday default off
+  Ollama.
 - **Rate limiting and dedup are single-process, in-memory state by
   default — but a real Redis-backed alternative exists now.** Set
   `CAVENDEX_REDIS_URL` (**[Section 4](#4-run-it-as-a-service)**) and both become genuinely shared

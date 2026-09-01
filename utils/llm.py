@@ -13,40 +13,132 @@ import os
 logger = logging.getLogger(__name__)
 
 
-def get_llm(temperature: float = 0):
-    groq_key = os.getenv("GROQ_API_KEY")
-    openai_key = os.getenv("OPENAI_API_KEY")
-    anthropic_key = os.getenv("ANTHROPIC_API_KEY")
-    google_key = os.getenv("GOOGLE_API_KEY")
+def _build_groq(temperature: float, api_key: str | None = None):
+    key = api_key or os.getenv("GROQ_API_KEY")
+    if not key:
+        return None
+    from langchain_groq import ChatGroq
+
+    return ChatGroq(model="llama-3.3-70b-versatile", temperature=temperature, groq_api_key=key)
+
+
+def _build_openai(temperature: float, api_key: str | None = None):
+    key = api_key or os.getenv("OPENAI_API_KEY")
+    if not key:
+        return None
+    from langchain_openai import ChatOpenAI
+
+    return ChatOpenAI(model="gpt-4o-mini", temperature=temperature, openai_api_key=key)
+
+
+def _build_anthropic(temperature: float, api_key: str | None = None):
+    key = api_key or os.getenv("ANTHROPIC_API_KEY")
+    if not key:
+        return None
+    from langchain_anthropic import ChatAnthropic
+
+    return ChatAnthropic(model="claude-sonnet-4-5", temperature=temperature, anthropic_api_key=key)
+
+
+def _build_google(temperature: float, api_key: str | None = None):
+    key = api_key or os.getenv("GOOGLE_API_KEY")
+    if not key:
+        return None
+    from langchain_google_genai import ChatGoogleGenerativeAI
+
+    return ChatGoogleGenerativeAI(model="gemini-2.5-flash", temperature=temperature, google_api_key=key)
+
+
+def _build_ollama(temperature: float, api_key: str | None = None):
     ollama_model = os.getenv("OLLAMA_MODEL")
+    if not ollama_model:
+        return None
+    # Local models need no API key — opt in by naming a model you've
+    # pulled with `ollama pull <model>` (e.g. llama3.1, qwen2.5).
+    from langchain_ollama import ChatOllama
 
-    if groq_key:
-        from langchain_groq import ChatGroq
+    base_url = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
+    return ChatOllama(model=ollama_model, base_url=base_url, temperature=temperature)
 
-        return ChatGroq(model="llama-3.3-70b-versatile", temperature=temperature)
 
-    if openai_key:
-        from langchain_openai import ChatOpenAI
+# Default fallback order: first one whose own env var is actually set wins.
+_PROVIDER_ORDER = [_build_groq, _build_openai, _build_anthropic, _build_google, _build_ollama]
 
-        return ChatOpenAI(model="gpt-4o-mini", temperature=temperature)
+# Fast-path escape hatch: CAVENDEX_FASTPATH_PROVIDER names one of these
+# explicitly, independent of the default order above.
+_FASTPATH_BUILDERS = {
+    "groq": _build_groq,
+    "openai": _build_openai,
+    "anthropic": _build_anthropic,
+    "google": _build_google,
+}
 
-    if anthropic_key:
-        from langchain_anthropic import ChatAnthropic
 
-        return ChatAnthropic(model="claude-sonnet-4-5", temperature=temperature)
+def _build_fastpath_llm(temperature: float):
+    """Best-effort fast-path provider build. Returns None (never raises) if
+    fast-path isn't configured or CAVENDEX_FASTPATH_API_KEY is missing —
+    either way the caller falls through to the normal order unchanged.
 
-    if google_key:
-        from langchain_google_genai import ChatGoogleGenerativeAI
+    Deliberately uses its own CAVENDEX_FASTPATH_API_KEY, never the named
+    provider's own GROQ_API_KEY/OPENAI_API_KEY/etc. — those are read by the
+    normal default order above, so if fast-path reused them here, merely
+    setting one (required to name it as the fast-path provider at all)
+    would silently make that provider the default for *every* incident,
+    every severity, defeating the entire point of choosing a slower/local
+    default (cost, privacy, air-gap) and reserving a cloud provider only
+    for genuinely time-critical incidents. A separate credential keeps the
+    two concerns — "what's my everyday default" and "what do I fall back to
+    when it's critical" — genuinely independent.
+    """
+    provider = os.getenv("CAVENDEX_FASTPATH_PROVIDER", "").strip().lower()
+    if not provider:
+        return None
+    builder = _FASTPATH_BUILDERS.get(provider)
+    if builder is None:
+        logger.warning(
+            "CAVENDEX_FASTPATH_PROVIDER=%r is not a recognized provider "
+            "(groq/openai/anthropic/google) — ignoring fast-path for this call.",
+            provider,
+        )
+        return None
+    fastpath_key = os.getenv("CAVENDEX_FASTPATH_API_KEY")
+    if not fastpath_key:
+        logger.warning(
+            "CAVENDEX_FASTPATH_PROVIDER=%s but CAVENDEX_FASTPATH_API_KEY is not "
+            "set — falling back to the normal provider order for this call.",
+            provider,
+        )
+        return None
+    return builder(temperature, api_key=fastpath_key)
 
-        return ChatGoogleGenerativeAI(model="gemini-2.5-flash", temperature=temperature)
 
-    if ollama_model:
-        # Local models need no API key — opt in by naming a model you've
-        # pulled with `ollama pull <model>` (e.g. llama3.1, qwen2.5).
-        from langchain_ollama import ChatOllama
+def get_llm(temperature: float = 0, prefer_fast: bool = False):
+    """Build the LLM for one call.
 
-        base_url = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
-        return ChatOllama(model=ollama_model, base_url=base_url, temperature=temperature)
+    prefer_fast: an explicit, opt-in escape hatch for a deployment that
+    deliberately defaults to a slower/free/local provider (cost, privacy,
+    air-gap — e.g. only OLLAMA_MODEL is set) but doesn't want a high/critical
+    incident stuck behind it. Only takes effect when CAVENDEX_FASTPATH_ENABLED
+    is also set; even then, it only changes anything if CAVENDEX_FASTPATH_PROVIDER
+    names a provider AND CAVENDEX_FASTPATH_API_KEY is set — otherwise this
+    falls straight through to the normal Groq->OpenAI->Anthropic->Google->Ollama
+    order below, unchanged. Fast-path uses its own dedicated
+    CAVENDEX_FASTPATH_API_KEY, deliberately never the named provider's own
+    GROQ_API_KEY/OPENAI_API_KEY/etc. — reusing those would mean simply
+    naming a fast-path provider silently makes it the default for *every*
+    incident regardless of severity (since the normal order already tries
+    every configured cloud key before Ollama), defeating the reason a
+    deployment chose a slower/local default in the first place.
+    """
+    if prefer_fast and os.getenv("CAVENDEX_FASTPATH_ENABLED", "false").lower() == "true":
+        fast_llm = _build_fastpath_llm(temperature)
+        if fast_llm is not None:
+            return fast_llm
+
+    for builder in _PROVIDER_ORDER:
+        llm = builder(temperature)
+        if llm is not None:
+            return llm
 
     raise RuntimeError(
         "No LLM provider configured. Set GROQ_API_KEY (preferred, free "

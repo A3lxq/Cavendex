@@ -60,7 +60,11 @@ def triage_agent(state: CavendexState) -> CavendexState:
         # missing key crashes the whole graph run (and, via the API, the
         # whole HTTP request) with an unhandled exception instead of the
         # clean in-band error this except block is meant to produce.
-        llm = get_llm(temperature=0)
+        # Fast-path reads the incident's pre-Triage severity guess (its own
+        # verdict doesn't exist yet) — the normalizer/CLI/API-supplied value
+        # set at incident creation.
+        prefer_fast = incident is not None and incident.severity in ("high", "critical")
+        llm = get_llm(temperature=0, prefer_fast=prefer_fast)
         chain = prompt | llm.with_structured_output(TriageAssessment, include_raw=True)
         result: TriageAssessment
         result, usage = invoke_structured(

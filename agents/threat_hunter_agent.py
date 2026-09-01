@@ -32,7 +32,10 @@ def threat_hunter_agent(state: CavendexState) -> CavendexState:
 
     try:
         # get_llm() must be inside this try — see triage_agent.py for why.
-        llm = get_llm(temperature=0)
+        # incident.severity here is Triage's verdict (possibly re-escalated
+        # by a correlation merge) — see triage_agent.py.
+        prefer_fast = incident is not None and incident.severity in ("high", "critical")
+        llm = get_llm(temperature=0, prefer_fast=prefer_fast)
         chain = prompt | llm.with_structured_output(ThreatHuntFindings, include_raw=True)
         result: ThreatHuntFindings
         result, usage = invoke_structured(

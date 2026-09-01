@@ -32,7 +32,10 @@ def investigator_agent(state: CavendexState) -> CavendexState:
 
     try:
         # get_llm() must be inside this try — see triage_agent.py for why.
-        llm = get_llm(temperature=0)
+        # By this point incident.severity is Triage's own verdict, not the
+        # pre-Triage guess — see triage_agent.py.
+        prefer_fast = incident is not None and incident.severity in ("high", "critical")
+        llm = get_llm(temperature=0, prefer_fast=prefer_fast)
         chain = prompt | llm.with_structured_output(InvestigationFindings, include_raw=True)
         result: InvestigationFindings
         result, usage = invoke_structured(
