@@ -45,11 +45,14 @@ action, with a reason for each. Written to both the incident's in-memory
 state and its Obsidian vault note.
 
 **Correlation** — Deciding whether a new alert is *related to* an
-already-open incident rather than the start of a new one. Three tiers,
+already-open incident rather than the start of a new one. Four tiers,
 checked in order: **exact** (identical IOC or asset), **fuzzy** (same
-subnet or same registered domain), and **semantic** (opt-in, one LLM
-judgment call for a shared-technique case with no shared IOC at all). See
-README's **["Alert Correlation"](README.md#alert-correlation)** section for the full detail.
+subnet or same registered domain), **identity** (free, via an
+operator-supplied inventory export or opt-in passive DNS — catches a
+renamed asset or an unrelated-looking second-stage domain the first two
+tiers structurally can't), and **semantic** (opt-in, one LLM judgment
+call for a shared-technique case with no shared IOC/subnet/domain/
+identity at all). See README's **["Alert Correlation"](README.md#alert-correlation)** section for the full detail.
 
 **Dedup / dedup_key** — Suppressing an alert that's an exact repeat of
 one already seen recently (same tenant, same `dedup_key`, within
@@ -152,12 +155,17 @@ executed automatically, always waiting on human approve/deny.
 
 **Rate limiting** — Capping how many requests (API calls) or ingested
 alerts (per tenant) are processed per minute, to stop either a busy
-client or a flood of injected/noisy alerts from burning unlimited LLM
-calls. Two independent limiters: one at the API layer
-(`CAVENDEX_RATE_LIMIT_PER_MINUTE`), one inside the shared ingestion
-gate itself (`CAVENDEX_INGEST_RATE_LIMIT_PER_MINUTE`) — the second one
-is what protects `syslog_listener.py` and `poll_connector.py`, which
-never touch the API layer at all.
+client, many source IPs collectively overrunning a tenant's budget, or a
+flood of injected/noisy alerts from burning unlimited LLM calls. Three
+checks across two locations: at the API layer, a per-`(tenant, client
+IP)` limit (`CAVENDEX_RATE_LIMIT_PER_MINUTE`) plus a *second*,
+tenant-wide ceiling on top of it (`CAVENDEX_TENANT_RATE_LIMIT_PER_MINUTE`
+— closes the gap where many individually-under-limit source IPs could
+still collectively exceed what one tenant's LLM-pipeline budget should
+allow); separately, inside the shared ingestion gate itself
+(`CAVENDEX_INGEST_RATE_LIMIT_PER_MINUTE`) — this last one is what
+protects `syslog_listener.py` and `poll_connector.py`, which never touch
+the API layer at all.
 
 **Severity** — One of `low` / `medium` / `high` / `critical`. Set by
 Triage's reasoning (informed by real enrichment data where available),
@@ -194,6 +202,6 @@ figure honestly).
 **Webhook (alerting)** — An outbound HTTP POST Cavendex sends to a URL
 you configure (`CAVENDEX_ALERT_WEBHOOK_URL`) whenever an incident
 needs approval or crosses a severity threshold — works natively with
-Slack/Discord/Teams incoming webhooks, or your own relay script. Not to
-be confused with `/ingest/{source}`, which is an *inbound* webhook for
-pushing alerts in.
+Slack/Discord/Teams incoming webhooks, PagerDuty's Events API, or your
+own relay script. Not to be confused with `/ingest/{source}`, which is
+an *inbound* webhook for pushing alerts in.
