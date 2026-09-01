@@ -40,6 +40,18 @@ API key, a free [Google AI Studio](https://aistudio.google.com/apikey)
 key, or [Ollama](https://ollama.com) running locally (no key at all, but
 slower on a laptop).
 
+**Recommended — install it as a real command:**
+
+```bash
+python3 -m venv venv
+source venv/bin/activate        # Windows: venv\Scripts\activate
+pip install .
+cp .env.example .env
+```
+
+**Alternative — from source**, if you want to read or modify the code
+as you go:
+
 ```bash
 python3 -m venv venv
 source venv/bin/activate        # Windows: venv\Scripts\activate
@@ -47,7 +59,8 @@ pip install -r requirements.txt
 cp .env.example .env
 ```
 
-Open `.env` in any text editor and paste your key into one line, e.g.:
+Either way, open `.env` in any text editor and paste your key into one
+line, e.g.:
 
 ```env
 GROQ_API_KEY=gsk_your_actual_key_here
@@ -59,12 +72,18 @@ start.
 Run the built-in demo:
 
 ```bash
-python main.py
+cavendex demo      # if you installed with `pip install .`
+python main.py     # if you're running from source
 ```
 
 If you see agent output scroll by ending in a proposed action, it
 worked. If you see a Python error instead, jump to
 [Troubleshooting](#troubleshooting) below.
+
+Rather skip local Python setup entirely? `docker compose up -d` after
+the same `cp .env.example .env` step gets you the dashboard at
+`http://localhost:8000/` with nothing installed on your machine but
+Docker — see README's **Installation** section.
 
 ---
 
@@ -73,7 +92,8 @@ worked. If you see a Python error instead, jump to
 This is the part most analysts will actually use day to day.
 
 ```bash
-uvicorn api:api --reload
+cavendex serve --reload   # if you installed with `pip install .`
+uvicorn api:api --reload  # if you're running from source
 ```
 
 Open **http://localhost:8000/** in a browser. You should see:
@@ -153,7 +173,8 @@ ever seen — worth having a copy somewhere other than this one machine.
 an interval:
 
 ```bash
-python vault_backup.py --remote git@github.com:you/your-private-vault-repo.git
+cavendex backup --remote git@github.com:you/your-private-vault-repo.git   # pip install .
+python vault_backup.py --remote git@github.com:you/your-private-vault-repo.git   # from source
 ```
 
 **Use a private repository.** Your vault contains real incident
@@ -161,16 +182,17 @@ descriptions, IOCs, and asset names from your environment. `vault_backup.py`
 does not and cannot make the repo private for you — that's on you, when
 you create it on GitHub (or wherever you host it).
 
-Want to try it without pushing anywhere yet? `python vault_backup.py --no-push`
-commits locally only.
+Want to try it without pushing anywhere yet? Add `--no-push` to either
+command above to commit locally only.
 
 ---
 
 ## Troubleshooting
 
-**`ModuleNotFoundError` when running `python main.py`**
-Your virtual environment isn't active, or `pip install -r requirements.txt`
-didn't finish. Run `source venv/bin/activate` again and re-install.
+**`ModuleNotFoundError` when running `python main.py`, or `cavendex: command not found`**
+Your virtual environment isn't active, or the install step didn't
+finish. Run `source venv/bin/activate` again and re-run `pip install .`
+(or `pip install -r requirements.txt` if you're running from source).
 
 **The demo just prints an error about no provider being configured**
 `.env` doesn't have a real key in it yet, or you're editing a different
@@ -178,9 +200,9 @@ didn't finish. Run `source venv/bin/activate` again and re-install.
 key.
 
 **The dashboard loads but says "disconnected" or incidents never appear**
-Make sure `uvicorn api:api --reload` is still running in a terminal — the
-dashboard is just a webpage that talks to that process. Check that
-terminal for a Python traceback.
+Make sure `cavendex serve`/`uvicorn api:api --reload` is still running in
+a terminal — the dashboard is just a webpage that talks to that process.
+Check that terminal for a Python traceback.
 
 **Every dashboard action returns a 401 error**
 You set `CAVENDEX_API_KEY` in `.env` but haven't entered the same key

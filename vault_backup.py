@@ -41,9 +41,13 @@ import time
 from datetime import datetime, timezone
 from typing import Optional
 
-from dotenv import load_dotenv
+from dotenv import find_dotenv, load_dotenv
 
-load_dotenv(override=True)
+# find_dotenv(usecwd=True): search from the caller's working directory,
+# not this file's location — matters once this module is installed
+# into site-packages and run as `cavendex backup` from wherever a
+# user's .env actually lives.
+load_dotenv(find_dotenv(usecwd=True), override=True)
 
 _COMMIT_AUTHOR_NAME = "Cavendex Vault Backup"
 _COMMIT_AUTHOR_EMAIL = "vault-backup@cavendex.local"

@@ -93,9 +93,13 @@ import socketserver
 import ssl
 from typing import List, Optional
 
-from dotenv import load_dotenv
+from dotenv import find_dotenv, load_dotenv
 
-load_dotenv(override=True)
+# find_dotenv(usecwd=True): search from the caller's working directory,
+# not this file's location — matters once this module is installed
+# into site-packages and run as `cavendex ingest syslog` from wherever
+# a user's .env actually lives.
+load_dotenv(find_dotenv(usecwd=True), override=True)
 
 # Generous but bounded — NormalizedAlert length-caps everything that
 # actually reaches an incident anyway, but an unbounded read from an

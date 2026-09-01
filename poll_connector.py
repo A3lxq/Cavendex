@@ -18,9 +18,13 @@ environment) that holds the actual API token.
 import argparse
 import time
 
-from dotenv import load_dotenv
+from dotenv import find_dotenv, load_dotenv
 
-load_dotenv(override=True)
+# find_dotenv(usecwd=True): search from the caller's working directory,
+# not this file's location — matters once this module is installed
+# into site-packages and run as `cavendex ingest poll` from wherever a
+# user's .env actually lives.
+load_dotenv(find_dotenv(usecwd=True), override=True)
 
 
 def main():

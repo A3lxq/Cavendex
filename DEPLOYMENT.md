@@ -47,6 +47,7 @@ cd /opt/cavendex
 python3 -m venv venv
 source venv/bin/activate
 pip install --require-hashes -r requirements.lock.txt
+pip install --no-deps .   # installs the `cavendex` command into this venv
 
 cp .env.example .env
 ```
@@ -198,7 +199,7 @@ Type=simple
 User=cavendex
 WorkingDirectory=/opt/cavendex
 EnvironmentFile=/opt/cavendex/.env
-ExecStart=/opt/cavendex/venv/bin/uvicorn api:api --host 127.0.0.1 --port 8000
+ExecStart=/opt/cavendex/venv/bin/cavendex serve --host 127.0.0.1 --port 8000
 Restart=on-failure
 RestartSec=5
 
@@ -219,6 +220,51 @@ sudo systemctl enable --now cavendex-api
 sudo systemctl status cavendex-api
 curl http://127.0.0.1:8000/health   # {"status": "ok"}
 ```
+
+### Alternative: Docker Compose deployment
+
+Everything above (venv, systemd unit, dedicated user) is one way to run
+this on a bare host. `docker-compose.yml` in the repo root is a
+turnkey alternative — the `api` service builds the same code from the
+`Dockerfile` (a non-root `cavendex` user inside the container plays the
+same role as the dedicated system user above) and runs `cavendex serve
+--host 0.0.0.0` by default:
+
+```bash
+cp .env.example .env    # edit it exactly as described above
+docker compose up -d
+curl http://127.0.0.1:8000/health
+```
+
+`./data`, `./.chroma`, and `./obsidian_vault` are bind-mounted into the
+container so state survives a `docker compose down`/rebuild — the same
+three directories Section 12 below discusses backing up.
+
+Ingestion connectors, Redis, and vault backup are **not** started by
+default — each needs real host-specific config (a log path, a poller
+JSON, a git remote) that can't be guessed, so each is behind its own
+Compose profile:
+
+```bash
+docker compose --profile redis up -d              # CAVENDEX_REDIS_URL=redis://redis:6379/0
+docker compose --profile ingest-syslog up -d       # after editing its `command:`/ports in docker-compose.yml
+docker compose --profile ingest-watch up -d        # after bind-mounting the real log file to watch
+docker compose --profile ingest-poll up -d         # after bind-mounting your real poller config
+docker compose --profile ingest-crowdstrike up -d  # after bind-mounting your real CrowdStrike config
+docker compose --profile backup up -d              # after bind-mounting a real SSH key and setting --remote
+```
+
+See the comments above each service in `docker-compose.yml` for exactly
+what to edit before enabling it — none of them will silently start
+listening/polling/pushing without you pointing them at something real
+first, same philosophy as every opt-in feature elsewhere in this
+document.
+
+No reverse-proxy/TLS termination is included in `docker-compose.yml` —
+put one in front the same way Section 5 below describes for the
+bare-host deployment (a `Caddy`/`nginx` container in front of the `api`
+service works the same way, just pointed at `api:8000` instead of
+`127.0.0.1:8000`).
 
 ---
 
@@ -317,7 +363,7 @@ Type=simple
 User=cavendex
 WorkingDirectory=/opt/cavendex
 EnvironmentFile=/opt/cavendex/.env
-ExecStart=/opt/cavendex/venv/bin/python ingest_watch.py \
+ExecStart=/opt/cavendex/venv/bin/cavendex ingest watch \
     --path /var/log/suricata/eve.json \
     --source suricata \
     --tenant default \
@@ -345,7 +391,7 @@ sudo systemctl enable --now cavendex-ingest-suricata
 source:
 
 ```ini
-ExecStart=/opt/cavendex/venv/bin/python ingest_watch.py \
+ExecStart=/opt/cavendex/venv/bin/cavendex ingest watch \
     --path /var/ossec/logs/alerts/alerts.json \
     --source wazuh \
     --tenant default \
@@ -387,7 +433,7 @@ Type=simple
 User=cavendex
 WorkingDirectory=/opt/cavendex
 EnvironmentFile=/opt/cavendex/.env
-ExecStart=/opt/cavendex/venv/bin/python syslog_listener.py \
+ExecStart=/opt/cavendex/venv/bin/cavendex ingest syslog \
     --protocol udp \
     --bind 10.0.5.10 \
     --port 5514 \
@@ -433,7 +479,7 @@ openssl req -x509 -newkey rsa:2048 -keyout server.key -out server.crt \
 **2. Run the listener with `--tls-cert`/`--tls-key`:**
 
 ```ini
-ExecStart=/opt/cavendex/venv/bin/python syslog_listener.py \
+ExecStart=/opt/cavendex/venv/bin/cavendex ingest syslog \
     --protocol tcp \
     --bind 10.0.5.10 \
     --port 6514 \
@@ -558,7 +604,7 @@ Type=simple
 User=cavendex
 WorkingDirectory=/opt/cavendex
 EnvironmentFile=/opt/cavendex/.env
-ExecStart=/opt/cavendex/venv/bin/python poll_connector.py \
+ExecStart=/opt/cavendex/venv/bin/cavendex ingest poll \
     --config /etc/cavendex/my-siem.json
 Restart=on-failure
 RestartSec=5
@@ -603,7 +649,7 @@ Type=simple
 User=cavendex
 WorkingDirectory=/opt/cavendex
 EnvironmentFile=/opt/cavendex/.env
-ExecStart=/opt/cavendex/venv/bin/python crowdstrike_connector.py \
+ExecStart=/opt/cavendex/venv/bin/cavendex ingest crowdstrike \
     --config /etc/cavendex/crowdstrike.json
 Restart=on-failure
 RestartSec=5
@@ -802,7 +848,7 @@ Type=simple
 User=cavendex
 WorkingDirectory=/opt/cavendex
 EnvironmentFile=/opt/cavendex/.env
-ExecStart=/opt/cavendex/venv/bin/python vault_backup.py \
+ExecStart=/opt/cavendex/venv/bin/cavendex backup \
     --remote git@github.com:you/your-private-vault-repo.git \
     --interval-seconds 300
 Restart=on-failure

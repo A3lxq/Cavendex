@@ -28,9 +28,13 @@ import argparse
 import os
 import sys
 
-from dotenv import load_dotenv
+from dotenv import find_dotenv, load_dotenv
 
-load_dotenv(override=True)
+# find_dotenv(usecwd=True): search from the caller's working directory,
+# not this file's location — matters once this module is installed
+# into site-packages and run as `cavendex <command>` from wherever a
+# user's .env actually lives.
+load_dotenv(find_dotenv(usecwd=True), override=True)
 
 _PROVIDER_KEYS = ["GROQ_API_KEY", "OPENAI_API_KEY", "ANTHROPIC_API_KEY", "GOOGLE_API_KEY", "OLLAMA_MODEL"]
 

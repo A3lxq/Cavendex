@@ -40,6 +40,46 @@ Every claim above with a live/verified component is backed by an actual run agai
 
 ---
 
+## Installation
+
+Three ways to get Cavendex running, in increasing order of turnkey-ness. All three run the exact same code — `cavendex` is a thin dispatcher over the same modules `python <script>.py` always called (see `launcher.py`), so pick whichever fits how you work.
+
+**From source (for reading/modifying the code):**
+
+```bash
+git clone <this repo> && cd cavendex
+python3 -m venv venv && source venv/bin/activate
+pip install -r requirements.txt
+python main.py          # or: python cli.py, uvicorn api:api
+```
+
+This is what the rest of this README and GETTING_STARTED.md walk through.
+
+**As an installed package (one `cavendex` command, from any directory):**
+
+```bash
+pip install .           # or: pip install -e . for an editable/dev install
+cp .env.example .env    # then edit .env — see step 3 below
+cavendex serve          # dashboard/API at http://localhost:8000/
+cavendex new "Suspicious login from 1.2.3.4" --severity high
+cavendex ingest syslog --port 5514 --source syslog_cef
+cavendex demo
+cavendex --help         # full command list
+```
+
+`.env` is read from wherever you run `cavendex` from (not this repo), so create one in whatever directory you're actually running it from.
+
+**Docker Compose (most turnkey — no local Python setup at all):**
+
+```bash
+cp .env.example .env    # then edit .env — see step 3 below
+docker compose up -d    # dashboard/API at http://localhost:8000/
+```
+
+Starts just the `api` service by default — everything else (ingestion connectors, Redis, vault backup) is opt-in via Compose profiles, since they need real host-specific config (a log path, a poller JSON, a git remote) to be useful. See `docker-compose.yml` for what each profile expects, or **DEPLOYMENT.md**'s "Docker Compose deployment" section for a walkthrough.
+
+---
+
 ## Quick Start
 
 New to this project? **[GETTING_STARTED.md](GETTING_STARTED.md)** covers the same ground with more hand-holding. This section assumes you're comfortable with a terminal.

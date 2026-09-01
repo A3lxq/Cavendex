@@ -1,0 +1,120 @@
+# Turnkey path: `docker compose up -d` starts just the `api` service —
+# the dashboard/API server, working out of the box against the
+# bind-mounted ./data, ./.chroma, and ./obsidian_vault so state survives
+# a container recreate. Everything else here is opt-in and profile-gated,
+# matching this project's "inert unless configured" philosophy: nothing
+# starts a network listener, a poller, or a git-pushing backup loop
+# without you explicitly asking for it and pointing it at real config.
+#
+# Bring up an optional service with, e.g.:
+#   docker compose --profile redis up -d
+#   docker compose --profile ingest-syslog up -d
+
+services:
+  api:
+    build: .
+    ports:
+      - "8000:8000"
+    env_file:
+      - .env
+    volumes:
+      - ./data:/app/data
+      - ./.chroma:/app/.chroma
+      - ./obsidian_vault:/app/obsidian_vault
+    restart: unless-stopped
+
+  # Only relevant once CAVENDEX_REDIS_URL is set in .env (to
+  # redis://redis:6379/0, when using this service) — distributed rate
+  # limiting/dedup for multi-replica deployments. A single-instance
+  # deployment doesn't need this; api works fine without it.
+  redis:
+    image: redis:7-alpine
+    profiles: ["redis"]
+    volumes:
+      - redis-data:/data
+    restart: unless-stopped
+
+  # Listens for syslog/CEF on a UDP/TCP port. Bind-mount a real TLS
+  # cert/key here if using --tls-cert/--tls-key; otherwise drop those
+  # volumes and flags. Exposes 5514/udp by default — change the
+  # published port and --port flag together if you need a different one.
+  ingest-syslog:
+    build: .
+    profiles: ["ingest-syslog"]
+    command: ["ingest", "syslog", "--bind", "0.0.0.0", "--port", "5514", "--source", "syslog_cef"]
+    ports:
+      - "5514:5514/udp"
+    env_file:
+      - .env
+    volumes:
+      - ./data:/app/data
+      - ./.chroma:/app/.chroma
+      - ./obsidian_vault:/app/obsidian_vault
+    restart: unless-stopped
+
+  # Watches a log file for new alerts (Suricata eve.json, Wazuh alerts,
+  # or a generic JSONL format). Bind-mount the real host path you want
+  # watched at the container path you pass to --path.
+  ingest-watch:
+    build: .
+    profiles: ["ingest-watch"]
+    command: ["ingest", "watch", "--path", "/var/log/source/alerts.log", "--source", "generic"]
+    env_file:
+      - .env
+    volumes:
+      - ./data:/app/data
+      - ./.chroma:/app/.chroma
+      - ./obsidian_vault:/app/obsidian_vault
+      # - /path/on/host/alerts.log:/var/log/source/alerts.log:ro
+    restart: unless-stopped
+
+  # Polls a SIEM (e.g. Splunk) on an interval per a poller config JSON.
+  # Bind-mount the real config file (with real API endpoint/credentials)
+  # at the path --config points to.
+  ingest-poll:
+    build: .
+    profiles: ["ingest-poll"]
+    command: ["ingest", "poll", "--config", "/app/config/poller.json"]
+    env_file:
+      - .env
+    volumes:
+      - ./data:/app/data
+      - ./.chroma:/app/.chroma
+      - ./obsidian_vault:/app/obsidian_vault
+      # - ./config/poller.json:/app/config/poller.json:ro
+    restart: unless-stopped
+
+  # Polls CrowdStrike Falcon per a connector config JSON. Bind-mount the
+  # real config file (client ID/secret, base URL) at the path --config
+  # points to.
+  ingest-crowdstrike:
+    build: .
+    profiles: ["ingest-crowdstrike"]
+    command: ["ingest", "crowdstrike", "--config", "/app/config/crowdstrike.json"]
+    env_file:
+      - .env
+    volumes:
+      - ./data:/app/data
+      - ./.chroma:/app/.chroma
+      - ./obsidian_vault:/app/obsidian_vault
+      # - ./config/crowdstrike.json:/app/config/crowdstrike.json:ro
+    restart: unless-stopped
+
+  # Commits+pushes the Obsidian vault to a git remote on an interval.
+  # Needs real git auth (an SSH key already loaded, or an HTTPS token
+  # embedded in --remote) — bind-mount an SSH key/known_hosts if using
+  # the git@... form.
+  backup:
+    build: .
+    profiles: ["backup"]
+    command: ["backup", "--remote", "git@github.com:you/your-vault.git"]
+    env_file:
+      - .env
+    volumes:
+      - ./obsidian_vault:/app/obsidian_vault
+      # - ~/.ssh/id_ed25519:/home/cavendex/.ssh/id_ed25519:ro
+      # - ~/.ssh/known_hosts:/home/cavendex/.ssh/known_hosts:ro
+    restart: unless-stopped
+
+volumes:
+  redis-data:

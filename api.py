@@ -39,9 +39,14 @@ import queue
 import secrets
 from typing import List, Optional
 
-from dotenv import load_dotenv
+from dotenv import find_dotenv, load_dotenv
 
-load_dotenv(override=True)
+# find_dotenv(usecwd=True): without it, python-dotenv searches upward
+# from *this file's* location, not the caller's working directory —
+# fine when run via `python api.py` from the repo root, but wrong once
+# this module lives in site-packages (pip install) and the user's .env
+# is wherever they're actually running `cavendex` from.
+load_dotenv(find_dotenv(usecwd=True), override=True)
 
 from fastapi import APIRouter, Depends, FastAPI, HTTPException, Request
 from fastapi.openapi.docs import get_redoc_html, get_swagger_ui_html
