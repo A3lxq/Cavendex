@@ -1,5 +1,6 @@
 from ingestion.normalizers import (
     normalize_crowdstrike,
+    normalize_elastic,
     normalize_generic,
     normalize_splunk,
     normalize_suricata_eve,
@@ -278,3 +279,79 @@ def test_normalize_crowdstrike_deduplicates_repeated_technique_ids():
         }
     )
     assert alert.description.count("T1003") == 1
+
+
+# ---------- Elastic Security ----------
+
+
+def test_normalize_elastic_rejects_payload_with_no_rule_name():
+    assert normalize_elastic({}) is None
+    assert normalize_elastic({"_source": {"kibana": {"alert": {"severity": "high"}}}}) is None
+
+
+def test_normalize_elastic_maps_a_full_search_hit():
+    alert = normalize_elastic(
+        {
+            "_id": "abc123",
+            "_source": {
+                "kibana": {"alert": {"rule": {"name": "Suspicious PowerShell"}, "severity": "high"}},
+                "source": {"ip": "203.0.113.7"},
+                "destination": {"ip": "10.0.0.5"},
+                "host": {"name": "FIN-SRV-02"},
+                "process": {
+                    "name": "powershell.exe",
+                    "command_line": "powershell.exe -enc AAA==",
+                    "parent": {"name": "explorer.exe"},
+                },
+                "threat": {"technique": {"id": ["T1059.001"]}},
+            },
+        }
+    )
+    assert alert is not None
+    assert alert.severity == "high"
+    assert alert.source == "elastic"
+    assert "203.0.113.7" in alert.iocs
+    assert "10.0.0.5" in alert.iocs
+    assert "FIN-SRV-02" in alert.affected_assets
+    assert "T1059.001" in alert.description
+    assert alert.dedup_key == "elastic:abc123"
+    # The EDR-native process context lands in the dedicated fields (and,
+    # via NormalizedAlert's own folding logic, the prefixed iocs list) --
+    # not just somewhere in the free-text description.
+    assert "process:powershell.exe" in alert.iocs
+    assert "cmdline:powershell.exe -enc AAA==" in alert.iocs
+    assert "parent:explorer.exe" in alert.iocs
+
+
+def test_normalize_elastic_accepts_a_bare_source_dict():
+    """Also works if something in front of the poller already unwraps
+    the Elasticsearch hit envelope itself."""
+    alert = normalize_elastic({"kibana": {"alert": {"rule": {"name": "Bare Source"}}}})
+    assert alert is not None
+    assert "Bare Source" in alert.description
+
+
+def test_normalize_elastic_severity_scale_already_matches_no_remapping_needed():
+    def sev(value):
+        return normalize_elastic({"kibana": {"alert": {"rule": {"name": "x"}, "severity": value}}}).severity
+
+    assert sev("low") == "low"
+    assert sev("medium") == "medium"
+    assert sev("high") == "high"
+    assert sev("critical") == "critical"
+    assert sev("not-a-real-value") == "medium"
+
+
+def test_normalize_elastic_handles_missing_optional_fields():
+    alert = normalize_elastic({"kibana": {"alert": {"rule": {"name": "Minimal Alert"}}}})
+    assert alert is not None
+    assert alert.severity == "medium"
+    assert alert.iocs == []
+    assert alert.affected_assets == []
+
+
+def test_normalize_elastic_falls_back_to_kibana_alert_uuid_for_dedup_key():
+    alert = normalize_elastic(
+        {"kibana": {"alert": {"rule": {"name": "x"}, "uuid": "real-uuid-1"}}}
+    )
+    assert alert.dedup_key == "elastic:real-uuid-1"

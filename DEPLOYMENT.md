@@ -744,6 +744,40 @@ real OAuth2 credentials — create the API client in the Falcon console
 (Support and resources → API clients and keys) with the "Detections:
 Read" scope. Same `--once` cron alternative as `poll_connector.py`.
 
+### Polling Elastic Security's detection alerts
+
+Unlike CrowdStrike above, Elastic Security fits `poll_connector.py`
+directly — no dedicated connector needed. See README's
+**["Elastic Security Integration"](README.md#elastic-security-integration)**
+for the full explanation and `examples/elastic_poller_config.example.json`
+for an annotated config.
+
+```ini
+[Unit]
+Description=Cavendex Elastic Security connector
+After=network.target
+
+[Service]
+Type=simple
+User=cavendex
+WorkingDirectory=/opt/cavendex
+EnvironmentFile=/opt/cavendex/.env
+ExecStart=/opt/cavendex/venv/bin/cavendex ingest poll \
+    --config /etc/cavendex/elastic.json
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+```
+
+`ELASTIC_API_KEY` in `.env` holds the real API key — generate one in
+Kibana (Stack Management → API Keys) or via Elasticsearch's own
+`_security/api_key` endpoint, then base64-encode the resulting `id:api_key`
+pair yourself before putting it in `.env` (Elastic's own header shape is
+`Authorization: ApiKey <base64>`). Same `--once` cron alternative as
+`poll_connector.py`.
+
 ### Pushing from a webhook or forwarder
 
 Point it at `POST https://cavendex.internal.example.com/ingest/{source}`
@@ -832,6 +866,17 @@ CAVENDEX_REMEDIATION_DRY_RUN=true
 `action_type` is the Responder Agent's own structured classification of what it proposed (`block_ip`/`isolate_host`/`disable_account`/`reset_credentials`/`other`) — not guessed from the free-text action description afterward. `CAVENDEX_REMEDIATION_ACTION_TYPES` is the allowlist of which of those are actually eligible for automated execution; `"other"` (the Responder's fallback when nothing cleaner fits) is never eligible no matter what you put here. The shipped default (`block_ip,isolate_host`) deliberately excludes `disable_account`/`reset_credentials` — those two typically need more receiver-side context (which identity system, what "reset" actually means there) than a firewall block does, so they're left as manual-approval-only categories until you've confirmed your receiver can handle them safely.
 
 A broken or unreachable remediation receiver never blocks the approve call itself — the same "never block real processing" contract every other external call in this project follows — but the failure is real and visible: `executed: false` on the action, the failure detail in both the audit log and `remediation_log.jsonl`. Test the webhook directly the same way **[Section 7](#7-get-notified-instead-of-watching-the-dashboard)** recommends for the alert webhook if executions seem to be silently failing.
+
+**A concrete, worked receiver: CrowdStrike Falcon RTR.** If you're already polling CrowdStrike for ingestion (**[Section 6](#6-feed-it-real-alerts-continuously)**), `examples/crowdstrike_rtr_receiver.py` is a real receiver for this same webhook, reusing that connector's own OAuth2 exchange — for an approved `isolate_host` action, it looks up the target hostname's real Falcon Agent ID and calls Falcon's real "Network Containment" action.
+
+```bash
+export CROWDSTRIKE_CLIENT_ID=...
+export CROWDSTRIKE_CLIENT_SECRET=...
+export CAVENDEX_REMEDIATION_WEBHOOK_SIGNING_SECRET=a-different-secret-than-the-alert-webhook
+python examples/crowdstrike_rtr_receiver.py --port 9100
+```
+
+Then point `CAVENDEX_REMEDIATION_WEBHOOK_URL` at wherever you run it (`http://<host>:9100/remediate`), set `CAVENDEX_REMEDIATION_ACTION_TYPES=isolate_host` (it implements nothing else), and verify under dry-run first, exactly as above. See README's **["Remediation"](README.md#remediation)** section for the full honesty caveat — this is verified against a real local HTTP server standing in for Falcon's documented API, not a live Falcon tenant.
 
 ---
 

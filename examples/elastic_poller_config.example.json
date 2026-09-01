@@ -1,0 +1,31 @@
+{
+  "_comment": "Annotated example for poll_connector.py --config, targeting Elastic Security's own detection-alerts index via Elasticsearch's URI Search API -- a plain GET with a Lucene query string, which fits PollerConfig directly with no async job/create-then-poll dance needed. Point base_url at YOUR Elasticsearch endpoint and space/index name. Delete this _comment field (or leave it; it's ignored) before using.",
+
+  "name": "elastic-security-alerts",
+  "base_url": "https://your-elastic-host:9200/.alerts-security.alerts-default/_search",
+  "method": "GET",
+
+  "_comment_auth": "Generate an API key in Kibana (Stack Management -> API Keys) or via the Elasticsearch _security/api_key endpoint -- it comes back as an id:api_key pair; base64-encode 'id:api_key' yourself and set THAT as ELASTIC_API_KEY (auth_token_env names an ENVIRONMENT VARIABLE, never the key itself in this file). Elastic's own header shape is 'Authorization: ApiKey <base64>', expressed here via auth_scheme.",
+  "auth_header": "Authorization",
+  "auth_scheme": "ApiKey",
+  "auth_token_env": "ELASTIC_API_KEY",
+
+  "_comment_query": "Elasticsearch's URI Search API accepts a Lucene query string via 'q', plus sort/size -- no JSON request body needed for a query this simple. Adjust the Lucene query to your own space/rule filters (e.g. add 'AND kibana.alert.rule.name:\"your rule\"').",
+  "static_query_params": {
+    "q": "kibana.alert.workflow_status:open",
+    "sort": "@timestamp:desc",
+    "size": "100"
+  },
+
+  "_comment_records_path": "Elasticsearch's _search response body is {\"hits\": {\"hits\": [{\"_id\": ..., \"_source\": {...ECS fields...}}, ...]}} -- normalize_elastic() unwraps each hit's _source itself, so records_path only needs to reach the hit list.",
+  "records_path": "hits.hits",
+
+  "_comment_cursor": "Elasticsearch's simple URI Search API doesn't expose a clean single cursor param the way Splunk's earliest_time or a REST API's own next-page token does -- cursor_query_param/cursor_field are deliberately left unset here. Cavendex's own CAVENDEX_DEDUP_WINDOW_SECONDS-based dedup (keyed on each alert's real Elasticsearch document _id, via normalize_elastic()'s dedup_key) absorbs the resulting re-fetch of already-seen alerts on every poll instead.",
+
+  "_comment_normalizer": "Uses the real Elastic Security normalizer (ingestion/normalizers.py:normalize_elastic) instead of a generic field_map -- it combines source.ip/destination.ip into one iocs list and routes real EDR-native process context (process.name/process.command_line/process.parent.name) into NormalizedAlert's dedicated process_name/command_line/parent_process_name fields, neither of which a flat field_map alone can do.",
+  "normalizer": "elastic",
+
+  "poll_interval_seconds": 60,
+  "tenant": "default",
+  "source_name": "elastic"
+}

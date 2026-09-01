@@ -6,7 +6,7 @@ raising — e.g. a non-alert event type"). Add a new source by writing one
 function here and registering it in NORMALIZERS — nothing else in the
 ingestion pipeline, the graph, or the vault needs to know it exists.
 
-Six formats are covered as concrete, genuinely different examples of
+Seven formats are covered as concrete, genuinely different examples of
 "pluggable" rather than committing to one vendor:
   - generic: an already-roughly-shaped alert (custom scripts, simple
     webhooks, anything that can be bothered to match our own field names)
@@ -24,6 +24,11 @@ Six formats are covered as concrete, genuinely different examples of
     (JSON, nested) — pulled via the dedicated
     ingestion/crowdstrike_polling.py connector (OAuth2 + a two-step
     query/summarize API the generic connector can't express)
+  - elastic: Elastic Security detection-alert documents (JSON, nested
+    ECS fields, including real process/command-line/parent-process
+    context) — pulled via ingestion/polling.py's generic connector (see
+    examples/elastic_poller_config.example.json), an API-key header and
+    Elasticsearch's own URI Search endpoint
 """
 
 import hashlib
@@ -332,6 +337,106 @@ def normalize_splunk(payload: dict) -> Optional[NormalizedAlert]:
     )
 
 
+_ELASTIC_VALID_SEVERITIES = {"low", "medium", "high", "critical"}
+
+
+def _dig(data, dotted_path: str):
+    """Walk a dotted path into nested dicts — Elastic Security's real ECS
+    alert documents nest fields (`{"kibana": {"alert": {"rule": {"name":
+    ...}}}}`), not flat dotted-string keys, so a plain `.get("a.b.c")`
+    would never find anything. Returns None anywhere the path doesn't
+    resolve rather than raising — this is untrusted, externally-served
+    data, and a missing/reshaped field should degrade a record, not
+    crash the connector.
+    """
+    node = data
+    for part in dotted_path.split("."):
+        if not isinstance(node, dict):
+            return None
+        node = node.get(part)
+    return node
+
+
+def normalize_elastic(payload: dict) -> Optional[NormalizedAlert]:
+    """One Elastic Security detection-alert document — either a full
+    Elasticsearch search hit (`{"_id": ..., "_source": {...ECS fields...}}`,
+    what querying `.alerts-security.alerts-<space>/_search` returns) or a
+    bare `_source` dict, so this also works if something in front of the
+    poller already unwraps hits itself. A record with no
+    `kibana.alert.rule.name` isn't treated as a real alert and returns
+    None.
+
+    Fetched via Elasticsearch's own URI Search API (a plain GET with a
+    Lucene `q=` query string and an `Authorization: ApiKey <...>` header)
+    — see examples/elastic_poller_config.example.json — which fits
+    ingestion/polling.py's generic PollerConfig directly with no new
+    connector module needed, the same tier as Splunk. This function
+    exists (rather than a flat field_map) for two things flat mapping
+    can't express: combining `source.ip`/`destination.ip` into one iocs
+    list (the same reason Splunk's own normalizer above isn't a flat
+    field_map either), and routing real EDR-native process context
+    (`process.name`/`process.command_line`/`process.parent.name`) into
+    NormalizedAlert's dedicated process_name/command_line/
+    parent_process_name fields (see ingestion/schemas.py and README's
+    "Process indicator" glossary entry) — a natural pairing, since
+    Elastic Security alerts are exactly the kind of source that actually
+    carries this context.
+
+    Elastic's own severity scale (`low`/`medium`/`high`/`critical`)
+    already matches Cavendex's four-value scale exactly — no remapping
+    needed, unlike Splunk's five-value urgency scale or CrowdStrike's
+    numeric one.
+
+    Field-parsing is built from Elastic's documented ECS/Detection Engine
+    alert schema, not verified against a live Elastic deployment — this
+    project has none to honestly test against (the same caveat as every
+    other vendor-specific integration; see README's Known Gaps).
+    """
+    source = payload.get("_source") if isinstance(payload.get("_source"), dict) else payload
+    if not isinstance(source, dict):
+        return None
+
+    rule_name = _dig(source, "kibana.alert.rule.name")
+    if not rule_name:
+        return None
+
+    severity_raw = str(_dig(source, "kibana.alert.severity") or "").lower()
+    severity = severity_raw if severity_raw in _ELASTIC_VALID_SEVERITIES else "medium"
+
+    src_ip = _dig(source, "source.ip")
+    dst_ip = _dig(source, "destination.ip")
+    host_name = _dig(source, "host.name")
+    process_name = _dig(source, "process.name")
+    command_line = _dig(source, "process.command_line")
+    parent_name = _dig(source, "process.parent.name")
+
+    technique_ids = _dig(source, "threat.technique.id") or []
+    if isinstance(technique_ids, str):
+        technique_ids = [technique_ids]
+    mitre_suffix = f" [ATT&CK: {', '.join(str(t) for t in technique_ids)}]" if technique_ids else ""
+
+    doc_id = payload.get("_id") or _dig(source, "kibana.alert.uuid") or "0"
+
+    description = (
+        f"Elastic Security alert: {rule_name}"
+        + (f" (src={src_ip}, dest={dst_ip})" if src_ip or dst_ip else "")
+        + mitre_suffix
+    )
+
+    return NormalizedAlert(
+        description=description[:4000],
+        severity=severity,
+        source="elastic",
+        affected_assets=[str(host_name)] if host_name else [],
+        iocs=[str(v) for v in (src_ip, dst_ip) if v][:50],
+        process_name=str(process_name) if process_name else None,
+        command_line=str(command_line) if command_line else None,
+        parent_process_name=str(parent_name) if parent_name else None,
+        dedup_key=f"elastic:{doc_id}",
+        raw_excerpt=json.dumps(payload, default=str)[:2000],
+    )
+
+
 # CrowdStrike's Detects API reports severity as both a 0-100 numeric
 # score and this five-value display name — the display name maps
 # directly onto our own scale except "informational," the same
@@ -411,4 +516,5 @@ NORMALIZERS = {
     "wazuh": normalize_wazuh,
     "splunk": normalize_splunk,
     "crowdstrike": normalize_crowdstrike,
+    "elastic": normalize_elastic,
 }
