@@ -796,9 +796,13 @@ that decision is made, and `data/{tenant}/ingestion_log.jsonl` for a
 record of every alert and what happened to it, including the ones that
 never became an incident. Tune `CAVENDEX_INGEST_RATE_LIMIT_PER_MINUTE`
 if your real alert volume needs a higher (or lower) ceiling than the
-default 60/minute — this limiter is separate from
-`CAVENDEX_RATE_LIMIT_PER_MINUTE` (the API layer's own limit on
-manually-created incidents) and is what actually protects
+default 60/minute — this limiter is separate from the two at the API
+layer: `CAVENDEX_RATE_LIMIT_PER_MINUTE` (per `(tenant, client IP)`, on
+manually-created incidents) and `CAVENDEX_TENANT_RATE_LIMIT_PER_MINUTE`
+(a second, tenant-wide ceiling on top of it, closing the gap where many
+source IPs individually staying under the per-client limit could still
+collectively exceed what one tenant's LLM-pipeline budget should allow).
+The ingestion-gate limiter is what actually protects
 `syslog_listener.py`/`poll_connector.py`, which never touch the API.
 
 ---
