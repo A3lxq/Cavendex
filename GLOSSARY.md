@@ -66,7 +66,7 @@ training data.
 
 **Ingestion** — The process of turning a raw alert (from a log file, a
 network socket, a polled API, or a direct webhook push) into a
-**NormalizedAlert** and deciding whether it's worth a full pipeline run.
+`NormalizedAlert` and deciding whether it's worth a full pipeline run.
 See `ingestion/` and the four "ways in" described in README's
 **[Quick Start](README.md#quick-start)**.
 
