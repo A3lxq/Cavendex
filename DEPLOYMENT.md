@@ -105,8 +105,9 @@ Edit `.env`:
   `URLSCAN_API_KEY`, `GOOGLE_SAFE_BROWSING_API_KEY`,
   `SECURITYTRAILS_API_KEY`, `CAVENDEX_BLOCKLISTDE_ENABLED` (no key),
   `CAVENDEX_NVD_ENABLED`+optional `NVD_API_KEY` — the one that answers a
-  CVE ID, not an ip/domain/hash/url) — see README's "Adding a
-  Threat-Intel Provider" for what each one actually adds, and real
+  CVE ID, not an ip/domain/hash/url) — see README's
+  **["Adding a Threat-Intel Provider"](README.md#adding-a-threat-intel-provider)**
+  for what each one actually adds, and real
   honesty caveats before depending on any of them in production.
   Configure only the ones you want; every one is inert without its
   key/flag, same as
@@ -116,8 +117,9 @@ Edit `.env`:
   points, not tuned to any specific environment. **In particular, set
   `CAVENDEX_CORRELATION_SUBNET_PREFIX_BITS`/`_V6` to match how your
   network is actually subnetted** — the `/24`/`/64` defaults assume a
-  size most real businesses don't use; see README's "IP Ranges and
-  Subnet Support" for a sizing guide.
+  size most real businesses don't use; see README's
+  **["IP Ranges and Subnet Support"](README.md#ip-ranges-and-subnet-support)**
+  for a sizing guide.
 
 Lock down the file once it has real secrets in it:
 
@@ -411,7 +413,7 @@ publicly-routable one, regardless of the API key.
 ## 6. Feed it real alerts continuously
 
 Four ways in, all already implemented — pick whichever matches your
-environment (see README's "Adding an Ingestion Source" if you need a
+environment (see README's **["Adding an Ingestion Source"](README.md#adding-an-ingestion-source)** if you need a
 normalizer for a format that isn't Suricata/Zeek eve.json, Wazuh, CEF
 syslog, or generic JSON):
 
@@ -471,7 +473,8 @@ manager's alert log — either run both on the same host and add
 `cavendex` to the appropriate group, or ship a copy of the file to
 wherever Cavendex runs. If Cavendex doesn't have (or shouldn't have)
 filesystem access to the Wazuh manager at all, use Wazuh's own
-push-based integration instead — see README's "Wazuh Integration"
+push-based integration instead — see README's
+**["Wazuh Integration"](README.md#wazuh-integration)**
 section and `examples/wazuh_integration.py` for the `ossec.conf` config
 and honest caveats (verified against a real local HTTP server, not
 against an actual Wazuh manager, since none is available to this
@@ -655,8 +658,9 @@ one protocol, the same pattern as one `ingest_watch.py` per log file.
 
 `poll_connector.py` calls a REST API on an interval and ingests whatever
 it returns, described by a JSON config rather than vendor-specific code
-— see `examples/poller_config.example.json` and README's "Syslog
-Listener and SIEM/EDR Polling Connectors" for what a config can express.
+— see `examples/poller_config.example.json` and README's
+**["Syslog Listener and SIEM/EDR Polling Connectors"](README.md#syslog-listener-and-siemedr-polling-connectors)**
+for what a config can express.
 Put your real config outside the repo checkout (e.g.
 `/etc/cavendex/my-siem.json`) and reference the environment variable
 holding your API token from it, never the token itself:
@@ -689,8 +693,9 @@ REST Search API in `exec_mode=oneshot` mode (one blocking request, real
 single-JSON results) with `"normalizer": "splunk"` so
 `ingestion/normalizers.py:normalize_splunk()` handles Splunk ES's real
 notable-event field shape — its five-value urgency scale and MITRE
-ATT&CK annotations — instead of a flat `field_map`. See README's "Splunk
-Integration" for the full config and the Webhook-alert-action push
+ATT&CK annotations — instead of a flat `field_map`. See README's
+**["Splunk Integration"](README.md#splunk-integration)**
+for the full config and the Webhook-alert-action push
 alternative. Auth is a long-lived Splunk token (Settings → Tokens);
 `SPLUNK_API_TOKEN` is the environment variable the shipped example
 config expects, set in `/opt/cavendex/.env` the same as any other
@@ -702,8 +707,8 @@ CrowdStrike needs a fully separate connector, `crowdstrike_connector.py`
 (not `poll_connector.py`) — its real API requires an OAuth2
 client-credentials exchange and a two-step query-then-summarize call
 sequence that `poll_connector.py`'s generic single-request model can't
-express. See README's "CrowdStrike Integration" for the full
-explanation and `examples/crowdstrike_poller_config.example.json` for
+express. See README's **["CrowdStrike Integration"](README.md#crowdstrike-integration)**
+for the full explanation and `examples/crowdstrike_poller_config.example.json` for
 an annotated config (including the real per-region base URLs).
 
 ```ini
@@ -740,7 +745,8 @@ etc.
 
 Every path runs through the same rate-limit → dedup → correlation →
 severity-prefilter gate before spending an LLM call — see README's
-Architecture Overview and "Alert Correlation" section for exactly how
+**[Architecture Overview](README.md#architecture-overview)** and
+**["Alert Correlation"](README.md#alert-correlation)** section for exactly how
 that decision is made, and `data/{tenant}/ingestion_log.jsonl` for a
 record of every alert and what happened to it, including the ones that
 never became an incident. Tune `CAVENDEX_INGEST_RATE_LIMIT_PER_MINUTE`
@@ -793,7 +799,7 @@ the pipeline is broken.
 
 By default, an approved proposed action stays exactly what it's always
 been: data (action/target/rationale) an analyst reads, not something
-Cavendex acts on. `remediation/` (see README's "Remediation" section
+Cavendex acts on. `remediation/` (see README's **["Remediation"](README.md#remediation)** section
 for the full design) can go one step further — POSTing an already-
 approved, eligible action to your own webhook so your own SOAR
 platform, firewall API gateway, or custom script can actually carry it
@@ -832,7 +838,7 @@ python cli.py --tenant default create-user j.smith 'a-real-password' --role admi
 
 Log in from the dashboard's Sign In form (username + password, next to the existing API Key field), or via `POST /auth/login` — either way you get back a session token good for `CAVENDEX_SESSION_TTL_SECONDS` (default 8 hours). The dashboard stores it and uses it as the `Authorization` bearer credential in place of the API key, and locks the "Analyst name" field to your authenticated username instead of a freely-typed label.
 
-**Creating a user does NOT, by itself, lock out unauthenticated callers.** This is deliberate, and was a real mistake caught during this feature's own live testing — see README's "User Accounts and Sessions" for the story. If you want account creation itself to be the access-control switch (instead of, or in addition to, `CAVENDEX_API_KEY`):
+**Creating a user does NOT, by itself, lock out unauthenticated callers.** This is deliberate, and was a real mistake caught during this feature's own live testing — see README's **["User Accounts and Sessions"](README.md#user-accounts-and-sessions)** for the story. If you want account creation itself to be the access-control switch (instead of, or in addition to, `CAVENDEX_API_KEY`):
 
 ```env
 CAVENDEX_REQUIRE_LOGIN=true
@@ -855,7 +861,7 @@ The default iteration count (roughly OWASP's 2023 PBKDF2-SHA256 guidance) costs 
 
 ## 10. Set up advanced playbooks (opt-in)
 
-`playbooks/` (see README's "Advanced Playbooks" section for the full design) is a deterministic, non-LLM layer: after a new incident's agent pipeline finishes, it's matched against operator-authored JSON files, and a match's ordered remediation steps get folded into the proposed actions — on top of (never instead of) the real remediation execution in Section 8. Unset, this is completely inert.
+`playbooks/` (see README's **["Advanced Playbooks"](README.md#advanced-playbooks)** section for the full design) is a deterministic, non-LLM layer: after a new incident's agent pipeline finishes, it's matched against operator-authored JSON files, and a match's ordered remediation steps get folded into the proposed actions — on top of (never instead of) the real remediation execution in Section 8. Unset, this is completely inert.
 
 **Point at a directory of `*.json` files:**
 
@@ -1032,8 +1038,8 @@ the real incident, not a 404.
 
 ## 13. Security hardening checklist
 
-Everything here is already discussed in more depth in README's Security
-Notes — this is the short, do-it-before-go-live version:
+Everything here is already discussed in more depth in README's
+**[Security Notes](README.md#security-notes)** — this is the short, do-it-before-go-live version:
 
 - [ ] `CAVENDEX_API_KEY` is set to a real random value, not left unset.
 - [ ] If more than one tenant runs on this deployment and they shouldn't
@@ -1127,7 +1133,7 @@ Notes — this is the short, do-it-before-go-live version:
 
 ## 14. Known limitations to plan around
 
-Pulled forward from README's Known Gaps section because they specifically
+Pulled forward from README's **[Known Gaps](README.md#known-gaps--honest-limitations)** section because they specifically
 affect a live deployment decision, not just a feature-completeness one:
 
 - **Local models are genuinely slow on modest hardware.** During this
@@ -1165,7 +1171,7 @@ affect a live deployment decision, not just a feature-completeness one:
   declined a real same-technique/different-host pair on the grounds that
   "technique similarity alone is insufficient to confirm a shared
   campaign." A renamed host with a wholly unrelated new name still won't
-  correlate at all. See README's Known Gaps for the full picture,
+  correlate at all. See README's **[Known Gaps](README.md#known-gaps--honest-limitations)** for the full picture,
   including a string-similarity signal that was built, tested, and
   rejected for making things worse, not just noisier.
 - **No vendor-specific SIEM/EDR polling client for most vendors — but a
@@ -1215,7 +1221,7 @@ affect a live deployment decision, not just a feature-completeness one:
   real request has been sent to any of their actual endpoints yet
   (deliberately held back during review). IBM X-Force, Metadefender,
   and Censys specifically carry additional real uncertainty — see
-  README's "Adding a Threat-Intel Provider" — degrading to an honest
+  README's **["Adding a Threat-Intel Provider"](README.md#adding-a-threat-intel-provider)** — degrading to an honest
   `"unknown"` verdict rather than crashing if their real response shape
   differs, but not yet confirmed against a live successful response.
   Test each against a real key before depending on it in production.
