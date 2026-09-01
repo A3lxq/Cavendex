@@ -49,7 +49,7 @@ already-open incident rather than the start of a new one. Three tiers,
 checked in order: **exact** (identical IOC or asset), **fuzzy** (same
 subnet or same registered domain), and **semantic** (opt-in, one LLM
 judgment call for a shared-technique case with no shared IOC at all). See
-README's "Alert Correlation" section for the full detail.
+README's **["Alert Correlation"](README.md#alert-correlation)** section for the full detail.
 
 **Dedup / dedup_key** — Suppressing an alert that's an exact repeat of
 one already seen recently (same tenant, same `dedup_key`, within
@@ -67,8 +67,8 @@ training data.
 **Ingestion** — The process of turning a raw alert (from a log file, a
 network socket, a polled API, or a direct webhook push) into a
 **NormalizedAlert** and deciding whether it's worth a full pipeline run.
-See `ingestion/` and the four "ways in" described in README's Quick
-Start.
+See `ingestion/` and the four "ways in" described in README's
+**[Quick Start](README.md#quick-start)**.
 
 **Incident** — Cavendex's core unit of work: one investigation, from
 first alert through to closed or `pending_approval`. Identified by a
@@ -98,7 +98,7 @@ finished incident by severity/source/IOC-substring and folding an
 ordered list of remediation steps into its proposed actions —
 deterministic, no LLM call. Never skips or replaces an agent's own
 analysis; only ever supplements or replaces what gets proposed for
-approval. See README's "Advanced Playbooks" section.
+approval. See README's **["Advanced Playbooks"](README.md#advanced-playbooks)** section.
 
 **Prompt injection** — Text inside an incident description (or anywhere
 else an attacker could influence) that tries to manipulate the LLM into
