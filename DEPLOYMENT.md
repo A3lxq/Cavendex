@@ -1036,7 +1036,7 @@ vault report are meant to stay in sync:
 
 | Path (via env var)     | What's in it                                                          |
 |-------------------------|------------------------------------------------------------------------|
-| `CAVENDEX_DATA_DIR`   | Per-tenant SQLite: incident checkpoints (`cavendex.db`), the dashboard/correlation index (`incident_index.db`), user accounts + sessions (`user_accounts.db`), `ingestion_log.jsonl`, `audit_chain_ledger.jsonl`, `remediation_log.jsonl`, polling-connector cursor state (`poller_state/`); tenant-independent `auth_failures.jsonl` at the root |
+| `CAVENDEX_DATA_DIR`   | Per-tenant SQLite: incident checkpoints (`cavendex.db`), the dashboard/correlation index (`incident_index.db`), user accounts + sessions (`user_accounts.db`), `ingestion_log.jsonl`, `audit_chain_ledger.jsonl`, `remediation_log.jsonl`, `audit_export_log.jsonl`, `jira_sync_log.jsonl`, polling-connector cursor state (`poller_state/`); tenant-independent `auth_failures.jsonl` at the root |
 | `CHROMA_PERSIST_DIR`    | Per-tenant ChromaDB collections — long-term incident memory used for recall |
 | `OBSIDIAN_VAULT_PATH`   | Markdown incident/hunt reports with wikilinks — the durable, human-readable audit trail |
 
