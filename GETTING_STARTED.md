@@ -224,9 +224,9 @@ behaves a certain way (not just how to run it), README.md's
 
 ## Where to go next
 
-- **README.md** — full feature list, architecture, and the honest list
+- **[README.md](README.md)** — full feature list, architecture, and the honest list
   of what this tool does *not* do yet.
-- **DEPLOYMENT.md** — running this as an always-on service that watches
+- **[DEPLOYMENT.md](DEPLOYMENT.md)** — running this as an always-on service that watches
   real logs, with systemd units and a TLS reverse-proxy setup.
-- **GLOSSARY.md** — every Cavendex-specific term (tenant, IOC,
+- **[GLOSSARY.md](GLOSSARY.md)** — every Cavendex-specific term (tenant, IOC,
   correlation, etc.) in one place.
