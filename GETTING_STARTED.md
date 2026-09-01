@@ -83,7 +83,7 @@ worked. If you see a Python error instead, jump to
 Rather skip local Python setup entirely? `docker compose up -d` after
 the same `cp .env.example .env` step gets you the dashboard at
 `http://localhost:8000/` with nothing installed on your machine but
-Docker — see README's **Installation** section.
+Docker — see README's **[Installation](README.md#installation)** section.
 
 ---
 
@@ -108,7 +108,7 @@ or initials in it now — it gets recorded every time you approve or deny
 something, so the audit trail shows *who* made each call instead of just
 "someone did."
 
-Try the demo incident from Step 1, or fill out **New Incident** with
+Try the demo incident from **[Step 1](#step-1-get-it-running-510-minutes)**, or fill out **New Incident** with
 something like:
 
 > Multiple failed logins from 1.2.3.4 targeting DC-01
@@ -214,10 +214,11 @@ It's probably not hanging — a full incident run on a local model can
 genuinely take several minutes on modest hardware. Check `top`/`htop` for
 CPU activity from the Ollama process before assuming it's stuck.
 
-**Still stuck?** Re-read this guide's Step 1–2 first — most issues are a
+**Still stuck?** Re-read this guide's **[Step 1](#step-1-get-it-running-510-minutes)**–**[Step 2](#step-2-open-the-dashboard)** first — most issues are a
 missing/misplaced `.env` value. For anything about *why* Cavendex
-behaves a certain way (not just how to run it), README.md's Known Gaps
-and Security Notes sections are the honest source of truth.
+behaves a certain way (not just how to run it), README.md's
+**[Known Gaps](README.md#known-gaps--honest-limitations)** and
+**[Security Notes](README.md#security-notes)** sections are the honest source of truth.
 
 ---
 
