@@ -59,9 +59,10 @@ an existing incident.
 
 **Enrichment** — Looking up real data about an incident's IOCs from
 external threat-intel sources (20 opt-in providers as of this writing —
-see README's "Adding a Threat-Intel Provider" for the full list and
-what each one actually adds) before an agent reasons about severity —
-as opposed to the LLM just guessing from its training data.
+see README's **["Adding a Threat-Intel Provider"](README.md#adding-a-threat-intel-provider)**
+for the full list and what each one actually adds) before an agent
+reasons about severity — as opposed to the LLM just guessing from its
+training data.
 
 **Ingestion** — The process of turning a raw alert (from a log file, a
 network socket, a polled API, or a direct webhook push) into a
