@@ -16,8 +16,13 @@ from datetime import datetime, timezone
 from typing import List, Optional
 
 from graph import tenant_data_dir
-from state import OPEN_STATUSES
+from state import OPEN_STATUSES, SEVERITY_RANK
 from utils.tenancy import DEFAULT_TENANT, sanitize_tenant_id
+
+# Terminal statuses for SOC KPI purposes (see get_kpi_stats) — anything not
+# in OPEN_STATUSES. An incident's resolved_at is set exactly once, the
+# first time its status is observed in this set.
+_TERMINAL_STATUSES = ("closed", "contained")
 
 _lock = threading.Lock()
 _connections: dict = {}
@@ -71,9 +76,19 @@ def _ensure_correlation_columns(conn: sqlite3.Connection) -> None:
     existing = {row[1] for row in conn.execute("PRAGMA table_info(incidents)")}
     for column in (
         "iocs", "affected_assets", "created_at", "attack_technique_id", "attack_technique_name", "assigned_to",
+        # SOC KPI reporting (see get_kpi_stats): pending_approval_at/resolved_at
+        # are each set exactly once, the first time that status is observed,
+        # and never overwritten afterward — same "set once, like created_at"
+        # convention already used above. max_severity_rank tracks the highest
+        # SEVERITY_RANK this incident has ever reached (an incident later
+        # downgraded, correlation-merged, or reclassified never loses the
+        # fact that it was once high/critical) for escalation-rate reporting.
+        "pending_approval_at", "resolved_at",
     ):
         if column not in existing:
             conn.execute(f"ALTER TABLE incidents ADD COLUMN {column} TEXT")
+    if "max_severity_rank" not in existing:
+        conn.execute("ALTER TABLE incidents ADD COLUMN max_severity_rank INTEGER")
 
 
 def upsert_incident_summary(tenant_id: str, state: dict, report_type: str = "incident") -> None:
@@ -94,14 +109,18 @@ def upsert_incident_summary(tenant_id: str, state: dict, report_type: str = "inc
 
     conn = _get_connection(tenant_id)
     now = datetime.now(timezone.utc).isoformat()
+    severity_rank = SEVERITY_RANK.get(incident.severity, 0)
+    pending_approval_at = now if incident.status == "pending_approval" else None
+    resolved_at = now if incident.status in _TERMINAL_STATUSES else None
     with _lock:
         conn.execute(
             """
             INSERT INTO incidents
                 (thread_id, report_type, description, severity, status, source,
                  has_pending_actions, iocs, affected_assets, attack_technique_id,
-                 attack_technique_name, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 attack_technique_name, created_at, updated_at,
+                 pending_approval_at, resolved_at, max_severity_rank)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(thread_id) DO UPDATE SET
                 report_type=excluded.report_type,
                 description=excluded.description,
@@ -113,7 +132,10 @@ def upsert_incident_summary(tenant_id: str, state: dict, report_type: str = "inc
                 affected_assets=excluded.affected_assets,
                 attack_technique_id=excluded.attack_technique_id,
                 attack_technique_name=excluded.attack_technique_name,
-                updated_at=excluded.updated_at
+                updated_at=excluded.updated_at,
+                pending_approval_at=COALESCE(incidents.pending_approval_at, excluded.pending_approval_at),
+                resolved_at=COALESCE(incidents.resolved_at, excluded.resolved_at),
+                max_severity_rank=MAX(incidents.max_severity_rank, excluded.max_severity_rank)
             """,
             (
                 incident.id,
@@ -129,6 +151,9 @@ def upsert_incident_summary(tenant_id: str, state: dict, report_type: str = "inc
                 attack_technique.get("name"),
                 now,
                 now,
+                pending_approval_at,
+                resolved_at,
+                severity_rank,
             ),
         )
         conn.commit()
@@ -234,6 +259,87 @@ def get_incident_stats(tenant_id: str = DEFAULT_TENANT) -> dict:
         "open": open_count,
         "pending_approval": pending_approval,
         "by_severity": {sev: by_severity_counts.get(sev, 0) for sev in ("low", "medium", "high", "critical")},
+    }
+
+
+def _mean_median(values: List[float]) -> dict:
+    if not values:
+        return {"mean": None, "median": None, "count": 0}
+    ordered = sorted(values)
+    n = len(ordered)
+    mid = n // 2
+    median = ordered[mid] if n % 2 == 1 else (ordered[mid - 1] + ordered[mid]) / 2
+    return {"mean": sum(ordered) / n, "median": median, "count": n}
+
+
+def get_kpi_stats(tenant_id: str = DEFAULT_TENANT, since: Optional[str] = None) -> dict:
+    """SOC KPI aggregates for the dashboard's KPI tab: MTTR, time-to-
+    decision ("dwell time"), escalation rate, and incident volume by
+    severity/day.
+
+    MTTR (mean+median, seconds) = resolved_at - created_at, only over
+    incidents that have actually reached a terminal status (closed/
+    contained) at some point -- resolved_at is set exactly once, the
+    first time that happens (see upsert_incident_summary), never
+    overwritten after.
+
+    Dwell time (mean+median, seconds) = resolved_at - pending_approval_at,
+    only over incidents that both reached pending_approval and have since
+    resolved. This is a direct measurement from two real, set-once
+    timestamps, not an approximation from updated_at.
+
+    Escalation rate = share of ALL incidents in scope (resolved or not)
+    whose max_severity_rank has ever reached "high" or above. Correlation
+    only ever escalates severity, never downgrades it (see README's Alert
+    Correlation section), so this is a durable fact about the incident
+    regardless of its *current* severity.
+
+    `since` (an ISO timestamp string, compared against created_at)
+    optionally scopes every metric to a time window, e.g. "this month".
+    """
+    conn = _get_connection(tenant_id)
+    since_clause = "created_at >= ?" if since else None
+    since_params = [since] if since else []
+
+    def _scoped(extra_clause: Optional[str] = None, extra_params: Optional[list] = None):
+        clauses = ([since_clause] if since_clause else []) + ([extra_clause] if extra_clause else [])
+        where_sql = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+        return where_sql, since_params + (extra_params or [])
+
+    where_sql, params = _scoped()
+    total = conn.execute(f"SELECT COUNT(*) FROM incidents {where_sql}", params).fetchone()[0]
+
+    where_sql, params = _scoped("max_severity_rank >= ?", [SEVERITY_RANK["high"]])
+    escalated = conn.execute(f"SELECT COUNT(*) FROM incidents {where_sql}", params).fetchone()[0]
+
+    where_sql, params = _scoped("resolved_at IS NOT NULL AND created_at IS NOT NULL")
+    mttr_rows = conn.execute(
+        f"SELECT (julianday(resolved_at) - julianday(created_at)) * 86400 FROM incidents {where_sql}", params
+    ).fetchall()
+
+    where_sql, params = _scoped("resolved_at IS NOT NULL AND pending_approval_at IS NOT NULL")
+    dwell_rows = conn.execute(
+        f"SELECT (julianday(resolved_at) - julianday(pending_approval_at)) * 86400 FROM incidents {where_sql}",
+        params,
+    ).fetchall()
+
+    where_sql, params = _scoped()
+    volume_rows = conn.execute(
+        f"""
+        SELECT date(created_at) as day, severity, COUNT(*) as cnt
+        FROM incidents {where_sql}
+        GROUP BY day, severity
+        ORDER BY day ASC
+        """,
+        params,
+    ).fetchall()
+
+    return {
+        "total": total,
+        "escalation_rate": (escalated / total) if total else 0.0,
+        "mttr_seconds": _mean_median([r[0] for r in mttr_rows if r[0] is not None]),
+        "dwell_seconds": _mean_median([r[0] for r in dwell_rows if r[0] is not None]),
+        "volume_by_day": [{"date": r[0], "severity": r[1], "count": r[2]} for r in volume_rows if r[0]],
     }
 
 

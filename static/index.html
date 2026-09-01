@@ -46,6 +46,7 @@
   <button class="tab-btn" data-tab="ioc-lookup">IOC Lookup</button>
   <button class="tab-btn" data-tab="attack-overview">ATT&amp;CK Overview</button>
   <button class="tab-btn" data-tab="strand-map">Strand Map</button>
+  <button class="tab-btn" data-tab="kpis">KPIs</button>
 </nav>
 
 <main>
@@ -196,6 +197,21 @@
         verified against the real ATT&amp;CK dataset — see <code>enrichment/mitre_attack.py</code>.
       </p>
       <div id="attack-overview-body">
+        <div class="empty-state">Loading…</div>
+      </div>
+    </div>
+  </section>
+
+  <!-- KPIs tab -->
+  <section id="tab-kpis" class="tab-panel">
+    <div class="form-card">
+      <h2>SOC KPI Reporting</h2>
+      <p class="form-hint">
+        Mean time to resolution, time-to-decision, escalation rate, and incident volume for this tenant. MTTR and
+        dwell time only count incidents that have actually resolved (status <code>closed</code>/<code>contained</code>)
+        — an incident still open contributes to the totals above but not to either duration metric yet.
+      </p>
+      <div id="kpi-body">
         <div class="empty-state">Loading…</div>
       </div>
     </div>

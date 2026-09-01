@@ -76,10 +76,30 @@ first alert through to closed or `pending_approval`. Identified by a
 assets, agent findings, and an audit log.
 
 **IOC (Indicator of Compromise)** — A concrete artifact tied to
-malicious activity: an IP address, a domain, a file hash, a URL, or a
-CVE ID. Cavendex classifies each IOC's type
+malicious activity: an IP address, a domain, a file hash, a URL, a
+CVE ID, or an EDR-native process/command-line/parent-process indicator
+(`process:`/`cmdline:`/`parent:`-prefixed — see **Process indicator**
+below). Cavendex classifies each IOC's type
 (`enrichment/ioc_classifier.py`) before deciding which threat-intel
 providers to query.
+
+**MTTR (Mean Time to Resolution)** — A SOC KPI: the average time between
+an incident's creation and it reaching a terminal status
+(`closed`/`contained`). See README's
+**["SOC KPI Reporting"](README.md#soc-kpi-reporting)**.
+
+**Escalation rate** — A SOC KPI: the share of a tenant's incidents whose
+severity has ever reached `high` or `critical` at any point — a durable
+fact regardless of the incident's *current* severity, since correlation
+only ever escalates severity, never downgrades it. See README's
+**["SOC KPI Reporting"](README.md#soc-kpi-reporting)**.
+
+**Time to decision ("dwell time")** — A SOC KPI: the average time between
+an incident reaching `pending_approval` and a human resolving it
+(approve/deny). Only counted for incidents that actually went through
+that step — one closed at Triage without ever needing a decision doesn't
+count toward this metric. See README's
+**["SOC KPI Reporting"](README.md#soc-kpi-reporting)**.
 
 **Obsidian vault** — The folder of Markdown files (`obsidian_vault/` by
 default) where every incident and hunt report is written, one file per
@@ -99,6 +119,15 @@ ordered list of remediation steps into its proposed actions —
 deterministic, no LLM call. Never skips or replaces an agent's own
 analysis; only ever supplements or replaces what gets proposed for
 approval. See README's **["Advanced Playbooks"](README.md#advanced-playbooks)** section.
+
+**Process indicator** — An EDR-native IOC (process image name, command
+line, or parent process) a normalizer explicitly supplies via
+`NormalizedAlert.process_name`/`command_line`/`parent_process_name`
+(`ingestion/schemas.py`), folded into the incident's `iocs` list with an
+explicit `process:`/`cmdline:`/`parent:` prefix. Deliberately never
+inferred from a bare string — a raw process name like `svchost.exe` has
+no fixed grammar that reliably tells it apart from an ordinary hostname
+or descriptive phrase, unlike an IP/domain/hash/CVE.
 
 **Prompt injection** — Text inside an incident description (or anywhere
 else an attacker could influence) that tries to manipulate the LLM into

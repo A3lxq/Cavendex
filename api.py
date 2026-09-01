@@ -61,7 +61,7 @@ from state import Severity, ShortStr
 from utils.auth_monitor import record_auth_failure
 from utils.incident_events import subscribe as subscribe_incident_events
 from utils.incident_events import unsubscribe as unsubscribe_incident_events
-from utils.incident_index import get_incident_stats, list_incidents
+from utils.incident_index import get_incident_stats, get_kpi_stats, list_incidents
 from utils.rate_limit import check_rate_limit
 from utils.tenancy import DEFAULT_TENANT
 from utils.user_accounts import (
@@ -812,6 +812,11 @@ def incident_stats_default():
     return get_incident_stats(DEFAULT_TENANT)
 
 
+@router.get("/incidents/kpis")
+def incident_kpis_default(since: Optional[str] = None):
+    return get_kpi_stats(DEFAULT_TENANT, since=since)
+
+
 @router.get("/incidents/attack-overview")
 def attack_overview_default():
     return _attack_overview(DEFAULT_TENANT)
@@ -955,6 +960,11 @@ def list_incidents_for_tenant(
 @tenant_router.get("/tenants/{tenant_id}/incidents/stats")
 def incident_stats_for_tenant(tenant_id: str):
     return get_incident_stats(tenant_id)
+
+
+@tenant_router.get("/tenants/{tenant_id}/incidents/kpis")
+def incident_kpis_for_tenant(tenant_id: str, since: Optional[str] = None):
+    return get_kpi_stats(tenant_id, since=since)
 
 
 @tenant_router.get("/tenants/{tenant_id}/incidents/attack-overview")

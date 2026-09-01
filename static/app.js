@@ -234,6 +234,7 @@ function initTabs() {
       document.getElementById(`tab-${btn.dataset.tab}`).classList.add("active");
       if (btn.dataset.tab === "attack-overview") loadAttackOverview();
       if (btn.dataset.tab === "strand-map") loadStrandMap();
+      if (btn.dataset.tab === "kpis") loadKpis();
     });
   });
 }
@@ -248,6 +249,23 @@ function severityBadge(severity) {
 
 function statusBadge(status) {
   return `<span class="badge-status ${escapeHtml(status)}">${escapeHtml(status)}</span>`;
+}
+
+// EDR-native indicators (process/cmdline/parent-process) carry an explicit
+// process:/cmdline:/parent: prefix (see ingestion/schemas.py) so they never
+// need to be guessed from the bare string -- render them with a distinct
+// label + value split so an analyst can tell a process indicator from a
+// network one (IP/domain/hash/URL/CVE, rendered as plain text) at a glance.
+const IOC_PREFIX_LABELS = { "process:": "PROCESS", "cmdline:": "CMDLINE", "parent:": "PARENT" };
+
+function iocBadge(ioc) {
+  for (const [prefix, label] of Object.entries(IOC_PREFIX_LABELS)) {
+    if (ioc.startsWith(prefix)) {
+      const value = ioc.slice(prefix.length);
+      return `<span class="ioc-process-badge"><span class="ioc-process-label">${label}</span>${escapeHtml(value)}</span>`;
+    }
+  }
+  return escapeHtml(ioc);
 }
 
 let currentRows = [];
@@ -701,7 +719,7 @@ async function renderIncidentDetail(threadId) {
       <div class="detail-desc">${escapeHtml(incident.description)}</div>
       <div class="detail-section"><h3>Assignment</h3>${renderAssignment(threadId, assignedTo)}</div>
       <div class="detail-section"><h3>Affected Assets</h3><p>${incident.affected_assets.map(escapeHtml).join(", ") || "none"}</p></div>
-      <div class="detail-section"><h3>Indicators of Compromise</h3><p>${incident.iocs.map(escapeHtml).join(", ") || "none"}</p></div>
+      <div class="detail-section"><h3>Indicators of Compromise</h3><p>${incident.iocs.map(iocBadge).join(", ") || "none"}</p></div>
       <div class="detail-section"><h3>Agent Findings</h3>${renderFindings(data.messages)}</div>
       <div class="detail-section"><h3>Threat Intelligence</h3>${renderThreatIntel(data.threat_intel)}</div>
       <div class="detail-section"><h3>ATT&amp;CK Mapping</h3>${renderAttackTechnique(data.attack_technique)}</div>
@@ -936,6 +954,142 @@ function renderAttackOverview(tactics) {
       </div>`
     )
     .join("");
+}
+
+/* ---------- SOC KPI reporting ---------- */
+
+function formatDuration(seconds) {
+  if (seconds === null || seconds === undefined) return "—";
+  const total = Math.round(seconds);
+  const h = Math.floor(total / 3600);
+  const m = Math.floor((total % 3600) / 60);
+  const s = total % 60;
+  if (h > 0) return `${h}h ${m}m`;
+  if (m > 0) return `${m}m ${s}s`;
+  return `${s}s`;
+}
+
+const SEVERITY_ORDER = ["critical", "high", "medium", "low"];
+
+async function loadKpis() {
+  const body = document.getElementById("kpi-body");
+  body.innerHTML = '<div class="empty-state">Loading…</div>';
+  try {
+    const data = await apiGet(`${tenantPrefix()}/incidents/kpis`);
+    body.innerHTML = renderKpis(data);
+    // The volume chart draws on a <canvas> (see drawKpiVolumeChart's own
+    // comment for why) -- it needs to exist in the DOM, with real layout
+    // dimensions, before a 2D context can size itself correctly.
+    const canvas = document.getElementById("kpi-volume-canvas");
+    if (canvas) drawKpiVolumeChart(canvas, data.volume_by_day);
+  } catch (err) {
+    body.innerHTML = `<div class="live-event">Error: ${escapeHtml(err.message)}</div>`;
+  }
+}
+
+function renderKpis(stats) {
+  if (!stats.total) {
+    return '<div class="empty-state">No incidents yet for this tenant.</div>';
+  }
+
+  const cards = `
+    <div class="kpi-cards">
+      <div class="kpi-card">
+        <span class="kpi-card-label">Total Incidents</span>
+        <span class="kpi-card-value">${escapeHtml(stats.total)}</span>
+      </div>
+      <div class="kpi-card">
+        <span class="kpi-card-label">Mean Time to Resolution</span>
+        <span class="kpi-card-value">${formatDuration(stats.mttr_seconds.mean)}</span>
+        <span class="kpi-card-sub">median ${formatDuration(stats.mttr_seconds.median)} · n=${stats.mttr_seconds.count}</span>
+      </div>
+      <div class="kpi-card">
+        <span class="kpi-card-label">Mean Time to Decision</span>
+        <span class="kpi-card-value">${formatDuration(stats.dwell_seconds.mean)}</span>
+        <span class="kpi-card-sub">median ${formatDuration(stats.dwell_seconds.median)} · n=${stats.dwell_seconds.count}</span>
+      </div>
+      <div class="kpi-card">
+        <span class="kpi-card-label">Escalation Rate</span>
+        <span class="kpi-card-value">${Math.round(stats.escalation_rate * 100)}%</span>
+        <span class="kpi-card-sub">ever reached high/critical</span>
+      </div>
+    </div>`;
+
+  return cards + renderKpiVolumeChartShell(stats.volume_by_day);
+}
+
+function renderKpiVolumeChartShell(volumeByDay) {
+  if (!volumeByDay || !volumeByDay.length) {
+    return '<div class="empty-state">No incident volume data yet.</div>';
+  }
+  return `
+    <div class="kpi-volume-section">
+      <h3>Incident Volume by Day</h3>
+      <canvas id="kpi-volume-canvas" class="kpi-volume-canvas"></canvas>
+    </div>`;
+}
+
+// Drawn on a real <canvas>, not DOM+CSS bars with per-element inline
+// heights -- this dashboard's own CSP (Content-Security-Policy: default-src
+// 'self', no style-src, no 'unsafe-inline') blocks both an inline style="..."
+// attribute and a script-set el.style.height, discovered live during this
+// feature's own verification (a real browser console CSP violation, not a
+// hypothetical). Canvas drawing sidesteps that entirely, the same reason
+// the Strand Map already renders on canvas instead of DOM elements.
+function drawKpiVolumeChart(canvas, volumeByDay) {
+  if (!volumeByDay || !volumeByDay.length) return;
+
+  const byDay = {};
+  for (const row of volumeByDay) {
+    byDay[row.date] = byDay[row.date] || {};
+    byDay[row.date][row.severity] = row.count;
+  }
+  const days = Object.keys(byDay).sort();
+  const dailyTotals = days.map((d) => SEVERITY_ORDER.reduce((sum, sev) => sum + (byDay[d][sev] || 0), 0));
+  const maxTotal = Math.max(...dailyTotals, 1);
+
+  // Layout (width: 100%, a fixed height) comes from the real .kpi-volume-canvas
+  // CSS rule in style.css -- only the bitmap resolution (canvas.width/height,
+  // real IDL properties, not CSS) is set here. See this function's own
+  // comment above for why nothing here ever touches canvas.style.
+  const dpr = window.devicePixelRatio || 1;
+  const cssWidth = Math.max(canvas.parentElement.clientWidth || 600, days.length * 28);
+  const cssHeight = 160;
+  canvas.width = cssWidth * dpr;
+  canvas.height = cssHeight * dpr;
+  const ctx = canvas.getContext("2d");
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.clearRect(0, 0, cssWidth, cssHeight);
+
+  const severityColor = {
+    critical: cssVar("--critical"),
+    high: cssVar("--high"),
+    medium: cssVar("--medium"),
+    low: cssVar("--low"),
+  };
+  const labelColor = cssVar("--text-faint") || "#4a5b6e";
+  const chartBottom = cssHeight - 18; // leaves room for date labels
+  const barWidth = Math.min(20, (cssWidth / days.length) * 0.6);
+  const gap = cssWidth / days.length;
+
+  ctx.font = "9px " + (cssVar("--font-mono") || "monospace");
+  ctx.fillStyle = labelColor;
+  ctx.textAlign = "center";
+
+  days.forEach((day, i) => {
+    const x = gap * i + gap / 2;
+    let yCursor = chartBottom;
+    for (const sev of SEVERITY_ORDER) {
+      const count = byDay[day][sev];
+      if (!count) continue;
+      const barHeight = (count / maxTotal) * (chartBottom - 10);
+      ctx.fillStyle = severityColor[sev] || labelColor;
+      ctx.fillRect(x - barWidth / 2, yCursor - barHeight, barWidth, barHeight);
+      yCursor -= barHeight;
+    }
+    ctx.fillStyle = labelColor;
+    ctx.fillText(day.slice(5), x, cssHeight - 5);
+  });
 }
 
 /* ---------- Strand Map (graph-canvas view) ----------

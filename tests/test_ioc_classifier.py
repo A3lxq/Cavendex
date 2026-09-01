@@ -51,3 +51,28 @@ def test_rejects_malformed_cve_looking_strings():
     assert classify_ioc("CVE-21-1234") == "unknown"  # 2-digit year
     assert classify_ioc("NOTCVE-2021-1234") == "unknown"
     assert classify_ioc("CVE-2021-123") == "unknown"  # sequence too short
+
+
+def test_classifies_prefixed_edr_indicators():
+    assert classify_ioc("process:svchost.exe") == "process"
+    assert classify_ioc("cmdline:powershell.exe -enc AAA") == "cmdline"
+    assert classify_ioc("parent:explorer.exe") == "parent_process"
+
+
+def test_bare_prefix_with_no_value_is_unknown():
+    # A prefix with nothing after it isn't a real indicator -- reject
+    # rather than classify an empty value as a process name.
+    assert classify_ioc("process:") == "unknown"
+    assert classify_ioc("cmdline:") == "unknown"
+    assert classify_ioc("parent:") == "unknown"
+
+
+def test_unprefixed_process_looking_string_is_not_inferred():
+    # The whole point of the prefix convention: a bare process/command-line
+    # string is never guessed as one -- it has to come from an explicit
+    # normalizer-supplied field, never inferred from the string alone.
+    # (Note: a bare filename like "svchost.exe" is a pre-existing, separate
+    # classifier quirk -- it satisfies the domain regex's shape and is
+    # classified "domain", same as before this feature; a command line
+    # with spaces can't accidentally match any existing type.)
+    assert classify_ioc("cmd /c whoami") == "unknown"

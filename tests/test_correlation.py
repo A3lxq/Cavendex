@@ -78,6 +78,20 @@ def test_no_overlap_does_not_correlate(monkeypatch, tmp_path):
     assert match is None
 
 
+def test_shared_process_ioc_correlates_exact_match(monkeypatch, tmp_path):
+    # EDR-native indicators (process:/cmdline:/parent: prefixed strings,
+    # see ingestion/schemas.py:NormalizedAlert) are still plain strings in
+    # Incident.iocs -- exact-match correlation needs zero changes to treat
+    # a shared process indicator the same way it already treats a shared
+    # IP or hash.
+    monkeypatch.setenv("CAVENDEX_DATA_DIR", str(tmp_path))
+    _seed("inc-1", iocs=["process:svchost.exe"])
+
+    match = find_correlated_incident("t1", _alert(iocs=["process:svchost.exe"]))
+    assert match["thread_id"] == "inc-1"
+    assert match["match_type"] == "exact_ioc"
+
+
 def test_alert_with_no_iocs_or_assets_never_correlates(monkeypatch, tmp_path):
     monkeypatch.setenv("CAVENDEX_DATA_DIR", str(tmp_path))
     _seed("inc-1", iocs=["1.2.3.4"])

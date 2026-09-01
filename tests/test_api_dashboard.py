@@ -131,3 +131,44 @@ def test_default_tenant_stats_route(monkeypatch, tmp_path):
     response = client.get("/incidents/stats")
     assert response.status_code == 200
     assert response.json()["total"] == 2
+
+
+def test_kpis_route_returns_the_aggregate_shape(monkeypatch, tmp_path):
+    _seed_two("dash-test", tmp_path, monkeypatch)
+    response = client.get("/tenants/dash-test/incidents/kpis")
+    assert response.status_code == 200
+    stats = response.json()
+    assert stats["total"] == 2
+    assert "mttr_seconds" in stats and "mean" in stats["mttr_seconds"]
+    assert "dwell_seconds" in stats and "mean" in stats["dwell_seconds"]
+    assert "escalation_rate" in stats
+    assert "volume_by_day" in stats
+
+
+def test_kpis_route_does_not_collide_with_thread_id_route(monkeypatch, tmp_path):
+    _seed_two("dash-test", tmp_path, monkeypatch)
+    response = client.get("/tenants/dash-test/incidents/kpis")
+    assert response.status_code == 200
+    assert "total" in response.json()  # kpis shape, not a 404 "incident not found"
+
+
+def test_kpis_route_requires_auth_when_configured(monkeypatch):
+    monkeypatch.setenv("CAVENDEX_API_KEY", "secret-key-123")
+    response = client.get("/tenants/dash-test/incidents/kpis")
+    assert response.status_code == 401
+
+
+def test_default_tenant_kpis_route(monkeypatch, tmp_path):
+    from utils.tenancy import DEFAULT_TENANT
+
+    _seed_two(DEFAULT_TENANT, tmp_path, monkeypatch)
+    response = client.get("/incidents/kpis")
+    assert response.status_code == 200
+    assert response.json()["total"] == 2
+
+
+def test_kpis_route_accepts_since_query_param(monkeypatch, tmp_path):
+    _seed_two("dash-test", tmp_path, monkeypatch)
+    response = client.get("/tenants/dash-test/incidents/kpis", params={"since": "2099-01-01T00:00:00+00:00"})
+    assert response.status_code == 200
+    assert response.json()["total"] == 0  # both seeded incidents predate this future "since"

@@ -1,8 +1,12 @@
+import pytest
+
 from state import Incident
 from utils.incident_index import (
+    _get_connection,
     get_attack_technique_stats,
     get_incident_graph,
     get_incident_stats,
+    get_kpi_stats,
     list_incidents,
     list_open_incidents,
     reset_for_tests,
@@ -290,6 +294,138 @@ def test_stats_scoped_per_tenant(monkeypatch, tmp_path):
 
     assert stats_t1["total"] == 3
     assert stats_t2["total"] == 1
+
+
+# ---------- get_kpi_stats ----------
+
+
+def _set_timestamps(tenant, thread_id, created_at=None, pending_approval_at=None, resolved_at=None):
+    """Direct DB manipulation for deterministic MTTR/dwell-time math --
+    upsert_incident_summary always stamps "now", so a test asserting a
+    specific duration needs explicit control over the underlying
+    timestamps rather than real wall-clock gaps between calls."""
+    conn = _get_connection(tenant)
+    updates, params = [], []
+    for column, value in (
+        ("created_at", created_at), ("pending_approval_at", pending_approval_at), ("resolved_at", resolved_at),
+    ):
+        if value is not None:
+            updates.append(f"{column} = ?")
+            params.append(value)
+    params.append(thread_id)
+    conn.execute(f"UPDATE incidents SET {', '.join(updates)} WHERE thread_id = ?", params)
+    conn.commit()
+
+
+def test_kpi_stats_on_empty_tenant(monkeypatch, tmp_path):
+    monkeypatch.setenv("CAVENDEX_DATA_DIR", str(tmp_path))
+
+    stats = get_kpi_stats("t1")
+
+    assert stats["total"] == 0
+    assert stats["escalation_rate"] == 0.0
+    assert stats["mttr_seconds"] == {"mean": None, "median": None, "count": 0}
+    assert stats["dwell_seconds"] == {"mean": None, "median": None, "count": 0}
+    assert stats["volume_by_day"] == []
+
+
+def test_mttr_only_counts_resolved_incidents(monkeypatch, tmp_path):
+    monkeypatch.setenv("CAVENDEX_DATA_DIR", str(tmp_path))
+    upsert_incident_summary("t1", _state("inc-1", "resolved one", severity="high", status="closed"))
+    upsert_incident_summary("t1", _state("inc-2", "still open", severity="high", status="open"))
+    _set_timestamps("t1", "inc-1", created_at="2026-01-01T00:00:00+00:00", resolved_at="2026-01-01T01:00:00+00:00")
+
+    stats = get_kpi_stats("t1")
+
+    assert stats["mttr_seconds"]["count"] == 1
+    assert stats["mttr_seconds"]["mean"] == pytest.approx(3600.0, rel=1e-6)
+    assert stats["mttr_seconds"]["median"] == pytest.approx(3600.0, rel=1e-6)
+
+
+def test_mttr_mean_and_median_across_multiple_incidents(monkeypatch, tmp_path):
+    monkeypatch.setenv("CAVENDEX_DATA_DIR", str(tmp_path))
+    upsert_incident_summary("t1", _state("inc-1", "a", status="closed"))
+    upsert_incident_summary("t1", _state("inc-2", "b", status="closed"))
+    upsert_incident_summary("t1", _state("inc-3", "c", status="closed"))
+    _set_timestamps("t1", "inc-1", created_at="2026-01-01T00:00:00+00:00", resolved_at="2026-01-01T00:10:00+00:00")
+    _set_timestamps("t1", "inc-2", created_at="2026-01-01T00:00:00+00:00", resolved_at="2026-01-01T00:20:00+00:00")
+    _set_timestamps("t1", "inc-3", created_at="2026-01-01T00:00:00+00:00", resolved_at="2026-01-01T00:30:00+00:00")
+
+    stats = get_kpi_stats("t1")
+
+    assert stats["mttr_seconds"]["count"] == 3
+    assert stats["mttr_seconds"]["mean"] == pytest.approx(1200.0, rel=1e-6)  # (600+1200+1800)/3
+    assert stats["mttr_seconds"]["median"] == pytest.approx(1200.0, rel=1e-6)
+
+
+def test_dwell_time_only_counts_incidents_that_reached_pending_approval_and_resolved(monkeypatch, tmp_path):
+    monkeypatch.setenv("CAVENDEX_DATA_DIR", str(tmp_path))
+    upsert_incident_summary("t1", _state("inc-1", "went through approval", status="closed"))
+    upsert_incident_summary("t1", _state("inc-2", "closed at triage, never pending", status="closed"))
+    _set_timestamps(
+        "t1", "inc-1",
+        pending_approval_at="2026-01-01T00:00:00+00:00", resolved_at="2026-01-01T00:05:00+00:00",
+    )
+    # inc-2 has no pending_approval_at at all -- must be excluded from dwell time.
+
+    stats = get_kpi_stats("t1")
+
+    assert stats["dwell_seconds"]["count"] == 1
+    assert stats["dwell_seconds"]["mean"] == pytest.approx(300.0, rel=1e-6)
+
+
+def test_escalation_rate_counts_incidents_that_ever_reached_high_or_critical(monkeypatch, tmp_path):
+    monkeypatch.setenv("CAVENDEX_DATA_DIR", str(tmp_path))
+    upsert_incident_summary("t1", _state("inc-1", "stayed low", severity="low", status="closed"))
+    upsert_incident_summary("t1", _state("inc-2", "escalated to high", severity="high", status="investigating"))
+    upsert_incident_summary("t1", _state("inc-3", "escalated then closed", severity="critical", status="closed"))
+    # A later re-upsert with a lower severity must not erase the
+    # already-recorded high-water-mark -- max_severity_rank only ever grows.
+    upsert_incident_summary("t1", _state("inc-3", "correlation could not have downgraded it", severity="low", status="closed"))
+
+    stats = get_kpi_stats("t1")
+
+    assert stats["total"] == 3
+    assert stats["escalation_rate"] == pytest.approx(2 / 3, rel=1e-6)
+
+
+def test_volume_by_day_groups_by_creation_date_and_severity(monkeypatch, tmp_path):
+    monkeypatch.setenv("CAVENDEX_DATA_DIR", str(tmp_path))
+    upsert_incident_summary("t1", _state("inc-1", "a", severity="high", status="open"))
+    upsert_incident_summary("t1", _state("inc-2", "b", severity="high", status="open"))
+    upsert_incident_summary("t1", _state("inc-3", "c", severity="low", status="open"))
+    _set_timestamps("t1", "inc-1", created_at="2026-01-01T10:00:00+00:00")
+    _set_timestamps("t1", "inc-2", created_at="2026-01-01T11:00:00+00:00")
+    _set_timestamps("t1", "inc-3", created_at="2026-01-02T09:00:00+00:00")
+
+    stats = get_kpi_stats("t1")
+
+    assert {"date": "2026-01-01", "severity": "high", "count": 2} in stats["volume_by_day"]
+    assert {"date": "2026-01-02", "severity": "low", "count": 1} in stats["volume_by_day"]
+
+
+def test_since_scopes_every_metric_to_the_time_window(monkeypatch, tmp_path):
+    monkeypatch.setenv("CAVENDEX_DATA_DIR", str(tmp_path))
+    upsert_incident_summary("t1", _state("inc-old", "before the window", severity="critical", status="closed"))
+    upsert_incident_summary("t1", _state("inc-new", "inside the window", severity="low", status="open"))
+    _set_timestamps("t1", "inc-old", created_at="2025-01-01T00:00:00+00:00", resolved_at="2025-01-01T01:00:00+00:00")
+    _set_timestamps("t1", "inc-new", created_at="2026-06-01T00:00:00+00:00")
+
+    stats = get_kpi_stats("t1", since="2026-01-01T00:00:00+00:00")
+
+    assert stats["total"] == 1
+    assert stats["escalation_rate"] == 0.0  # inc-old's critical escalation is out of scope
+
+
+def test_kpi_stats_scoped_per_tenant(monkeypatch, tmp_path):
+    monkeypatch.setenv("CAVENDEX_DATA_DIR", str(tmp_path))
+    upsert_incident_summary("t1", _state("inc-1", "tenant one", severity="critical", status="closed"))
+    upsert_incident_summary("t2", _state("inc-2", "tenant two", severity="low", status="open"))
+
+    assert get_kpi_stats("t1")["total"] == 1
+    assert get_kpi_stats("t2")["total"] == 1
+    assert get_kpi_stats("t1")["escalation_rate"] == 1.0
+    assert get_kpi_stats("t2")["escalation_rate"] == 0.0
 
 
 # ---------- set_assigned_to ----------

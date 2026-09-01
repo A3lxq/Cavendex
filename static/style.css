@@ -299,6 +299,23 @@ main { padding: 22px; }
 .badge-status.contained, .badge-status.closed { background: rgba(51,224,138,0.12); color: var(--ok); border-color: rgba(51,224,138,0.3); }
 .badge-status.investigating, .badge-status.open { background: rgba(53,224,255,0.1); color: var(--pulse); border-color: rgba(53,224,255,0.3); }
 
+/* EDR-native indicators (process/cmdline/parent-process) -- a neutral
+   label+value chip, not the accent color (that's reserved for live/active
+   state elsewhere in this dashboard), just enough visual separation from a
+   plain network IOC (IP/domain/hash/URL/CVE) so it reads as a different
+   kind of indicator at a glance. */
+.ioc-process-badge {
+  display: inline-flex; align-items: center; gap: 5px;
+  background: var(--bg-inset); border: 1px solid var(--border);
+  border-radius: 3px; padding: 1px 7px 1px 1px; font-family: var(--font-mono);
+  font-size: 12px; color: var(--text);
+}
+.ioc-process-label {
+  background: var(--bg-elevated-2-solid); color: var(--text-dim);
+  font-size: 9px; font-weight: 700; letter-spacing: 0.04em;
+  border-radius: 2px; padding: 2px 5px;
+}
+
 /* ---------- Detail pane ---------- */
 
 .detail-pane {
@@ -459,6 +476,32 @@ main { padding: 22px; }
   font-family: var(--font-mono); font-variant-numeric: tabular-nums; font-size: 12px;
   color: var(--pulse); background: var(--pulse-dim); border-radius: 10px; padding: 1px 8px; flex-shrink: 0;
 }
+
+/* ---------- SOC KPI reporting ---------- */
+
+.kpi-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; margin-bottom: 24px; }
+.kpi-card {
+  background: var(--bg-inset); border: 1px solid var(--border-soft); border-radius: var(--radius);
+  padding: 14px 16px; display: flex; flex-direction: column; gap: 4px;
+}
+.kpi-card-label { font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-dim); }
+.kpi-card-value {
+  font-family: var(--font-mono); font-variant-numeric: tabular-nums; font-size: 24px;
+  font-weight: 700; color: var(--pulse);
+}
+.kpi-card-sub { font-family: var(--font-mono); font-size: 11px; color: var(--text-faint); }
+
+.kpi-volume-section h3 {
+  font-size: 12px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--pulse);
+  margin: 0 0 12px; padding-bottom: 6px; border-bottom: 1px solid var(--border-soft);
+}
+/* Real bitmap resolution is set via canvas.width/height in JS (drawKpiVolumeChart)
+   -- this rule only controls display (CSS) size. Deliberately a canvas, not
+   DOM+CSS bars with per-bar inline heights: this dashboard's CSP has no
+   style-src/'unsafe-inline', so a script-set el.style.height is blocked the
+   same as an inline style="..." attribute (found live, not hypothetical) --
+   the same reason the Strand Map already draws on canvas instead of DOM. */
+.kpi-volume-canvas { width: 100%; height: 160px; display: block; }
 
 /* ---------- Strand Map (graph-canvas view) ---------- */
 
