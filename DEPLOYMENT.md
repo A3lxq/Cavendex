@@ -1257,8 +1257,8 @@ affect a live deployment decision, not just a feature-completeness one:
   closure.** It resolves `pyproject.toml`'s floor-pinned (`>=`)
   dependencies fresh from PyPI, the same tradeoff `requirements.txt`
   makes for development — silently skipping the `--require-hashes`
-  protection this section's own install steps use. Always install from
-  `requirements.lock.txt` first (as above), then `pip install --no-deps .`,
+  protection **[Section 2](#2-install)**'s own install steps use. Always install from
+  `requirements.lock.txt` first, then `pip install --no-deps .`,
   for anything beyond a personal/dev install.
 
 None of this means "don't deploy it" — it means deploy it as what it
