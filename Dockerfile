@@ -7,8 +7,19 @@
 # then the runtime stage copies just the installed site-packages and
 # the cavendex package itself, so the final image doesn't carry pip's
 # build cache or wheel artifacts.
+#
+# Must match the Python version requirements.lock.txt was generated
+# against (3.14, per its own regeneration recipe's throwaway venv) —
+# compiled-extension packages (aiohttp, etc.) publish a separate wheel
+# per interpreter version, each with its own real, legitimate hash, so
+# --require-hashes correctly rejects a same-version wheel built for a
+# different interpreter as "doesn't match." Verified live: building
+# against 3.12 failed hash verification on a real (not corrupted)
+# aiohttp wheel; switching to 3.14 to match the lock file fixed it —
+# see DEPLOYMENT.md's lock-file regeneration note if you ever need to
+# regenerate requirements.lock.txt against a different Python version.
 
-FROM python:3.12-slim AS builder
+FROM python:3.14-slim AS builder
 
 WORKDIR /build
 
@@ -19,7 +30,7 @@ COPY . .
 RUN pip install --no-cache-dir --no-deps .
 
 
-FROM python:3.12-slim AS runtime
+FROM python:3.14-slim AS runtime
 
 # git is only exercised by the opt-in `backup` compose service
 # (vault_backup.py shells out to it) — installed unconditionally here
@@ -34,7 +45,7 @@ RUN useradd --create-home --shell /usr/sbin/nologin cavendex
 # copying that plus the generated `cavendex` console-script entry point
 # is the whole app; no separate copy of the source tree is needed
 # (or read: the console-script wrapper never consults CWD for imports).
-COPY --from=builder /usr/local/lib/python3.12/site-packages /usr/local/lib/python3.12/site-packages
+COPY --from=builder /usr/local/lib/python3.14/site-packages /usr/local/lib/python3.14/site-packages
 COPY --from=builder /usr/local/bin/cavendex /usr/local/bin/cavendex
 
 # Just a working directory for relative-path defaults

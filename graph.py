@@ -70,7 +70,13 @@ def _base_data_dir() -> str:
     # Read lazily (not at import time) so CAVENDEX_DATA_DIR can be set
     # via load_dotenv() or monkeypatched in tests after this module is
     # first imported — same reasoning as utils.obsidian._vault_root().
-    return os.getenv("CAVENDEX_DATA_DIR", os.path.join(os.path.dirname(__file__), "data"))
+    # Plain relative default (CWD-relative, same as CHROMA_PERSIST_DIR/
+    # OBSIDIAN_VAULT_PATH's own ".chroma"/"obsidian_vault" defaults) —
+    # not __file__-relative: once this module is installed into
+    # site-packages, __file__'s directory isn't writable by a non-root
+    # install and isn't where a user running `cavendex` from their own
+    # directory would expect their data to land anyway.
+    return os.getenv("CAVENDEX_DATA_DIR", "data")
 
 
 def tenant_data_dir(tenant_id: str = DEFAULT_TENANT) -> str:
