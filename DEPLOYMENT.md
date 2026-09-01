@@ -1141,6 +1141,14 @@ Everything here is already discussed in more depth in README's
       multiple workers/replicas are safe for rate limiting and dedup
       (see **[Section 4](#4-run-it-as-a-service)**; correlation has its own, separate multi-host
       caveat there regardless of Redis).
+- [ ] The three rate-limit thresholds (`CAVENDEX_RATE_LIMIT_PER_MINUTE`,
+      `CAVENDEX_TENANT_RATE_LIMIT_PER_MINUTE`, and
+      `CAVENDEX_INGEST_RATE_LIMIT_PER_MINUTE` — see **[Section 6](#6-feed-it-real-alerts-continuously)**) are actually
+      reviewed against this deployment's real client count and expected
+      alert volume, not left at their shipped defaults regardless of
+      scale. Too low and legitimate traffic gets 429'd; too high and the
+      tenant-wide ceiling stops meaningfully protecting the LLM-pipeline
+      budget it exists to bound.
 - [ ] Backups of `CAVENDEX_DATA_DIR` / `CHROMA_PERSIST_DIR` /
       `OBSIDIAN_VAULT_PATH` are actually running, not just planned —
       **and you've actually restored from one at least once** (see
