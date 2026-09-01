@@ -1440,3 +1440,20 @@ a backup costs a minute and a bad one costs a lot more.
   `cavendex` user, or a deploy key without write access. The commit
   itself still succeeded and isn't lost; fix the credential and the next
   interval's push will include it.
+
+---
+
+## 18. Set up ticketing integration (opt-in)
+
+`notifications/case_sync.py` (see README's **["Ticketing Integration"](README.md#ticketing-integration)** section for the full design) creates a real Jira Cloud issue for every incident and keeps it updated with progress comments, so an analyst working from Jira doesn't need a second system of record.
+
+```env
+CAVENDEX_JIRA_BASE_URL=https://your-domain.atlassian.net
+CAVENDEX_JIRA_EMAIL=your-account-email@example.com
+CAVENDEX_JIRA_API_TOKEN=your-jira-api-token
+CAVENDEX_JIRA_PROJECT_KEY=SEC
+```
+
+**Generate the API token** in your Atlassian account settings (id.atlassian.com → Security → API tokens) — it authenticates as the account whose email you set above, via HTTP Basic Auth (Jira Cloud's own documented scheme, no OAuth dance needed). **All four variables must be set together** — unset any one and sync is completely inert, the same "opt-in, never a silent behavior change" convention every other optional integration in this project follows.
+
+**A sync failure never blocks incident processing** — the same "must never be in the hot path" contract every other external call in this project follows — but check `data/{tenant}/jira_sync_log.jsonl` if tickets seem to have silently stopped appearing, the same way **[Section 7](#7-get-notified-instead-of-watching-the-dashboard)** recommends testing the alert webhook directly rather than assuming the pipeline itself is broken.

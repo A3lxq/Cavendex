@@ -673,6 +673,26 @@ Deliberately non-LLM and deliberately scoped: a playbook never skips or replaces
 
 Live-verified against a real running instance: a real incident matching a real playbook file correctly appended all three ordered steps (even when Triage judged the alert needed no further analysis and the Responder Agent never ran — the playbook layer is a deterministic backstop independent of what the LLM agents decide); approving it sent two real HTTP POSTs to a local receiver standing in for a SOAR platform (step 1 succeeded, step 2 was made to fail), and step 3 was never sent at all — confirmed via the receiver's own request log, not just the response — with the dashboard and CLI both correctly showing the skip and its reason.
 
+### Ticketing Integration
+
+`notifications/case_sync.py` closes a real day-to-day gap: an analyst working from Jira doesn't want a second, separate system of record just to know an incident happened. Off by default; fully inert unless all four env vars below are set.
+
+```env
+CAVENDEX_JIRA_BASE_URL=https://your-domain.atlassian.net
+CAVENDEX_JIRA_EMAIL=your-account-email@example.com
+CAVENDEX_JIRA_API_TOKEN=your-jira-api-token
+CAVENDEX_JIRA_PROJECT_KEY=SEC
+```
+
+- **Auth is Jira Cloud's own documented scheme** — an API token plus your account email, sent as HTTP Basic Auth. No OAuth dance needed, matching this project's existing preference for the simplest auth model that's still real (the same reasoning `poll_connector.py`'s static-token model already uses for most SIEM/EDR APIs).
+- **Uses Jira Cloud's REST API v2, not v3** — v3 requires the issue `description` field in Atlassian Document Format (a nested JSON structure); v2 still accepts a plain string, the simpler, still-real, still-documented choice for a plain-text incident summary.
+- **Creates one issue per incident, then adds progress comments — never a duplicate.** The first sync for an incident creates a real Jira issue and records its key (`utils/incident_index.py`'s `jira_issue_key` column, the same "small file, not a system" pattern `assigned_to` already uses, and — like `assigned_to` — deliberately excluded from `upsert_incident_summary`'s own INSERT/UPDATE so a routine re-upsert can never silently lose track of it). Every later sync (severity changed, status changed, resolved) adds a comment to that same issue instead of creating a second one — a natural, append-only progress trail directly in Jira, the same "never rewrite history" instinct this project's own audit chain follows.
+- **Called from every pipeline persist point** (`workflows/incident_pipeline.py:_persist`) — the same place the audit chain and dashboard index already get updated — so it covers incident creation, correlation merges, and approve/deny resolutions without needing separate wiring for each.
+- **A missed sync is worth seeing, unlike a routine notification.** Following `remediation/executor.py`'s richer outcome-taxonomy template rather than `notifications/webhook.py`'s simpler fire-and-forget one: every sync attempt's outcome is recorded to a durable local `data/{tenant}/jira_sync_log.jsonl`, the same "external anchor might silently fail, so log it locally too" reasoning `utils/audit_export.py` already uses — an analyst working from Jira who never got a ticket has no other way to notice.
+- **Never blocks real incident processing.** A broken or unreachable Jira instance is swallowed at the `_persist()` call site, the same "must never be in the hot path" contract every other external call in this project follows.
+
+Live-verified against a real running instance: a real `cli.py new` call with Jira sync configured correctly created a real issue against a real local HTTP server standing in for Jira Cloud's documented REST v2 API, with the returned issue key recorded in the incident index — confirmed by reading the real incident-index row directly, not just the CLI's own success output.
+
 ### Vault Backup
 
 `vault_backup.py` is a separate, interval-based process — deliberately not something the incident pipeline does inline, so a git failure (network blip, auth issue, a merge conflict with something edited by hand in Obsidian) can never block or slow down real incident processing, the same reasoning behind every other "keep this out of the hot path" choice in this project.

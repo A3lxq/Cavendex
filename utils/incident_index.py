@@ -84,6 +84,12 @@ def _ensure_correlation_columns(conn: sqlite3.Connection) -> None:
         # downgraded, correlation-merged, or reclassified never loses the
         # fact that it was once high/critical) for escalation-rate reporting.
         "pending_approval_at", "resolved_at",
+        # Jira Cloud case sync (see notifications/case_sync.py) -- like
+        # assigned_to, deliberately never written by upsert_incident_summary
+        # itself (only by set_jira_issue_key), so a routine pipeline
+        # re-upsert can never silently lose track of an already-created
+        # Jira issue and create a duplicate.
+        "jira_issue_key",
     ):
         if column not in existing:
             conn.execute(f"ALTER TABLE incidents ADD COLUMN {column} TEXT")
@@ -213,6 +219,31 @@ def set_assigned_to(tenant_id: str, thread_id: str, assigned_to: Optional[str]) 
         cursor = conn.execute(
             "UPDATE incidents SET assigned_to = ? WHERE thread_id = ?",
             (assigned_to or None, thread_id),
+        )
+        conn.commit()
+    return cursor.rowcount > 0
+
+
+def get_jira_issue_key(tenant_id: str, thread_id: str) -> Optional[str]:
+    """The Jira issue key already created for this incident (see
+    notifications/case_sync.py), or None if one hasn't been created yet
+    -- the signal case_sync.sync_incident() uses to decide create vs.
+    add-a-comment.
+    """
+    conn = _get_connection(tenant_id)
+    row = conn.execute("SELECT jira_issue_key FROM incidents WHERE thread_id = ?", (thread_id,)).fetchone()
+    return row[0] if row else None
+
+
+def set_jira_issue_key(tenant_id: str, thread_id: str, jira_issue_key: str) -> bool:
+    """Records the Jira issue key created for this incident. Returns
+    False if the incident isn't in the index at all, True otherwise.
+    """
+    conn = _get_connection(tenant_id)
+    with _lock:
+        cursor = conn.execute(
+            "UPDATE incidents SET jira_issue_key = ? WHERE thread_id = ?",
+            (jira_issue_key, thread_id),
         )
         conn.commit()
     return cursor.rowcount > 0

@@ -17,6 +17,7 @@ import uuid
 from typing import List, Optional
 
 from graph import get_app
+from notifications.case_sync import sync_incident as sync_jira_issue
 from notifications.pipeline import notify_if_needed
 from state import SEVERITY_RANK, Incident, CavendexState
 from utils.audit_chain import record_chain
@@ -135,12 +136,15 @@ def _apply_playbook(app, config: dict, state: CavendexState) -> CavendexState:
 
 
 def _persist(state: CavendexState, report_type: str = "incident") -> None:
-    """Write the vault report, update the dashboard's list index, and
-    record this audit_log's current tamper-evidence hash into the
-    append-only chain ledger (see utils/audit_chain.py) — everything a
-    finished pipeline run/decision needs to durably land. Index and
-    ledger failures are swallowed (neither is part of the actual incident
-    record itself) so a bug in either can never break the pipeline.
+    """Write the vault report, update the dashboard's list index, record
+    this audit_log's current tamper-evidence hash into the append-only
+    chain ledger (see utils/audit_chain.py), and sync a Jira issue if
+    configured (see notifications/case_sync.py — creates one the first
+    time an incident is seen, adds a progress comment on every later
+    call) — everything a finished pipeline run/decision needs to durably
+    land. Index, ledger, and Jira-sync failures are all swallowed (none
+    is part of the actual incident record itself) so a bug in any of
+    them can never break the pipeline.
     """
     write_incident_report(state, report_type=report_type)
     tenant_id = state.get("tenant_id") or DEFAULT_TENANT
@@ -152,6 +156,10 @@ def _persist(state: CavendexState, report_type: str = "incident") -> None:
     incident = state.get("incident")
     if incident is not None:
         record_chain(tenant_id, incident.id, state.get("audit_log", []))
+        try:
+            sync_jira_issue(tenant_id, incident)
+        except Exception:
+            pass
 
     try:
         publish_incident_event(tenant_id, {"type": "incident_updated", "thread_id": incident.id if incident else None})

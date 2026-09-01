@@ -179,6 +179,13 @@ not shared storage filtered by a column. `--tenant <id>` on the CLI,
 the LangGraph "thread" key for checkpointing — the same ID you pass to
 `cli.py show/approve/deny <thread_id>`.
 
+**Ticketing sync** — `notifications/case_sync.py`'s opt-in bridge to Jira
+Cloud: creates one real Jira issue per incident on first sync, then adds a
+comment on every later sync (severity/status change, resolution) instead
+of a duplicate issue. Off by default; a broken Jira instance never blocks
+real incident processing. See
+**["Ticketing Integration"](README.md#ticketing-integration)**.
+
 **Token usage** — How many LLM tokens each agent call spent, tracked per
 incident and surfaced in the vault report, CLI, and API — a count, not a
 dollar estimate (provider pricing varies too much to assert a cost
