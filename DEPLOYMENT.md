@@ -1299,18 +1299,26 @@ affect a live deployment decision, not just a feature-completeness one:
   `notifications/webhook.py` make real outbound HTTP calls whenever
   configured. A genuinely air-gapped deployment needs those left
   unconfigured, not just the dashboard.
-- **8 of the round-1 threat-intel providers have deferred live-network
-  verification ([Section 2](#2-install)).** AlienVault OTX, GreyNoise, MalwareBazaar,
-  ThreatFox, URLhaus, IBM X-Force, Metadefender, and Censys are built
-  and unit/mocked-tested against their documented API shapes, but no
-  real request has been sent to any of their actual endpoints yet
-  (deliberately held back during review). IBM X-Force, Metadefender,
-  and Censys specifically carry additional real uncertainty — see
-  README's **["Adding a Threat-Intel Provider"](README.md#adding-a-threat-intel-provider)** — degrading to an honest
-  `"unknown"` verdict rather than crashing if their real response shape
-  differs, but not yet confirmed against a live successful response.
-  Test each against a real key before depending on it in production.
-  **The round-2 9 providers did get live-network verification**
+- **The 8 round-1 threat-intel providers now have live-network
+  verification.** MalwareBazaar/ThreatFox/URLhaus (shared abuse.ch key),
+  IBM X-Force, Metadefender, and Censys were all confirmed against
+  their real APIs with an invalid-key call, correctly rejecting with
+  the documented HTTP 401/403 shape — this also resolved IBM X-Force's
+  previously-open API-continuity question (the endpoint is confirmed
+  still live and still enforcing auth). Metadefender and Censys still
+  carry additional real uncertainty around a *successful* response's
+  exact shape — see README's **["Adding a Threat-Intel Provider"](README.md#adding-a-threat-intel-provider)** —
+  degrading to an honest `"unknown"` verdict rather than crashing if it
+  differs, but not yet confirmed live. **AlienVault OTX and GreyNoise
+  turned up a real, vendor-side limitation instead**: an invalid key
+  against either returns the identical response shape as "no data for
+  this indicator" (OTX's `/general` endpoint is publicly readable with
+  no key at all; GreyNoise's Community endpoint 404s the same way
+  regardless of key validity), so Cavendex genuinely cannot detect an
+  invalid key for these two specifically — see the README section above
+  for how this was confirmed. Test each against a real key before
+  depending on it in production. **The round-2 9 providers also got
+  live-network verification**
   (invalid-key calls, or real success-path calls for the three
   keyless/key-optional ones — ThreatMiner, Blocklist.de, NVD), but
   Hybrid Analysis and Intezer's response field names still come from

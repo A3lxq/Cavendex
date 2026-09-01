@@ -94,11 +94,65 @@ def _nvd_reachable() -> bool:
         return False
 
 
+def _otx_reachable() -> bool:
+    try:
+        socket.create_connection(("otx.alienvault.com", 443), timeout=5).close()
+        return True
+    except OSError:
+        return False
+
+
+def _greynoise_reachable() -> bool:
+    try:
+        socket.create_connection(("api.greynoise.io", 443), timeout=5).close()
+        return True
+    except OSError:
+        return False
+
+
+def _abusech_reachable() -> bool:
+    try:
+        socket.create_connection(("mb-api.abuse.ch", 443), timeout=5).close()
+        return True
+    except OSError:
+        return False
+
+
+def _xforce_reachable() -> bool:
+    try:
+        socket.create_connection(("api.xforce.ibmcloud.com", 443), timeout=5).close()
+        return True
+    except OSError:
+        return False
+
+
+def _metadefender_reachable() -> bool:
+    try:
+        socket.create_connection(("api.metadefender.com", 443), timeout=5).close()
+        return True
+    except OSError:
+        return False
+
+
+def _censys_reachable() -> bool:
+    try:
+        socket.create_connection(("api.platform.censys.io", 443), timeout=5).close()
+        return True
+    except OSError:
+        return False
+
+
 _HAS_NETWORK = _network_reachable()
 _HAS_SHODAN_NETWORK = _shodan_reachable()
 _HAS_THREATMINER_NETWORK = _threatminer_reachable()
 _HAS_BLOCKLISTDE_NETWORK = _blocklistde_reachable()
 _HAS_NVD_NETWORK = _nvd_reachable()
+_HAS_OTX_NETWORK = _otx_reachable()
+_HAS_GREYNOISE_NETWORK = _greynoise_reachable()
+_HAS_ABUSECH_NETWORK = _abusech_reachable()
+_HAS_XFORCE_NETWORK = _xforce_reachable()
+_HAS_METADEFENDER_NETWORK = _metadefender_reachable()
+_HAS_CENSYS_NETWORK = _censys_reachable()
 
 
 @pytest.fixture(autouse=True)
@@ -462,6 +516,23 @@ def test_otx_results_are_cached(monkeypatch):
     assert call_count["n"] == 1
 
 
+@pytest.mark.skipif(not _HAS_OTX_NETWORK, reason="No network access in this environment")
+def test_otx_live_call_with_invalid_key_still_returns_real_data(monkeypatch):
+    """A genuine live call against OTX's real /general endpoint with a
+    fake API key -- confirmed at research time (direct curl, with and
+    without any X-OTX-API-KEY header) that this specific endpoint is
+    publicly readable regardless of key validity: it always returns a
+    real HTTP 200 with real indicator data, never a 401/403. So unlike
+    every other keyed round-1 provider, an invalid OTX key can never
+    surface as verdict="error" here -- this is a real vendor API design
+    choice, not a Cavendex bug, and is documented as such in the README."""
+    monkeypatch.setenv("ALIENVAULT_OTX_API_KEY", "definitely-not-a-real-key")
+    result = lookup_ip_otx("8.8.8.8")
+    assert result is not None
+    assert result.source == "alienvault_otx"
+    assert result.verdict in ("unknown", "malicious")
+
+
 def test_greynoise_returns_none_without_api_key(monkeypatch):
     monkeypatch.delenv("GREYNOISE_API_KEY", raising=False)
     assert lookup_ip_greynoise("8.8.8.8") is None
@@ -539,6 +610,24 @@ def test_greynoise_results_are_cached(monkeypatch):
     lookup_ip_greynoise("1.2.3.4")
     lookup_ip_greynoise("1.2.3.4")
     assert call_count["n"] == 1
+
+
+@pytest.mark.skipif(not _HAS_GREYNOISE_NETWORK, reason="No network access in this environment")
+def test_greynoise_live_call_with_invalid_key_returns_unknown_not_error(monkeypatch):
+    """A genuine live call against GreyNoise's real Community API with a
+    fake key -- confirmed at research time (direct curl against the same
+    IP with a fake key, with no key header at all, and against a
+    different IP) that this endpoint returns an identical HTTP 404
+    "IP not observed scanning the internet" body in every case. GreyNoise's
+    Community tier does not appear to reject an invalid/missing key with
+    a 401/403 at this endpoint, so an invalid key is genuinely
+    indistinguishable from "no data for this IP" -- a real vendor API
+    limitation, not a Cavendex bug, documented as such in the README."""
+    monkeypatch.setenv("GREYNOISE_API_KEY", "definitely-not-a-real-key")
+    result = lookup_ip_greynoise("8.8.8.8")
+    assert result is not None
+    assert result.source == "greynoise"
+    assert result.verdict == "unknown"
 
 
 def test_malwarebazaar_returns_none_without_api_key(monkeypatch):
@@ -806,6 +895,32 @@ def test_urlhaus_results_are_cached(monkeypatch):
     assert call_count["n"] == 1
 
 
+@pytest.mark.skipif(not _HAS_ABUSECH_NETWORK, reason="No network access in this environment")
+def test_abusech_invalid_key_returns_error_verdict_live(monkeypatch):
+    """A genuine live call against abuse.ch's real MalwareBazaar,
+    ThreatFox, and URLhaus endpoints with a fake shared ABUSECH_API_KEY --
+    confirmed at research time (real curl probes) that all three reject an
+    invalid key with a real HTTP 403 and a
+    {"query_status": "unknown_auth_key"} body, proving the shared-key
+    error handling is correct against a real response, not a guessed one."""
+    monkeypatch.setenv("ABUSECH_API_KEY", "definitely-not-a-real-key")
+
+    mb_result = lookup_hash_malwarebazaar("d41d8cd98f00b204e9800998ecf8427e")
+    assert mb_result is not None
+    assert mb_result.verdict == "error"
+    assert "403" in mb_result.detail
+
+    tf_result = lookup_ip_threatfox("8.8.8.8")
+    assert tf_result is not None
+    assert tf_result.verdict == "error"
+    assert "403" in tf_result.detail
+
+    uh_result = lookup_url_urlhaus("http://evil.example.com/payload.exe")
+    assert uh_result is not None
+    assert uh_result.verdict == "error"
+    assert "403" in uh_result.detail
+
+
 def test_xforce_returns_none_without_both_credentials(monkeypatch):
     monkeypatch.delenv("IBM_XFORCE_API_KEY", raising=False)
     monkeypatch.delenv("IBM_XFORCE_API_PASSWORD", raising=False)
@@ -944,6 +1059,24 @@ def test_xforce_results_are_cached(monkeypatch):
     assert call_count["n"] == 1
 
 
+@pytest.mark.skipif(not _HAS_XFORCE_NETWORK, reason="No network access in this environment")
+def test_xforce_invalid_key_returns_error_verdict_live(monkeypatch):
+    """A genuine live call against IBM X-Force's real API with fake
+    credentials -- confirmed at research time (real curl probe) to
+    reject with a real HTTP 401 and {"error":"Not authorized."} body.
+    Also answers this project's own open question about whether the
+    X-Force Exchange API is still reachable at all (its EOL status was
+    uncertain per the README's honesty-caveat table) -- a real 401
+    response confirms the API endpoint itself is still live."""
+    monkeypatch.setenv("IBM_XFORCE_API_KEY", "definitely-not-a-real-key")
+    monkeypatch.setenv("IBM_XFORCE_API_PASSWORD", "definitely-not-a-real-password")
+    result = lookup_ip_xforce("8.8.8.8")
+    assert result is not None
+    assert result.source == "ibm_xforce"
+    assert result.verdict == "error"
+    assert "401" in result.detail
+
+
 def test_metadefender_returns_none_without_api_key(monkeypatch):
     monkeypatch.delenv("METADEFENDER_API_KEY", raising=False)
     assert lookup_ip_metadefender("8.8.8.8") is None
@@ -1039,6 +1172,19 @@ def test_metadefender_results_are_cached(monkeypatch):
     lookup_ip_metadefender("1.2.3.4")
     lookup_ip_metadefender("1.2.3.4")
     assert call_count["n"] == 1
+
+
+@pytest.mark.skipif(not _HAS_METADEFENDER_NETWORK, reason="No network access in this environment")
+def test_metadefender_invalid_key_returns_error_verdict_live(monkeypatch):
+    """A genuine live call against Metadefender Cloud's real API with a
+    fake key -- confirmed at research time (real curl probe) to reject
+    with a real HTTP 401 and {"error":{"code":401000,...}} body."""
+    monkeypatch.setenv("METADEFENDER_API_KEY", "definitely-not-a-real-key")
+    result = lookup_ip_metadefender("8.8.8.8")
+    assert result is not None
+    assert result.source == "metadefender"
+    assert result.verdict == "error"
+    assert "401" in result.detail
 
 
 def test_censys_returns_none_without_api_key(monkeypatch):
@@ -1147,6 +1293,20 @@ def test_censys_results_are_cached(monkeypatch):
     lookup_ip_censys("1.2.3.4")
     lookup_ip_censys("1.2.3.4")
     assert call_count["n"] == 1
+
+
+@pytest.mark.skipif(not _HAS_CENSYS_NETWORK, reason="No network access in this environment")
+def test_censys_invalid_key_returns_error_verdict_live(monkeypatch):
+    """A genuine live call against Censys's real Platform API with a fake
+    bearer token -- confirmed at research time (real curl probe) to
+    reject with a real HTTP 401 and a
+    {"error":{"code":401,"status":"Unauthorized",...}} body."""
+    monkeypatch.setenv("CENSYS_API_KEY", "definitely-not-a-real-key")
+    result = lookup_ip_censys("8.8.8.8")
+    assert result is not None
+    assert result.source == "censys"
+    assert result.verdict == "error"
+    assert "401" in result.detail
 
 
 def test_path_segments_are_url_encoded_not_interpolated_raw(monkeypatch):
