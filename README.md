@@ -59,6 +59,7 @@ This is what the rest of this README and GETTING_STARTED.md walk through.
 **As an installed package (one `cavendex` command, from any directory):**
 
 ```bash
+python3 -m venv venv && source venv/bin/activate   # a dedicated venv, not your system Python — see note below
 pip install .           # or: pip install -e . for an editable/dev install
 cp .env.example .env    # then edit .env — see step 3 below
 cavendex serve          # dashboard/API at http://localhost:8000/
@@ -69,6 +70,17 @@ cavendex --help         # full command list
 ```
 
 `.env` is read from wherever you run `cavendex` from (not this repo), so create one in whatever directory you're actually running it from.
+
+**Always install into a dedicated venv, never a shared/system Python.** This package ships several top-level modules with intentionally unchanged, deliberately generic names (`api`, `cli`, `graph`, `state`, `main`, `launcher`) — a flat layout chosen so this packaging work touches zero existing import statements, not a namespaced `cavendex.` package. In a shared environment with many other packages installed, a same-named module from another package could collide with (or be shadowed by) one of these; an isolated venv makes that a non-issue in practice.
+
+**A bare `pip install .` resolves dependencies loosely from PyPI at install time (`pyproject.toml`'s own floor-pinned `>=` versions), the same tradeoff `requirements.txt` makes for development.** For a real deployment, install the exact, hash-verified dependency closure first, then add just the `cavendex` package on top — the same two-step DEPLOYMENT.md's systemd install uses:
+
+```bash
+pip install --require-hashes -r requirements.lock.txt
+pip install --no-deps .
+```
+
+`--require-hashes` refuses to install anything whose downloaded wheel doesn't match the SHA-256 recorded in the lock file — see DEPLOYMENT.md Section 2 for why this matters and how to regenerate it.
 
 **Docker Compose (most turnkey — no local Python setup at all):**
 

@@ -1238,6 +1238,22 @@ affect a live deployment decision, not just a feature-completeness one:
   was fixed by matching the base image to the lock file rather than the
   other way around. Regenerate the lock file (Section 2) if you need to
   target a different Python version.
+- **The pip package ships flat, generically-named top-level modules
+  (`api`, `cli`, `graph`, `state`, `main`, `launcher`), not a namespaced
+  `cavendex.` package.** A deliberate tradeoff — this packaging work
+  touches zero existing import statements as a result — but it means
+  installing into a shared/system Python carries a real, if narrow,
+  module-name-collision risk with any other installed package that
+  happens to define a same-named top-level module. Always install into
+  a dedicated venv (every install path in this guide and README already
+  does), which makes this a non-issue in practice.
+- **`pip install .` alone doesn't get the hash-verified dependency
+  closure.** It resolves `pyproject.toml`'s floor-pinned (`>=`)
+  dependencies fresh from PyPI, the same tradeoff `requirements.txt`
+  makes for development — silently skipping the `--require-hashes`
+  protection this section's own install steps use. Always install from
+  `requirements.lock.txt` first (as above), then `pip install --no-deps .`,
+  for anything beyond a personal/dev install.
 
 None of this means "don't deploy it" — it means deploy it as what it
 actually is: a real, tested incident-response assistant that watches

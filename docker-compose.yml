@@ -28,7 +28,15 @@ services:
     build: .
     user: "${CAVENDEX_UID:-1000}:${CAVENDEX_GID:-1000}"
     ports:
-      - "8000:8000"
+      # Loopback-only by default — same "bind to 127.0.0.1, put a real
+      # reverse proxy in front for anything beyond your own machine"
+      # posture DEPLOYMENT.md recommends for the bare-host deployment.
+      # CAVENDEX_API_KEY is optional; an unauthenticated API bound to
+      # every interface is a real exposure on any host with a routable
+      # IP. Widen this to "8000:8000" only behind your own firewall/VPN,
+      # or better, keep this and put nginx/Caddy in front on the host
+      # (pointed at 127.0.0.1:8000) per DEPLOYMENT.md Section 5.
+      - "127.0.0.1:8000:8000"
     env_file:
       - .env
     volumes:
@@ -58,11 +66,22 @@ services:
   # cert/key here if using --tls-cert/--tls-key; otherwise drop those
   # volumes and flags. Exposes 5514/udp by default — change the
   # published port and --port flag together if you need a different one.
+  #
+  # SECURITY: --bind 0.0.0.0 is required for another host's syslog
+  # traffic to reach this container at all — but classic syslog has no
+  # built-in auth, and a UDP source IP is trivially spoofable (that's
+  # the protocol, not this listener). syslog_listener.py's own
+  # DEPLOYMENT.md guidance applies here too: add --allow-from with the
+  # real CIDR your syslog senders live on before exposing this beyond
+  # your own machine — e.g. --allow-from 10.0.5.0/24 — and see
+  # DEPLOYMENT.md's "Syslog over TLS" section if these alerts carry
+  # anything sensitive.
   ingest-syslog:
     build: .
     user: "${CAVENDEX_UID:-1000}:${CAVENDEX_GID:-1000}"
     profiles: ["ingest-syslog"]
     command: ["ingest", "syslog", "--bind", "0.0.0.0", "--port", "5514", "--source", "syslog_cef"]
+    # --allow-from 10.0.5.0/24   <- add this to the command above with your real CIDR
     ports:
       - "5514:5514/udp"
     env_file:
