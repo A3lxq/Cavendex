@@ -165,44 +165,73 @@ def test_rejects_request_with_bad_signature(monkeypatch, receiver_server):
     assert response.status_code == 401
 
 
-def test_accepts_unsigned_request_when_no_secret_configured(monkeypatch, receiver_server):
+def test_refuses_every_request_when_no_secret_configured_at_all(monkeypatch, receiver_server):
+    """A real fix from a security review: this receiver executes a real
+    network-isolation action, so unlike a routine notification receiver
+    there's no safe "accept it anyway" default when unconfigured -- it
+    must refuse (503) rather than silently act on an unsigned request."""
     monkeypatch.delenv("CAVENDEX_REMEDIATION_WEBHOOK_SIGNING_SECRET", raising=False)
 
     response = _post(receiver_server.url, {"action_type": "isolate_host", "target": "FIN-SRV-02"})
 
-    assert response.status_code == 200
+    assert response.status_code == 503
 
 
 def test_unimplemented_action_type_returns_501(monkeypatch, receiver_server):
-    monkeypatch.delenv("CAVENDEX_REMEDIATION_WEBHOOK_SIGNING_SECRET", raising=False)
+    monkeypatch.setenv("CAVENDEX_REMEDIATION_WEBHOOK_SIGNING_SECRET", "shared-secret")
 
-    response = _post(receiver_server.url, {"action_type": "block_ip", "target": "1.2.3.4"})
+    response = _post(receiver_server.url, {"action_type": "block_ip", "target": "1.2.3.4"}, secret="shared-secret")
 
     assert response.status_code == 501
 
 
 def test_isolate_host_with_no_target_returns_400(monkeypatch, receiver_server):
-    monkeypatch.delenv("CAVENDEX_REMEDIATION_WEBHOOK_SIGNING_SECRET", raising=False)
+    monkeypatch.setenv("CAVENDEX_REMEDIATION_WEBHOOK_SIGNING_SECRET", "shared-secret")
 
-    response = _post(receiver_server.url, {"action_type": "isolate_host"})
+    response = _post(receiver_server.url, {"action_type": "isolate_host"}, secret="shared-secret")
+
+    assert response.status_code == 400
+
+
+def test_isolate_host_with_invalid_hostname_returns_400(monkeypatch, receiver_server):
+    """A real fix from a security review: a hostname is interpolated
+    directly into a Falcon Query Language filter string
+    (hostname:'<hostname>') to look up the target device -- an untrusted
+    value (this project's own threat model already treats an incident's
+    affected_assets, the source of this field, as attacker-influenceable)
+    containing a stray quote or FQL syntax could change which device
+    actually gets matched and isolated. A hostname outside a real
+    hostname's normal character set is rejected outright rather than
+    risked."""
+    monkeypatch.setenv("CAVENDEX_REMEDIATION_WEBHOOK_SIGNING_SECRET", "shared-secret")
+
+    response = _post(
+        receiver_server.url,
+        {"action_type": "isolate_host", "target": "FIN-SRV-02' or hostname:'*"},
+        secret="shared-secret",
+    )
 
     assert response.status_code == 400
 
 
 def test_isolate_host_with_unknown_hostname_returns_404(monkeypatch, receiver_server, falcon_server):
-    monkeypatch.delenv("CAVENDEX_REMEDIATION_WEBHOOK_SIGNING_SECRET", raising=False)
+    monkeypatch.setenv("CAVENDEX_REMEDIATION_WEBHOOK_SIGNING_SECRET", "shared-secret")
     falcon_server.responses["/devices/queries/devices/v1"] = {"resources": []}
 
-    response = _post(receiver_server.url, {"action_type": "isolate_host", "target": "no-such-host"})
+    response = _post(
+        receiver_server.url, {"action_type": "isolate_host", "target": "no-such-host"}, secret="shared-secret"
+    )
 
     assert response.status_code == 404
 
 
 def test_isolate_host_without_crowdstrike_credentials_returns_500(monkeypatch, receiver_server):
-    monkeypatch.delenv("CAVENDEX_REMEDIATION_WEBHOOK_SIGNING_SECRET", raising=False)
+    monkeypatch.setenv("CAVENDEX_REMEDIATION_WEBHOOK_SIGNING_SECRET", "shared-secret")
     monkeypatch.delenv("CROWDSTRIKE_CLIENT_ID", raising=False)
     monkeypatch.delenv("CROWDSTRIKE_CLIENT_SECRET", raising=False)
 
-    response = _post(receiver_server.url, {"action_type": "isolate_host", "target": "FIN-SRV-02"})
+    response = _post(
+        receiver_server.url, {"action_type": "isolate_host", "target": "FIN-SRV-02"}, secret="shared-secret"
+    )
 
     assert response.status_code == 500

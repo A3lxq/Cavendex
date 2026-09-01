@@ -133,7 +133,9 @@ chmod 600 .env
 
 ```bash
 source venv/bin/activate
-pytest                      # should show "149 passed" (or more) with no LLM configured
+pytest                      # should show "890+ passed" (see README's Testing section for the exact,
+                            # current count — this file deliberately doesn't repeat a number that
+                            # would only go stale again) with no LLM configured
 ```
 
 Then a real smoke test against your configured provider:
@@ -926,7 +928,7 @@ CAVENDEX_OIDC_REDIRECT_URL=https://cavendex.internal.example.com/auth/oidc/callb
 
 **All four variables must be set together** — `GET /auth/oidc/status` reports whether SSO actually turned on (the dashboard uses this to decide whether to show a "Sign in with SSO" option at all, rather than one that 404s). A successful login issues a real session via the exact same mechanism the username/password flow above uses — every SSO login gets the `analyst` role; promote one to `admin` the same way you would any other username (`PATCH /auth/users/{username}/role` or `cli.py`).
 
-**No `CAVENDEX_REDIS_URL` dependency, unlike rate limiting/dedup.** The PKCE verifier, the tenant, and a nonce travel inside the OIDC `state` parameter itself as a short-lived signed value, not a server-side store — this works identically whether Cavendex runs as one process or many.
+**No `CAVENDEX_REDIS_URL` dependency, unlike rate limiting/dedup.** The PKCE verifier, the tenant, and a nonce travel inside the OIDC `state` parameter itself as a short-lived signed value, not a server-side store — this works identically whether Cavendex runs as one process or many, **including under `--workers N`**: the signing secret is derived deterministically from `CAVENDEX_OIDC_CLIENT_SECRET` (already required, identical across every worker), not a random value generated once per process. This replaced an earlier, genuinely broken design caught by a security review — a fresh random per-process secret meant a login's `/auth/oidc/login` and `/auth/oidc/callback` requests failed whenever a load balancer routed them to two different `--workers N` worker processes (confirmed against uvicorn's own source: each worker is a freshly-spawned interpreter, not a fork sharing the parent's memory) — live-confirmed fixed by signing a `state` value in one process and successfully decoding it in a completely separate one.
 
 Verify the wiring works before relying on it: click "Sign in with SSO" on the dashboard's login form and confirm you land back there signed in as your real identity provider account, with the Analyst Name field auto-filled and locked to it.
 
@@ -1260,21 +1262,25 @@ affect a live deployment decision, not just a feature-completeness one:
   including a string-similarity signal that was built, tested, and
   rejected for making things worse, not just noisier.
 - **No vendor-specific SIEM/EDR polling client for most vendors — but a
-  real, generic one, and real ones for Wazuh, Splunk, and CrowdStrike
-  specifically.** `poll_connector.py`/`ingestion/polling.py` polls any
-  JSON-returning REST API given a config describing that API's shape
-  (auth, pagination cursor, field-mapping, or a registered normalizer for
-  a materially different scheme) — see **[Section 6](#6-feed-it-real-alerts-continuously)** above. There's still no
-  ready-made config for most other vendors (Sentinel, Elastic, etc.);
-  you write the field-mapping for your own instance's actual API shape
-  once, not code. Wazuh, Splunk, and CrowdStrike are the three
-  exceptions with purpose-built normalizers (and, for CrowdStrike, a
-  fully dedicated connector for its OAuth2 + two-step Detects API) — but
-  none of the three is verified against a live vendor instance, since
-  this project has none of any of them; each is verified against a real
-  local HTTP server matching that vendor's *documented* API shape
-  instead. Test each against your own deployment before relying on it —
-  a documented shape and a live one can diverge.
+  real, generic one, and real ones for Wazuh, Splunk, CrowdStrike, and
+  Elastic Security specifically.** `poll_connector.py`/`ingestion/polling.py`
+  polls any JSON-returning REST API given a config describing that API's
+  shape (auth, pagination cursor, field-mapping, or a registered
+  normalizer for a materially different scheme) — see **[Section 6](#6-feed-it-real-alerts-continuously)** above.
+  There's still no ready-made config for most other vendors (Sentinel,
+  etc.); you write the field-mapping for your own instance's actual API
+  shape once, not code. Wazuh, Splunk, CrowdStrike, and Elastic Security
+  are the four exceptions with purpose-built normalizers (and, for
+  CrowdStrike, a fully dedicated connector for its OAuth2 + two-step
+  Detects API) — but none of the four is verified against a live vendor
+  instance, since this project has none of any of them (Elastic's case is
+  specifically notable: a real local Elasticsearch/Kibana container via
+  Docker was the intended stronger verification target, but Docker daemon
+  access itself was unavailable in the sandbox this integration was built
+  in); each is verified against a real local HTTP server matching that
+  vendor's *documented* API shape instead. Test each against your own
+  deployment before relying on it — a documented shape and a live one can
+  diverge.
 - **Real remediation execution exists ([Section 8](#8-enable-real-remediation-execution-opt-in-sandboxed)) but only reaches as
   far as your own webhook.** Cavendex still never calls a firewall/
   EDR/IAM API directly, or runs a local command — an approved, eligible

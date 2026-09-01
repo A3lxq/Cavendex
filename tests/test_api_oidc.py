@@ -153,7 +153,7 @@ def test_tenant_scoped_login_encodes_the_right_tenant_in_state(monkeypatch, mock
     state, _ = _extract_state_and_nonce(response)
     import utils.oidc as oidc_module
 
-    claims = jwt.decode(unquote(state), oidc_module._STATE_SECRET, algorithms=["HS256"])
+    claims = jwt.decode(unquote(state), oidc_module._state_secret(), algorithms=["HS256"])
     assert claims["tenant_id"] == "acme-corp"
 
 

@@ -14,18 +14,33 @@ Run it yourself, on infrastructure you control, alongside Cavendex; it is
 not started automatically by anything in this project.
 
 What it does on a real approved `isolate_host` action:
-  1. Verifies the request's X-Cavendex-Signature HMAC (see
-     remediation/executor.py:sign_payload) against
-     CAVENDEX_REMEDIATION_WEBHOOK_SIGNING_SECRET -- rejects anything that
-     doesn't match, so only Cavendex (which knows the shared secret) can
-     trigger a real containment action through this receiver.
-  2. Exchanges CROWDSTRIKE_CLIENT_ID/CROWDSTRIKE_CLIENT_SECRET for a real
+  1. Refuses to act at all -- a 503, before even parsing the body -- if
+     CAVENDEX_REMEDIATION_WEBHOOK_SIGNING_SECRET isn't set. A receiver
+     that executes a real network-isolation action has no safe "accept
+     unsigned requests" default the way a routine Slack notification
+     receiver does; it must be configured before it does anything.
+  2. Verifies the request's X-Cavendex-Signature HMAC (see
+     remediation/executor.py:sign_payload) against that secret --
+     rejects anything that doesn't match, so only Cavendex (which knows
+     the shared secret) can trigger a real containment action through
+     this receiver.
+  3. Validates the target hostname against a conservative allowed
+     character set (letters, digits, dots, hyphens, underscores) before
+     it ever reaches a Falcon Query Language filter string -- a real
+     finding from a security review: the target hostname traces back to
+     an incident's affected_assets, which this project's own threat
+     model already treats as untrusted (see enrichment/providers.py's
+     own security note about IOCs), and FQL's quoting rules aren't
+     something this project can defensively re-implement, so anything
+     outside a normal hostname's real character set is rejected outright
+     (400) rather than risked.
+  4. Exchanges CROWDSTRIKE_CLIENT_ID/CROWDSTRIKE_CLIENT_SECRET for a real
      OAuth2 bearer token (ingestion.crowdstrike_polling._get_oauth_token
      -- the same cached, auto-refreshing exchange the ingest connector
      already uses; nothing about OAuth2 is reimplemented here).
-  3. Looks up the target hostname's real Falcon Agent ID (AID) via
+  5. Looks up the target hostname's real Falcon Agent ID (AID) via
      GET /devices/queries/devices/v1?filter=hostname:'<hostname>'.
-  4. Calls POST /devices/entities/devices-actions/v2?action_name=contain
+  6. Calls POST /devices/entities/devices-actions/v2?action_name=contain
      with that AID -- Falcon's real "Network Containment" action, which
      isolates the host from the network except for traffic to the Falcon
      cloud itself.
@@ -51,6 +66,12 @@ Usage:
     export CAVENDEX_REMEDIATION_WEBHOOK_SIGNING_SECRET=a-shared-secret
     python examples/crowdstrike_rtr_receiver.py --port 9100
 
+Binds to 127.0.0.1 by default, the same "insecure exposure requires an
+explicit opt-in" default this project's own syslog_listener.py/api.py
+use -- pass --host 0.0.0.0 (or a specific reachable interface) only once
+you've put this behind whatever network boundary (VPN, firewall rule,
+reverse proxy) you'd trust with a real remediation action.
+
 Then in Cavendex's own .env:
     CAVENDEX_REMEDIATION_ENABLED=true
     CAVENDEX_REMEDIATION_ACTION_TYPES=isolate_host
@@ -64,12 +85,19 @@ import hashlib
 import hmac
 import json
 import os
+import re
 import sys
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from ingestion.crowdstrike_polling import CrowdStrikeConfig, _get_oauth_token  # noqa: E402
+
+# Conservative real-hostname character set -- rejects anything (a stray
+# single quote, whitespace, FQL operators) that could otherwise change
+# what the Falcon Query Language filter string in _lookup_device_id
+# actually matches. A real hostname never needs more than this.
+_HOSTNAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,252}$")
 
 
 def _falcon_config() -> CrowdStrikeConfig:
@@ -118,6 +146,8 @@ def _handle_isolate_host(payload: dict) -> tuple:
     hostname = payload.get("target")
     if not hostname:
         return 400, {"error": "payload has no target hostname"}
+    if not _HOSTNAME_RE.match(hostname):
+        return 400, {"error": f"target {hostname!r} is not a valid hostname"}
 
     config = _falcon_config()
     token = _get_oauth_token(config)
@@ -140,7 +170,13 @@ class Handler(BaseHTTPRequestHandler):
         body = self.rfile.read(length)
 
         secret = os.getenv("CAVENDEX_REMEDIATION_WEBHOOK_SIGNING_SECRET", "")
-        if secret and not _verify_signature(body, self.headers.get("X-Cavendex-Signature", ""), secret):
+        if not secret:
+            # Unlike a routine notification receiver, this one executes a
+            # real network-isolation action -- there is no safe "accept it
+            # anyway" default here. Refuse everything until it's configured.
+            self._respond(503, {"error": "CAVENDEX_REMEDIATION_WEBHOOK_SIGNING_SECRET is not set on this receiver"})
+            return
+        if not _verify_signature(body, self.headers.get("X-Cavendex-Signature", ""), secret):
             self._respond(401, {"error": "invalid or missing signature"})
             return
 
@@ -174,17 +210,25 @@ class Handler(BaseHTTPRequestHandler):
 def main():
     parser = argparse.ArgumentParser(description="Real CrowdStrike Falcon RTR receiver for Cavendex remediation")
     parser.add_argument("--port", type=int, default=9100)
+    parser.add_argument(
+        "--host",
+        default="127.0.0.1",
+        help="Bind address (default: 127.0.0.1 — loopback only). Pass --host 0.0.0.0 or a specific "
+        "reachable interface only once this is behind a network boundary you'd trust with a real "
+        "remediation action, the same 'insecure exposure requires an explicit opt-in' default "
+        "syslog_listener.py/api.py use elsewhere in this project.",
+    )
     args = parser.parse_args()
 
     if not os.getenv("CAVENDEX_REMEDIATION_WEBHOOK_SIGNING_SECRET"):
         print(
-            "⚠️  CAVENDEX_REMEDIATION_WEBHOOK_SIGNING_SECRET is not set — this receiver will accept "
-            "an unsigned request from anyone who can reach it. Set it (and the matching value in "
-            "Cavendex's own .env) before pointing a real deployment at this."
+            "⚠️  CAVENDEX_REMEDIATION_WEBHOOK_SIGNING_SECRET is not set — this receiver will refuse "
+            "every request (503) until it's set. Set it (and the matching value in Cavendex's own "
+            ".env) before pointing a real deployment at this."
         )
 
-    server = HTTPServer(("0.0.0.0", args.port), Handler)
-    print(f"CrowdStrike RTR remediation receiver listening on :{args.port}")
+    server = HTTPServer((args.host, args.port), Handler)
+    print(f"CrowdStrike RTR remediation receiver listening on {args.host}:{args.port}")
     server.serve_forever()
 
 

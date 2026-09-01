@@ -125,6 +125,67 @@ def test_is_configured_true_when_fully_set(monkeypatch, mock_idp):
     assert is_configured() is True
 
 
+# ---------- _state_secret: the real, live-confirmed multi-worker bug fix ----------
+
+
+def test_state_secret_is_deterministic_not_random_per_process(monkeypatch, mock_idp):
+    """The real bug this locks in: the old design generated a fresh random
+    secret once at module-import time, which `cavendex serve --workers N`
+    breaks -- uvicorn spawns each worker as a genuinely fresh Python
+    interpreter (multiprocessing's "spawn" context, not fork-after-import),
+    so each worker got its own, different random secret, and a login whose
+    callback landed on a different worker than the one that started it
+    failed every time. Deriving the secret from CAVENDEX_OIDC_CLIENT_SECRET
+    instead means every worker computes the identical value, since they all
+    read the same .env -- simulated here by calling the function twice with
+    nothing cached between calls, standing in for two independent worker
+    processes recomputing it from scratch."""
+    _configure(monkeypatch, mock_idp)
+    import utils.oidc as oidc_module
+
+    assert oidc_module._state_secret() == oidc_module._state_secret()
+
+
+def test_state_secret_changes_with_client_secret(monkeypatch, mock_idp):
+    """Confirms this is a real derivation from the configured secret, not a
+    hardcoded constant that would trivially defeat the point of signing
+    state at all."""
+    _configure(monkeypatch, mock_idp)
+    import utils.oidc as oidc_module
+
+    first = oidc_module._state_secret()
+    monkeypatch.setenv("CAVENDEX_OIDC_CLIENT_SECRET", "a-completely-different-secret")
+    assert oidc_module._state_secret() != first
+
+
+def test_login_started_and_completed_by_different_simulated_workers(monkeypatch, mock_idp):
+    """End-to-end proof of the fix: a state JWT is built (simulating the
+    worker that served /auth/oidc/login), then verified via a state secret
+    recomputed completely independently (simulating a *different* worker,
+    spawned fresh, serving /auth/oidc/callback) -- and the login still
+    completes, which is exactly the case that failed before this fix."""
+    _configure(monkeypatch, mock_idp)
+    auth_url = build_authorization_url("acme-corp")
+    from urllib.parse import unquote
+
+    state = unquote(dict(p.split("=", 1) for p in auth_url.split("?", 1)[1].split("&"))["state"])
+    nonce = jwt.decode(state, options={"verify_signature": False})["nonce"]
+
+    # Prove the state was NOT signed with any cached/global secret still
+    # sitting in this process's memory -- decode it using a state secret
+    # computed fresh, the same way an entirely different worker process
+    # would have to.
+    import utils.oidc as oidc_module
+
+    independently_recomputed_secret = oidc_module._state_secret()
+    reverified = jwt.decode(state, independently_recomputed_secret, algorithms=["HS256"])
+    assert reverified["tenant_id"] == "acme-corp"
+
+    mock_idp.next_id_token = _sign_id_token(_base_claims(mock_idp, nonce=nonce))
+    identity = complete_login("real-auth-code", state)
+    assert identity == {"tenant_id": "acme-corp", "username": "j.smith", "role": "analyst"}
+
+
 # ---------- build_authorization_url ----------
 
 
@@ -179,7 +240,7 @@ def test_rejects_expired_state(monkeypatch, mock_idp):
 
     expired_state = jwt.encode(
         {"tenant_id": "default", "code_verifier": "x", "nonce": "n", "exp": int(time.time()) - 10},
-        oidc_module._STATE_SECRET,
+        oidc_module._state_secret(),
         algorithm="HS256",
     )
     with pytest.raises(OidcError, match="Invalid or expired"):

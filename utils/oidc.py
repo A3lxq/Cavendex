@@ -15,14 +15,32 @@ No server-side login-flow state store is needed (and so this works the
 same whether Cavendex runs as one process or many, unlike some other
 opt-in features in this project). The PKCE code_verifier, the tenant this
 login is for, and a nonce are packed into the OIDC `state` parameter
-itself as a short-lived JWT signed with a per-process random secret —
-`state` is an opaque string as far as the OIDC spec and the identity
+itself as a short-lived JWT signed with a value derived deterministically
+from `CAVENDEX_OIDC_CLIENT_SECRET` (via HMAC-SHA256, see `_state_secret()`)
+— `state` is an opaque string as far as the OIDC spec and the identity
 provider are concerned, simply roundtripped back to us verbatim in the
-callback. The signing secret only protects that transient round-trip
-(it's not a long-lived credential — regenerating it on every restart
-just means an in-flight login has to be retried, never a security
-issue), so a fresh random value per process is adequate and avoids
-needing yet another environment variable.
+callback.
+
+**This derivation replaced an earlier, genuinely broken design, caught
+by a security review, not by this project's own live-verification at the
+time.** The first implementation used a fresh random secret generated
+once at module-import time. That's fine for one process, but `cavendex
+serve --workers N` (N > 1) spawns each worker via
+`multiprocessing.get_context("spawn")` — confirmed by reading the
+installed uvicorn's own source — which starts a genuinely fresh Python
+interpreter per worker, not a fork after import. Each worker therefore
+got its own, different random secret, so a login whose `/auth/oidc/login`
+and `/auth/oidc/callback` requests landed on different workers (routine
+under load-balancing across workers sharing one listening socket) failed
+every time with "Invalid or expired OIDC state," directly contradicting
+this project's own claim that OIDC "works identically whether Cavendex
+runs as one process or many." Deriving the secret from
+`CAVENDEX_OIDC_CLIENT_SECRET` instead — already a required, shared
+config value once OIDC is configured at all, identical across every
+worker since they all read the same `.env` — fixes this without adding
+a new environment variable or a `CAVENDEX_REDIS_URL` dependency, and as
+a side effect an in-flight login also survives a restart now, which the
+old per-process-random design didn't.
 
 Honest limitation: no real IdP tenant (a real Okta/Azure AD/Google
 Workspace organization) is available to this project, so this is
@@ -35,13 +53,13 @@ matching that vendor's documented API shape, not a live vendor tenant).
 
 import base64
 import hashlib
+import hmac
 import secrets
 import time
 import urllib.parse
 
 import jwt
 
-_STATE_SECRET = secrets.token_urlsafe(32)
 _STATE_TTL_SECONDS = 600
 _DISCOVERY_CACHE: dict = {}
 _DISCOVERY_TTL_SECONDS = 3600
@@ -79,6 +97,18 @@ def _redirect_url() -> str:
 
 def is_configured() -> bool:
     return bool(_issuer_url() and _client_id() and _client_secret() and _redirect_url())
+
+
+def _state_secret() -> str:
+    """Deterministic per-deployment secret for signing/verifying the OIDC
+    `state` JWT — derived via HMAC-SHA256 from `CAVENDEX_OIDC_CLIENT_SECRET`
+    rather than a random value generated once at import time, specifically
+    so every `cavendex serve --workers N` worker process computes the
+    identical secret (they all read the same `.env`) instead of each
+    getting its own, unshared random value. See this module's own
+    docstring for the real, live-confirmed bug this fixes.
+    """
+    return hmac.new(_client_secret().encode("utf-8"), b"cavendex-oidc-state", hashlib.sha256).hexdigest()
 
 
 def _discovery_document() -> dict:
@@ -121,7 +151,7 @@ def build_authorization_url(tenant_id: str) -> str:
             "nonce": nonce,
             "exp": int(time.time()) + _STATE_TTL_SECONDS,
         },
-        _STATE_SECRET,
+        _state_secret(),
         algorithm="HS256",
     )
     params = {
@@ -139,7 +169,7 @@ def build_authorization_url(tenant_id: str) -> str:
 
 def _decode_state(state: str) -> dict:
     try:
-        return jwt.decode(state, _STATE_SECRET, algorithms=["HS256"])
+        return jwt.decode(state, _state_secret(), algorithms=["HS256"])
     except jwt.PyJWTError as exc:
         raise OidcError(f"Invalid or expired OIDC state: {exc}")
 
