@@ -31,6 +31,19 @@
 #     --require-hashes -r requirements.lock.txt && rm -rf /tmp/hashcheck
 #
 # Re-run `pip-audit -r requirements.lock.txt` after every regeneration.
+#
+# IMPORTANT: this file is tied to the exact Python interpreter it was
+# generated against (currently 3.14), not just the pinned versions. A
+# compiled-extension package (aiohttp, etc.) ships a separate wheel per
+# Python version, each with its own legitimate hash — installing this
+# file under a *different* interpreter will correctly fail
+# --require-hashes on a real, non-tampered wheel (confirmed live: it
+# happened when Cavendex's own Dockerfile briefly used python:3.12-slim
+# against this 3.14-generated file). Regenerate from a matching
+# interpreter — including in the verify step above — if you ever target
+# a different Python version, and keep any Dockerfile's base image
+# version in sync with whatever this file is actually generated
+# against.
 aiohappyeyeballs==2.7.1 \
     --hash=sha256:9243213661e29250eb41368e5daa826fc017156c3b8a11440826b2e3ed376472
 aiohttp==3.14.3 \

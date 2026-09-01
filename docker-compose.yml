@@ -9,10 +9,24 @@
 # Bring up an optional service with, e.g.:
 #   docker compose --profile redis up -d
 #   docker compose --profile ingest-syslog up -d
+#
+# IMPORTANT — bind-mount ownership: the container runs as a fixed
+# non-root `cavendex` user (uid/gid 1000) by default, per the
+# Dockerfile. If your host user isn't also uid/gid 1000 (check with
+# `id -u`/`id -g` — genuinely common, not an edge case: it's whatever
+# the first Linux user account on your machine happened to get), the
+# container can read the bind-mounted ./data etc. but can't write to
+# it or to any file already owned by your host user — SQLite will fail
+# with "attempt to write a readonly database", not a clearer permission
+# error. Fix it by setting CAVENDEX_UID/CAVENDEX_GID in .env to match
+# your host user (`echo "CAVENDEX_UID=$(id -u)" >> .env && echo
+# "CAVENDEX_GID=$(id -g)" >> .env` before the first `docker compose up`)
+# — Compose substitutes them into the `user:` line below automatically.
 
 services:
   api:
     build: .
+    user: "${CAVENDEX_UID:-1000}:${CAVENDEX_GID:-1000}"
     ports:
       - "8000:8000"
     env_file:
@@ -21,6 +35,12 @@ services:
       - ./data:/app/data
       - ./.chroma:/app/.chroma
       - ./obsidian_vault:/app/obsidian_vault
+    # Lets OLLAMA_BASE_URL=http://host.docker.internal:11434 in .env
+    # reach an Ollama instance running on the host (not in a container)
+    # — Docker Desktop resolves this hostname automatically, but plain
+    # Linux Docker needs this mapping spelled out explicitly.
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     restart: unless-stopped
 
   # Only relevant once CAVENDEX_REDIS_URL is set in .env (to
@@ -40,6 +60,7 @@ services:
   # published port and --port flag together if you need a different one.
   ingest-syslog:
     build: .
+    user: "${CAVENDEX_UID:-1000}:${CAVENDEX_GID:-1000}"
     profiles: ["ingest-syslog"]
     command: ["ingest", "syslog", "--bind", "0.0.0.0", "--port", "5514", "--source", "syslog_cef"]
     ports:
@@ -57,6 +78,7 @@ services:
   # watched at the container path you pass to --path.
   ingest-watch:
     build: .
+    user: "${CAVENDEX_UID:-1000}:${CAVENDEX_GID:-1000}"
     profiles: ["ingest-watch"]
     command: ["ingest", "watch", "--path", "/var/log/source/alerts.log", "--source", "generic"]
     env_file:
@@ -73,6 +95,7 @@ services:
   # at the path --config points to.
   ingest-poll:
     build: .
+    user: "${CAVENDEX_UID:-1000}:${CAVENDEX_GID:-1000}"
     profiles: ["ingest-poll"]
     command: ["ingest", "poll", "--config", "/app/config/poller.json"]
     env_file:
@@ -89,6 +112,7 @@ services:
   # points to.
   ingest-crowdstrike:
     build: .
+    user: "${CAVENDEX_UID:-1000}:${CAVENDEX_GID:-1000}"
     profiles: ["ingest-crowdstrike"]
     command: ["ingest", "crowdstrike", "--config", "/app/config/crowdstrike.json"]
     env_file:
@@ -106,6 +130,7 @@ services:
   # the git@... form.
   backup:
     build: .
+    user: "${CAVENDEX_UID:-1000}:${CAVENDEX_GID:-1000}"
     profiles: ["backup"]
     command: ["backup", "--remote", "git@github.com:you/your-vault.git"]
     env_file:

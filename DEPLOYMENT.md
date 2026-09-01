@@ -63,6 +63,18 @@ can't swap in a different artifact under the same version number. See
 the comment at the top of `requirements.lock.txt` for how to regenerate
 it (including its hashes) when you deliberately want to bump something.
 
+**A hash-pinned lock file is tied to the exact Python interpreter it
+was generated against, not just the dependency versions** — a
+compiled-extension package (e.g. `aiohttp`) publishes a separate wheel
+per Python version, each with its own legitimate, different hash.
+Installing this lock file under a different interpreter than it was
+generated with will correctly fail `--require-hashes` on a real,
+non-tampered package — that's the safety check doing its job, not a
+sign of a compromised mirror. `requirements.lock.txt` in this repo was
+generated against Python 3.14 (the Dockerfile's base image is pinned to
+match, `python:3.14-slim` — see its own comment); regenerate the lock
+file from a matching interpreter if you install on a different one.
+
 Edit `.env`:
 
 - Set **one** LLM provider variable (`GROQ_API_KEY`, `OPENAI_API_KEY`,
@@ -239,6 +251,61 @@ curl http://127.0.0.1:8000/health
 `./data`, `./.chroma`, and `./obsidian_vault` are bind-mounted into the
 container so state survives a `docker compose down`/rebuild — the same
 three directories Section 12 below discusses backing up.
+
+**Two gotchas specific to the Docker path, both real and both
+live-verified — the from-source and pip-install paths above don't hit
+either one, since they run as your own host user with direct network
+access:**
+
+- **Bind-mount file ownership.** The container runs as a fixed non-root
+  `cavendex` user (uid/gid 1000). If your host user isn't also uid/gid
+  1000 — check with `id -u`/`id -g`; this is genuinely common, not an
+  edge case, it's just whichever uid your account happened to get —
+  the container can read `./data`/`./.chroma`/`./obsidian_vault` but
+  can't write to them or to any file they already contain, and SQLite
+  reports this as `attempt to write a readonly database`, not a
+  clearer permission error. Fix it once, before the first
+  `docker compose up`:
+  ```bash
+  echo "CAVENDEX_UID=$(id -u)" >> .env
+  echo "CAVENDEX_GID=$(id -g)" >> .env
+  ```
+  `docker-compose.yml` already has a `user: "${CAVENDEX_UID:-1000}:${CAVENDEX_GID:-1000}"`
+  line on every service that bind-mounts these directories — this just
+  supplies the values.
+- **Reaching a host-local Ollama model.** Setting
+  `OLLAMA_BASE_URL=http://host.docker.internal:11434` in `.env` (instead
+  of `localhost`, which inside the container means the container
+  itself) gets you *half* the way there — `docker-compose.yml` already
+  maps that hostname to the host machine (`extra_hosts:
+  host.docker.internal:host-gateway`, needed on plain Linux Docker;
+  Docker Desktop does this automatically). **The other half is Ollama's
+  own bind address**: by default `ollama serve` only listens on
+  `127.0.0.1`, which refuses connections arriving from the Docker
+  bridge network even with the hostname mapping in place — you'll see a
+  real `Connection refused` in `docker compose logs api`, not a silent
+  failure. Fix it on the host (not in Cavendex's own config) by telling
+  Ollama to listen on all interfaces and restarting it — e.g., for a
+  systemd-managed install:
+  ```bash
+  sudo systemctl edit ollama
+  # add under [Service]:
+  #   Environment="OLLAMA_HOST=0.0.0.0:11434"
+  sudo systemctl daemon-reload && sudo systemctl restart ollama
+  ```
+  This only matters for the local-Ollama path — Docker Compose with a
+  cloud provider (`GROQ_API_KEY`, etc.) makes a real outbound HTTPS
+  call and never touches this at all.
+- **A `.env.example` placeholder value can silently outrank Ollama
+  regardless of Docker.** `utils/llm.py` picks the first *non-empty*
+  provider variable in Groq → OpenAI → Anthropic → Google → Ollama
+  order — `.env.example`'s `GROQ_API_KEY=`/`OPENAI_API_KEY=` ship
+  genuinely empty specifically so this can't happen, but if you're
+  editing an older `.env` or pasted a real key in earlier and changed
+  your mind, a leftover non-empty value there wins over `OLLAMA_MODEL`
+  every time, with a real (if confusing) `401 Invalid API Key` from
+  whichever provider still has something set — check `.env` for stray
+  values in providers you're not using, not just the one you are.
 
 Ingestion connectors, Redis, and vault backup are **not** started by
 default — each needs real host-specific config (a log path, a poller
@@ -1160,6 +1227,17 @@ affect a live deployment decision, not just a feature-completeness one:
   successful response, and ThreatMiner's own endpoint was found
   intermittently unreachable during research — it's explicitly not a
   stable dependency.
+- **A hash-pinned lock file is coupled to the interpreter it was
+  generated with, not just dependency versions.** `requirements.lock.txt`
+  was generated against Python 3.14, and the Dockerfile's base image is
+  kept in sync with that (`python:3.14-slim`) — installing this file
+  under a different interpreter can correctly fail `--require-hashes` on
+  a genuine, non-tampered package (a compiled-extension package ships a
+  different, differently-hashed wheel per Python version). This isn't
+  hypothetical: it happened live while verifying the Docker image, and
+  was fixed by matching the base image to the lock file rather than the
+  other way around. Regenerate the lock file (Section 2) if you need to
+  target a different Python version.
 
 None of this means "don't deploy it" — it means deploy it as what it
 actually is: a real, tested incident-response assistant that watches
