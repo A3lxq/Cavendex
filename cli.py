@@ -259,6 +259,7 @@ def cmd_deny(args):
 
 def cmd_verify_audit(args):
     from utils.audit_chain import verify_incident_audit_log
+    from utils.audit_export import has_export_failures
     from workflows.incident_pipeline import get_incident_state
 
     state = get_incident_state(args.thread_id, tenant_id=args.tenant)
@@ -274,6 +275,20 @@ def cmd_verify_audit(args):
     else:
         status_text = _c(result["status"], "yellow")
     print(f"{status_text}: {result['detail']}")
+
+    # This only checks the *local* ledger above -- if CAVENDEX_AUDIT_EXPORT_WEBHOOK_URL
+    # is configured, also flag whether this tenant's external anchor has ever
+    # failed to receive a copy, so a "verified" local result doesn't imply the
+    # off-box anchor is actually intact too.
+    if has_export_failures(args.tenant):
+        print(
+            _c(
+                "note", "yellow", "bold"
+            ) + ": this tenant's audit-chain export log (data/{tenant}/audit_export_log.jsonl) "
+            "records at least one failed delivery to CAVENDEX_AUDIT_EXPORT_WEBHOOK_URL -- "
+            "the external anchor may have gaps even though the local ledger above checks out."
+        )
+
     if result["status"] == "MISMATCH":
         sys.exit(1)
 

@@ -31,6 +31,7 @@ import os
 from datetime import datetime, timezone
 from typing import List, Optional
 
+from utils.audit_export import send_audit_export
 from utils.log_rotation import append_line
 from utils.tenancy import sanitize_tenant_id
 
@@ -84,10 +85,13 @@ def _ledger_paths_oldest_first(tenant_id: str) -> List[str]:
 def record_chain(tenant_id: str, thread_id: str, audit_log: List[str]) -> None:
     """Append the current chain hash for this incident's audit_log to the
     ledger (rotating it first if it's grown past
-    CAVENDEX_LOG_MAX_BYTES — see utils/log_rotation.py). Never raises —
-    a ledger write failure must never block real incident processing,
-    the same contract every other side-effect in this project follows
-    (utils/incident_index.py, vault writes).
+    CAVENDEX_LOG_MAX_BYTES — see utils/log_rotation.py), then attempt to
+    ship the same entry to CAVENDEX_AUDIT_EXPORT_WEBHOOK_URL if configured
+    (see utils/audit_export.py) — an external anchor an attacker with only
+    this host's filesystem access can't retroactively rewrite. Never
+    raises — a ledger write or export failure must never block real
+    incident processing, the same contract every other side-effect in
+    this project follows (utils/incident_index.py, vault writes).
     """
     entry = {
         "timestamp": datetime.now(timezone.utc).isoformat(),
@@ -96,6 +100,10 @@ def record_chain(tenant_id: str, thread_id: str, audit_log: List[str]) -> None:
         "chain_hash": compute_chain_hash(audit_log),
     }
     append_line(_ledger_path(tenant_id), json.dumps(entry))
+    try:
+        send_audit_export(tenant_id, entry)
+    except Exception:
+        pass
 
 
 def latest_recorded_entry(tenant_id: str, thread_id: str) -> Optional[dict]:

@@ -61,6 +61,7 @@ def _delegate(module_name: str, argv_tail: list, func_name: str = "main") -> Non
 
 def _cmd_serve(argv_tail: list) -> None:
     import argparse
+    import os
 
     parser = argparse.ArgumentParser(prog="cavendex serve", description="Run the Cavendex API/dashboard server")
     parser.add_argument("--host", default="127.0.0.1")
@@ -68,6 +69,20 @@ def _cmd_serve(argv_tail: list) -> None:
     parser.add_argument("--reload", action="store_true", help="Auto-reload on code changes (development only)")
     parser.add_argument("--workers", type=int, default=None)
     args = parser.parse_args(argv_tail)
+
+    if args.workers and args.workers > 1 and not os.getenv("CAVENDEX_REDIS_URL"):
+        print(
+            f"⚠️  --workers {args.workers} with no CAVENDEX_REDIS_URL set — rate limiting "
+            "and alert dedup are in-process by default, so each worker keeps its own "
+            "separate copy of that state instead of one shared one. A "
+            "'N/minute' rate limit silently becomes N-per-worker-per-minute, and a "
+            "duplicate alert can slip through if it lands on a different worker than the "
+            "original. Set CAVENDEX_REDIS_URL for a real shared implementation (see "
+            "README's \"Distributed Rate Limiting and Dedup\"), or run with a single "
+            "worker. (This can only see `--workers N` on this one process — it can't "
+            "detect a separately-launched multi-replica setup, e.g. several Docker "
+            "Compose replicas of the api service.)"
+        )
 
     import uvicorn
 

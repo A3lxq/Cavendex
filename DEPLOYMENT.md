@@ -158,6 +158,15 @@ balancer.** Rate limiting and the alert dedup window
 default — a second worker has its own separate copy of that state, so
 `--workers 4` doesn't scale this app, it silently breaks dedup and rate
 limiting across whichever worker happens to handle each request.
+**`cavendex serve --workers N` (N > 1) now warns about this at startup**
+if `CAVENDEX_REDIS_URL` isn't set, rather than breaking silently —
+live-verified: the warning fires for `--workers 4` with no Redis, and
+doesn't fire either with `CAVENDEX_REDIS_URL` set or with the default
+single-worker `cavendex serve`. It can only see this one process's own
+`--workers` flag, though — a separately-launched multi-replica setup
+(several Docker Compose replicas of the `api` service, say) needs the
+same reasoning applied manually, since there's no single process to warn
+from in that shape.
 
 **Set `CAVENDEX_REDIS_URL` and both switch to a real Redis-backed
 implementation, safe to run behind `--workers N` or multiple host
@@ -1067,6 +1076,13 @@ Everything here is already discussed in more depth in README's
       **and you've actually restored from one at least once** (see
       **["Restoring from backup"](#restoring-from-backup)** in **[Section 12](#12-persistent-data-and-backups)**). An untested backup is a
       hypothesis.
+- [ ] If tamper-evidence of the audit trail matters beyond "detects it,
+      on this host": `CAVENDEX_AUDIT_EXPORT_WEBHOOK_URL` is set so every
+      ledger entry also lands somewhere an attacker with only this
+      host's filesystem access can't retroactively rewrite (see README's
+      **["Security Notes"](README.md#security-notes)**) — and
+      `data/{tenant}/audit_export_log.jsonl` doesn't show any failed
+      deliveries (`cli.py verify-audit` flags this).
 - [ ] Whoever gets the analyst-dashboard API key understands it's a
       `localStorage`-held bearer token shared by everyone who has it, not
       a per-user login — treat dashboard access like SSH key access, not

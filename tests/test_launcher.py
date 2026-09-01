@@ -74,6 +74,41 @@ def test_serve_defaults(monkeypatch):
     assert kwargs["workers"] is None
 
 
+def test_serve_warns_on_multiple_workers_without_redis(monkeypatch, capsys):
+    monkeypatch.delenv("CAVENDEX_REDIS_URL", raising=False)
+    fake_uvicorn = type("FakeUvicorn", (), {"run": staticmethod(lambda *a, **kw: None)})
+    monkeypatch.setitem(sys.modules, "uvicorn", fake_uvicorn)
+
+    sys.argv = ["cavendex", "serve", "--workers", "4"]
+    launcher.main()
+
+    out = capsys.readouterr().out
+    assert "CAVENDEX_REDIS_URL" in out
+    assert "--workers 4" in out
+
+
+def test_serve_no_warning_with_redis_configured(monkeypatch, capsys):
+    monkeypatch.setenv("CAVENDEX_REDIS_URL", "redis://localhost:6379/0")
+    fake_uvicorn = type("FakeUvicorn", (), {"run": staticmethod(lambda *a, **kw: None)})
+    monkeypatch.setitem(sys.modules, "uvicorn", fake_uvicorn)
+
+    sys.argv = ["cavendex", "serve", "--workers", "4"]
+    launcher.main()
+
+    assert "CAVENDEX_REDIS_URL is not set" not in capsys.readouterr().out
+
+
+def test_serve_no_warning_with_single_worker(monkeypatch, capsys):
+    monkeypatch.delenv("CAVENDEX_REDIS_URL", raising=False)
+    fake_uvicorn = type("FakeUvicorn", (), {"run": staticmethod(lambda *a, **kw: None)})
+    monkeypatch.setitem(sys.modules, "uvicorn", fake_uvicorn)
+
+    sys.argv = ["cavendex", "serve"]  # no --workers at all
+    launcher.main()
+
+    assert "CAVENDEX_REDIS_URL" not in capsys.readouterr().out
+
+
 @pytest.mark.parametrize(
     "connector,module_name",
     [
