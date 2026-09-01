@@ -6,7 +6,7 @@ walkthrough — start there if you just want to try it. This file is for
 standing Cavendex up as a service that watches real logs and stays
 running.
 
-Read **Section 14 (Known Limitations to Plan Around)** before you point
+Read **[Section 14 (Known Limitations to Plan Around)](#14-known-limitations-to-plan-around)** before you point
 this at production infrastructure. Nothing in this project is dishonest
 about what it is: an analyst's assistant with a mandatory human-approval
 gate, not an unattended SOC.
@@ -25,7 +25,7 @@ gate, not an unattended SOC.
   - [Ollama](https://ollama.com) running locally or on a reachable host,
     with a model already pulled (`ollama pull llama3.1`, or similar) —
     free and keeps incident data off third-party APIs entirely, but see
-    the honest performance note in Section 14 before relying on it for
+    the honest performance note in **[Section 14](#14-known-limitations-to-plan-around)** before relying on it for
     time-sensitive response.
 - **(Optional) AbuseIPDB and/or VirusTotal API keys** — free tiers exist
   for both — for real IOC reputation lookups instead of LLM recall alone.
@@ -93,7 +93,7 @@ Edit `.env`:
   `OBSIDIAN_VAULT_PATH` at real, persistent paths outside the repo
   checkout if you're deploying to a directory that might get wiped on
   redeploy — e.g. `/var/lib/cavendex/{data,chroma,vault}`. These three
-  directories are the entire state of the system; see Section 12.
+  directories are the entire state of the system; see **[Section 12](#12-persistent-data-and-backups)**.
 - Optionally set `ABUSEIPDB_API_KEY` / `VIRUSTOTAL_API_KEY` for real
   threat-intel lookups — and optionally any of the 17 further opt-in
   providers across two rounds: round 1 (`ALIENVAULT_OTX_API_KEY`,
@@ -252,7 +252,7 @@ curl http://127.0.0.1:8000/health
 
 `./data`, `./.chroma`, and `./obsidian_vault` are bind-mounted into the
 container so state survives a `docker compose down`/rebuild — the same
-three directories Section 12 below discusses backing up.
+three directories **[Section 12](#12-persistent-data-and-backups)** below discusses backing up.
 
 **Two gotchas specific to the Docker path, both real and both
 live-verified — the from-source and pip-install paths above don't hit
@@ -330,7 +330,7 @@ first, same philosophy as every opt-in feature elsewhere in this
 document.
 
 No reverse-proxy/TLS termination is included in `docker-compose.yml` —
-put one in front the same way Section 5 below describes for the
+put one in front the same way **[Section 5](#5-put-a-reverse-proxy-in-front-tls)** below describes for the
 bare-host deployment (a `Caddy`/`nginx` container in front of the `api`
 service works the same way, just pointed at `api:8000` instead of
 `127.0.0.1:8000`).
@@ -822,7 +822,7 @@ CAVENDEX_REMEDIATION_DRY_RUN=true
 
 `action_type` is the Responder Agent's own structured classification of what it proposed (`block_ip`/`isolate_host`/`disable_account`/`reset_credentials`/`other`) — not guessed from the free-text action description afterward. `CAVENDEX_REMEDIATION_ACTION_TYPES` is the allowlist of which of those are actually eligible for automated execution; `"other"` (the Responder's fallback when nothing cleaner fits) is never eligible no matter what you put here. The shipped default (`block_ip,isolate_host`) deliberately excludes `disable_account`/`reset_credentials` — those two typically need more receiver-side context (which identity system, what "reset" actually means there) than a firewall block does, so they're left as manual-approval-only categories until you've confirmed your receiver can handle them safely.
 
-A broken or unreachable remediation receiver never blocks the approve call itself — the same "never block real processing" contract every other external call in this project follows — but the failure is real and visible: `executed: false` on the action, the failure detail in both the audit log and `remediation_log.jsonl`. Test the webhook directly the same way Section 7 recommends for the alert webhook if executions seem to be silently failing.
+A broken or unreachable remediation receiver never blocks the approve call itself — the same "never block real processing" contract every other external call in this project follows — but the failure is real and visible: `executed: false` on the action, the failure detail in both the audit log and `remediation_log.jsonl`. Test the webhook directly the same way **[Section 7](#7-get-notified-instead-of-watching-the-dashboard)** recommends for the alert webhook if executions seem to be silently failing.
 
 ---
 
@@ -861,7 +861,7 @@ The default iteration count (roughly OWASP's 2023 PBKDF2-SHA256 guidance) costs 
 
 ## 10. Set up advanced playbooks (opt-in)
 
-`playbooks/` (see README's **["Advanced Playbooks"](README.md#advanced-playbooks)** section for the full design) is a deterministic, non-LLM layer: after a new incident's agent pipeline finishes, it's matched against operator-authored JSON files, and a match's ordered remediation steps get folded into the proposed actions — on top of (never instead of) the real remediation execution in Section 8. Unset, this is completely inert.
+`playbooks/` (see README's **["Advanced Playbooks"](README.md#advanced-playbooks)** section for the full design) is a deterministic, non-LLM layer: after a new incident's agent pipeline finishes, it's matched against operator-authored JSON files, and a match's ordered remediation steps get folded into the proposed actions — on top of (never instead of) the real remediation execution in **[Section 8](#8-enable-real-remediation-execution-opt-in-sandboxed)**. Unset, this is completely inert.
 
 **Point at a directory of `*.json` files:**
 
@@ -1060,24 +1060,24 @@ Everything here is already discussed in more depth in README's
 - [ ] Exactly one `uvicorn` process — no `--workers`, no multiple
       replicas — unless `CAVENDEX_REDIS_URL` is set, in which case
       multiple workers/replicas are safe for rate limiting and dedup
-      (see Section 4; correlation has its own, separate multi-host
+      (see **[Section 4](#4-run-it-as-a-service)**; correlation has its own, separate multi-host
       caveat there regardless of Redis).
 - [ ] Backups of `CAVENDEX_DATA_DIR` / `CHROMA_PERSIST_DIR` /
       `OBSIDIAN_VAULT_PATH` are actually running, not just planned —
       **and you've actually restored from one at least once** (see
-      "Restoring from backup" in Section 12). An untested backup is a
+      **["Restoring from backup"](#restoring-from-backup)** in **[Section 12](#12-persistent-data-and-backups)**). An untested backup is a
       hypothesis.
 - [ ] Whoever gets the analyst-dashboard API key understands it's a
       `localStorage`-held bearer token shared by everyone who has it, not
       a per-user login — treat dashboard access like SSH key access, not
       like a website password. If individual accountability matters,
-      set up real user accounts instead (Section 9) so `approved_by`
+      set up real user accounts instead (**[Section 9](#9-set-up-real-user-accounts-and-dashboard-sessions-opt-in)**) so `approved_by`
       auto-fills from an authenticated identity rather than a shared key.
 - [ ] If real user accounts are set up: passwords are strong (nothing
       enforces complexity beyond a length minimum), and
       `CAVENDEX_REQUIRE_LOGIN` reflects what you actually intend —
       off means account creation alone never restricts unauthenticated
-      access; see Section 9.
+      access; see **[Section 9](#9-set-up-real-user-accounts-and-dashboard-sessions-opt-in)**.
 - [ ] Analysts without a real account know to set their name (dashboard's
       "Analyst name" field, the CLI's `--by`, or
       `CAVENDEX_ANALYST_NAME`) before approving or denying — otherwise
@@ -1115,7 +1115,7 @@ Everything here is already discussed in more depth in README's
       notification (from anyone who obtains the webhook URL) can be told
       apart from a real one.
 - [ ] If `CAVENDEX_REMEDIATION_ENABLED=true`: you've confirmed the
-      wiring under `CAVENDEX_REMEDIATION_DRY_RUN=true` first (Section 8)
+      wiring under `CAVENDEX_REMEDIATION_DRY_RUN=true` first (**[Section 8](#8-enable-real-remediation-execution-opt-in-sandboxed)**)
       before setting it to `false`, `CAVENDEX_REMEDIATION_ACTION_TYPES`
       only lists categories your receiver actually knows how to act on
       safely, and — if the receiver supports it —
@@ -1125,7 +1125,7 @@ Everything here is already discussed in more depth in README's
       channel and may reasonably be a different system entirely).
 - [ ] If `CAVENDEX_PLAYBOOKS_DIR` is set: `python cli.py list-playbooks`
       shows exactly the playbooks you expect, with no unexpectedly-skipped
-      files (Section 10) — a playbook that silently failed to load is a
+      files (**[Section 10](#10-set-up-advanced-playbooks-opt-in)**) — a playbook that silently failed to load is a
       response that silently never fires, which is worse than none at
       all if you're relying on it.
 
@@ -1145,7 +1145,7 @@ affect a live deployment decision, not just a feature-completeness one:
   sensitive.
 - **Rate limiting and dedup are single-process, in-memory state by
   default — but a real Redis-backed alternative exists now.** Set
-  `CAVENDEX_REDIS_URL` (Section 4) and both become genuinely shared
+  `CAVENDEX_REDIS_URL` (**[Section 4](#4-run-it-as-a-service)**) and both become genuinely shared
   across multiple `uvicorn` workers/replicas, live-verified with two
   independent processes. Unconfigured, the original limitation still
   applies exactly as before: fine for one process, doesn't survive a
@@ -1154,9 +1154,9 @@ affect a live deployment decision, not just a feature-completeness one:
   pool reads from a durable SQLite file already shared correctly across
   multiple workers on one host; its own remaining limitation is
   multi-*host* replicas without shared storage, unrelated to Redis (see
-  Section 4 for why Redis isn't the right tool for that specific gap).
-- **Per-user accounts exist now (Section 9) but stay a simple two-role system.** `analyst`/`admin` gates only user-management routes, not a general permission matrix — there's no per-feature access control, no dashboard UI for managing users (CLI/API only), no self-service password reset, and incident assignment/notes still use the older freely-typed-label pattern rather than a real session identity. Without setting up accounts at all, the dashboard's auth remains one shared key for everyone using it, same as always.
-- **Advanced playbooks (Section 10) are deterministic and additive, but deliberately narrow in three ways.** JSON files only, not YAML — a consistency choice, not a technical limit. Exactly one playbook applies per incident (the highest-priority match) — no merging steps from two conceptually-separate playbooks that both happen to match. Template substitution covers only the incident's *first* IOC/affected asset (`{ioc}`/`{asset}`) — there's no per-IOC fan-out yet. Matching also runs once, right after a new incident's pipeline finishes; a later correlated alert merged into that incident does not re-trigger matching.
+  **[Section 4](#4-run-it-as-a-service)** for why Redis isn't the right tool for that specific gap).
+- **Per-user accounts exist now ([Section 9](#9-set-up-real-user-accounts-and-dashboard-sessions-opt-in)) but stay a simple two-role system.** `analyst`/`admin` gates only user-management routes, not a general permission matrix — there's no per-feature access control, no dashboard UI for managing users (CLI/API only), no self-service password reset, and incident assignment/notes still use the older freely-typed-label pattern rather than a real session identity. Without setting up accounts at all, the dashboard's auth remains one shared key for everyone using it, same as always.
+- **Advanced playbooks ([Section 10](#10-set-up-advanced-playbooks-opt-in)) are deterministic and additive, but deliberately narrow in three ways.** JSON files only, not YAML — a consistency choice, not a technical limit. Exactly one playbook applies per incident (the highest-priority match) — no merging steps from two conceptually-separate playbooks that both happen to match. Template substitution covers only the incident's *first* IOC/affected asset (`{ioc}`/`{asset}`) — there's no per-IOC fan-out yet. Matching also runs once, right after a new incident's pipeline finishes; a later correlated alert merged into that incident does not re-trigger matching.
 - **Cross-tenant authorization needs its own configuration step.**
   `CAVENDEX_TENANT_API_KEYS` lets each tenant require its own key —
   set it for every tenant you actually need isolated from the others.
@@ -1179,7 +1179,7 @@ affect a live deployment decision, not just a feature-completeness one:
   specifically.** `poll_connector.py`/`ingestion/polling.py` polls any
   JSON-returning REST API given a config describing that API's shape
   (auth, pagination cursor, field-mapping, or a registered normalizer for
-  a materially different scheme) — see Section 6 above. There's still no
+  a materially different scheme) — see **[Section 6](#6-feed-it-real-alerts-continuously)** above. There's still no
   ready-made config for most other vendors (Sentinel, Elastic, etc.);
   you write the field-mapping for your own instance's actual API shape
   once, not code. Wazuh, Splunk, and CrowdStrike are the three
@@ -1190,7 +1190,7 @@ affect a live deployment decision, not just a feature-completeness one:
   local HTTP server matching that vendor's *documented* API shape
   instead. Test each against your own deployment before relying on it —
   a documented shape and a live one can diverge.
-- **Real remediation execution exists (Section 8) but only reaches as
+- **Real remediation execution exists ([Section 8](#8-enable-real-remediation-execution-opt-in-sandboxed)) but only reaches as
   far as your own webhook.** Cavendex still never calls a firewall/
   EDR/IAM API directly, or runs a local command — an approved, eligible
   action is POSTed to an operator-configured receiver, off by default
@@ -1215,7 +1215,7 @@ affect a live deployment decision, not just a feature-completeness one:
   configured. A genuinely air-gapped deployment needs those left
   unconfigured, not just the dashboard.
 - **8 of the round-1 threat-intel providers have deferred live-network
-  verification (Section 1).** AlienVault OTX, GreyNoise, MalwareBazaar,
+  verification ([Section 2](#2-install)).** AlienVault OTX, GreyNoise, MalwareBazaar,
   ThreatFox, URLhaus, IBM X-Force, Metadefender, and Censys are built
   and unit/mocked-tested against their documented API shapes, but no
   real request has been sent to any of their actual endpoints yet
@@ -1242,7 +1242,7 @@ affect a live deployment decision, not just a feature-completeness one:
   different, differently-hashed wheel per Python version). This isn't
   hypothetical: it happened live while verifying the Docker image, and
   was fixed by matching the base image to the lock file rather than the
-  other way around. Regenerate the lock file (Section 2) if you need to
+  other way around. Regenerate the lock file (**[Section 2](#2-install)**) if you need to
   target a different Python version.
 - **The pip package ships flat, generically-named top-level modules
   (`api`, `cli`, `graph`, `state`, `main`, `launcher`), not a namespaced
@@ -1336,7 +1336,7 @@ a backup costs a minute and a bad one costs a lot more.
   empty or wrong — it's a separate, client-side value you enter once
   and it's kept in the browser's `localStorage`.
 - **SSE stream cuts off partway through a long run**: your reverse proxy
-  is buffering or timing out the response — revisit Section 5.
+  is buffering or timing out the response — revisit **[Section 5](#5-put-a-reverse-proxy-in-front-tls)**.
 - **Approve/deny decisions show up as "unspecified" in the audit log**:
   no `--by`, no `CAVENDEX_ANALYST_NAME`, and no dashboard "Analyst
   name" value was set at the time of the decision — this is recorded
@@ -1344,7 +1344,7 @@ a backup costs a minute and a bad one costs a lot more.
   going forward.
 - **Webhook notifications never arrive**: `notify_if_needed` swallows
   failures by design so a broken webhook can't break incident
-  processing — test the URL directly (see Section 7) rather than
+  processing — test the URL directly (see **[Section 7](#7-get-notified-instead-of-watching-the-dashboard)**) rather than
   assuming the pipeline itself is broken. Also confirm the incident
   actually met a trigger condition (`pending_approval`, or severity at/
   above `CAVENDEX_ALERT_MIN_SEVERITY`) — most other status changes
