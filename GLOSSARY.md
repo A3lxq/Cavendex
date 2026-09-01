@@ -108,6 +108,15 @@ Named after [Obsidian](https://obsidian.md), the free note-taking app
 that can browse it as a linked graph — but the files are plain Markdown
 and readable in anything.
 
+**OIDC (OpenID Connect) / SSO** — A real Authorization Code + PKCE login
+against a standards-compliant identity provider (Okta, Azure AD, Google
+Workspace, ...), issuing the exact same kind of session
+**[User Accounts and Sessions](README.md#user-accounts-and-sessions)**'s
+username/password login already does. A third, opt-in dashboard
+credential type alongside `CAVENDEX_API_KEY` and local sessions, never a
+replacement for either. See README's
+**["Single Sign-On (SSO)"](README.md#single-sign-on-sso)**.
+
 **Pipeline** — The full Triage → Investigator → (optional) Threat Hunter
 → Responder sequence one incident runs through, orchestrated by
 [LangGraph](https://github.com/langchain-ai/langgraph) and shared by the

@@ -1520,8 +1520,54 @@ async function doLogout() {
   checkConnection();
 }
 
+// SSO (see utils/oidc.py) -- an additional, opt-in credential type
+// alongside the API key and local username/password sessions above,
+// never a replacement for either.
+async function refreshOidcLoginLink() {
+  const link = document.getElementById("oidc-login-link");
+  link.href = `${tenantPrefix()}/auth/oidc/login`;
+  try {
+    const response = await fetch("/auth/oidc/status");
+    const data = await response.json();
+    link.hidden = !data.enabled;
+  } catch (exc) {
+    link.hidden = true;
+  }
+}
+
+// A successful SSO login redirects back here with the new session in the
+// URL's query string (see api.py:oidc_callback -- a browser navigation
+// can't hand the token to this page's JS any other way). Applied once on
+// load exactly like a password-login session, then stripped from the URL
+// so a page reload/share/bookmark never carries a live credential in it.
+function applyOidcRedirectIfPresent() {
+  const params = new URLSearchParams(window.location.search);
+  const token = params.get("oidc_token");
+  if (!token) return;
+
+  settings.sessionToken = token;
+  settings.sessionUsername = params.get("oidc_username") || "";
+  settings.sessionRole = params.get("oidc_role") || "";
+  settings.analystName = settings.sessionUsername;
+  if (params.get("oidc_tenant")) settings.tenant = params.get("oidc_tenant");
+  saveSettings();
+  // initSettingsForm() already ran (see the DOMContentLoaded wiring order
+  // below) and stamped these inputs from whatever settings looked like
+  // before this function updated them -- update the DOM directly here too,
+  // the same way doLogin() does for its own password-login session,
+  // rather than relying on init ordering to happen to be correct.
+  document.getElementById("analyst-name-input").value = settings.analystName;
+  document.getElementById("tenant-input").value = settings.tenant;
+
+  const url = new URL(window.location.href);
+  ["oidc_token", "oidc_username", "oidc_role", "oidc_tenant"].forEach((k) => url.searchParams.delete(k));
+  window.history.replaceState({}, document.title, url.pathname + url.search);
+}
+
 function initLoginForm() {
+  applyOidcRedirectIfPresent();
   renderLoginState();
+  refreshOidcLoginLink();
   document.getElementById("login-submit-btn").addEventListener("click", doLogin);
   document.getElementById("login-password-input").addEventListener("keydown", (e) => {
     if (e.key === "Enter") doLogin();
@@ -1550,6 +1596,7 @@ function initSettingsForm() {
     }
     saveSettings();
     renderLoginState();
+    refreshOidcLoginLink();
     selectedThreadId = null;
     keyboardFocusIndex = -1;
     document.getElementById("detail-pane").innerHTML = '<div class="empty-state">Select an incident to view details.</div>';

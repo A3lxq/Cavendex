@@ -866,6 +866,25 @@ CAVENDEX_LOGIN_RATE_LIMIT_PER_MINUTE=5
 
 The default iteration count (roughly OWASP's 2023 PBKDF2-SHA256 guidance) costs a few hundred milliseconds per login/user-creation call — a real, deliberate cost, not an oversight, and one you shouldn't lower just to make logins feel snappier.
 
+### Single Sign-On via OIDC (opt-in)
+
+A third credential type on top of the two above — real OIDC Authorization Code + PKCE login (see README's **["Single Sign-On (SSO)"](README.md#single-sign-on-sso)**) against any standards-compliant identity provider (Okta, Azure AD/Entra ID, Google Workspace, Auth0, Keycloak, ...). Never a replacement for `CAVENDEX_API_KEY` or the username/password sessions above.
+
+```env
+CAVENDEX_OIDC_ISSUER_URL=https://your-tenant.okta.com
+CAVENDEX_OIDC_CLIENT_ID=your-client-id
+CAVENDEX_OIDC_CLIENT_SECRET=your-client-secret
+CAVENDEX_OIDC_REDIRECT_URL=https://cavendex.internal.example.com/auth/oidc/callback
+```
+
+**Register one, fixed redirect URI with your identity provider's client**: `https://<your-cavendex-host>/auth/oidc/callback` — this project's callback route is deliberately not tenant-scoped in its own path (a real IdP client registration expects one static redirect URI, not one per tenant); which tenant a login is for travels inside the OIDC `state` parameter instead, set when the login flow starts.
+
+**All four variables must be set together** — `GET /auth/oidc/status` reports whether SSO actually turned on (the dashboard uses this to decide whether to show a "Sign in with SSO" option at all, rather than one that 404s). A successful login issues a real session via the exact same mechanism the username/password flow above uses — every SSO login gets the `analyst` role; promote one to `admin` the same way you would any other username (`PATCH /auth/users/{username}/role` or `cli.py`).
+
+**No `CAVENDEX_REDIS_URL` dependency, unlike rate limiting/dedup.** The PKCE verifier, the tenant, and a nonce travel inside the OIDC `state` parameter itself as a short-lived signed value, not a server-side store — this works identically whether Cavendex runs as one process or many.
+
+Verify the wiring works before relying on it: click "Sign in with SSO" on the dashboard's login form and confirm you land back there signed in as your real identity provider account, with the Analyst Name field auto-filled and locked to it.
+
 ---
 
 ## 10. Set up advanced playbooks (opt-in)

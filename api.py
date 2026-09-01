@@ -38,6 +38,7 @@ import os
 import queue
 import secrets
 from typing import List, Optional
+from urllib.parse import urlencode
 
 from dotenv import find_dotenv, load_dotenv
 
@@ -51,7 +52,7 @@ load_dotenv(find_dotenv(usecwd=True), override=True)
 from fastapi import APIRouter, Depends, FastAPI, HTTPException, Request
 from fastapi.openapi.docs import get_redoc_html, get_swagger_ui_html
 from fastapi.openapi.utils import get_openapi
-from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
+from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, StreamingResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
@@ -62,6 +63,10 @@ from utils.auth_monitor import record_auth_failure
 from utils.incident_events import subscribe as subscribe_incident_events
 from utils.incident_events import unsubscribe as unsubscribe_incident_events
 from utils.incident_index import get_incident_stats, get_kpi_stats, list_incidents
+from utils.oidc import OidcError
+from utils.oidc import build_authorization_url as build_oidc_authorization_url
+from utils.oidc import complete_login as complete_oidc_login
+from utils.oidc import is_configured as is_oidc_configured
 from utils.rate_limit import check_rate_limit
 from utils.tenancy import DEFAULT_TENANT
 from utils.user_accounts import (
@@ -418,6 +423,67 @@ def login_default(payload: LoginRequest, request: Request):
 @api.post("/tenants/{tenant_id}/auth/login")
 def login_for_tenant(tenant_id: str, payload: LoginRequest, request: Request):
     return _login(tenant_id, payload, request)
+
+
+@api.get("/auth/oidc/status")
+def oidc_status():
+    """Whether SSO is configured at all — the dashboard uses this to
+    decide whether to show a "Sign in with SSO" option, rather than
+    always showing one that 404s. Deliberately unauthenticated and
+    provider-agnostic (no issuer/client details leaked), the same
+    "tells you nothing more than a yes/no" shape as /health.
+    """
+    return {"enabled": is_oidc_configured()}
+
+
+def _oidc_login(tenant_id: str):
+    if not is_oidc_configured():
+        raise HTTPException(status_code=404, detail="OIDC SSO is not configured on this server")
+    return RedirectResponse(build_oidc_authorization_url(tenant_id))
+
+
+@api.get("/auth/oidc/login")
+def oidc_login_default():
+    return _oidc_login(DEFAULT_TENANT)
+
+
+@api.get("/tenants/{tenant_id}/auth/oidc/login")
+def oidc_login_for_tenant(tenant_id: str):
+    return _oidc_login(tenant_id)
+
+
+@api.get("/auth/oidc/callback")
+def oidc_callback(code: str, state: str):
+    """The one, fixed callback URL registered with the identity provider
+    (CAVENDEX_OIDC_REDIRECT_URL) — deliberately not tenant-scoped in its
+    own path, since a real IdP client registration has one static
+    redirect URI, not one per tenant. Which tenant this login is for
+    travels inside `state` instead (set when the flow started — see
+    utils/oidc.py:build_authorization_url), not the URL.
+
+    Redirects back to the dashboard with the new session's token/username/
+    role/tenant in the URL's query string rather than returning JSON
+    directly — this is a browser-navigated redirect from the identity
+    provider, not an API call the dashboard's own JS can await, so the
+    token has to be handed off via the next page load. app.js reads these
+    once on load, stores them exactly like a password-login session, and
+    strips them from the URL immediately after.
+    """
+    try:
+        identity = complete_oidc_login(code, state)
+    except OidcError as exc:
+        raise HTTPException(status_code=401, detail=str(exc))
+
+    session = create_session(identity["tenant_id"], identity["username"], identity["role"])
+    params = urlencode(
+        {
+            "oidc_token": session["token"],
+            "oidc_username": identity["username"],
+            "oidc_role": identity["role"],
+            "oidc_tenant": identity["tenant_id"],
+        }
+    )
+    return RedirectResponse(f"/?{params}")
 
 
 # Every route except /health, /, /static/*, and /auth/login requires auth
