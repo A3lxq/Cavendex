@@ -94,9 +94,10 @@ Edit `.env`:
   checkout if you're deploying to a directory that might get wiped on
   redeploy — e.g. `/var/lib/cavendex/{data,chroma,vault}`. These three
   directories are the entire state of the system; see **[Section 12](#12-persistent-data-and-backups)**.
-- Optionally set `ABUSEIPDB_API_KEY` / `VIRUSTOTAL_API_KEY` for real
-  threat-intel lookups — and optionally any of the 17 further opt-in
-  providers across two rounds: round 1 (`ALIENVAULT_OTX_API_KEY`,
+- Optionally set `ABUSEIPDB_API_KEY` / `VIRUSTOTAL_API_KEY` /
+  `CAVENDEX_SHODAN_ENABLED` for real threat-intel lookups — and
+  optionally any of the 17 further opt-in providers across two rounds:
+  round 1 (`ALIENVAULT_OTX_API_KEY`,
   `GREYNOISE_API_KEY`, `ABUSECH_API_KEY` covering
   MalwareBazaar/ThreatFox/URLhaus, `IBM_XFORCE_API_KEY`+
   `IBM_XFORCE_API_PASSWORD`, `METADEFENDER_API_KEY`, `CENSYS_API_KEY`)
@@ -265,10 +266,11 @@ curl http://127.0.0.1:8000/health
 container so state survives a `docker compose down`/rebuild — the same
 three directories **[Section 12](#12-persistent-data-and-backups)** below discusses backing up.
 
-**Two gotchas specific to the Docker path, both real and both
-live-verified — the from-source and pip-install paths above don't hit
-either one, since they run as your own host user with direct network
-access:**
+**Three gotchas specific to the Docker path, all real and all
+live-verified (the third applies regardless of Docker, but is easiest to
+hit right after a fresh Compose setup) — the from-source and pip-install
+paths above don't hit the first two, since they run as your own host
+user with direct network access:**
 
 - **Bind-mount file ownership.** The container runs as a fixed non-root
   `cavendex` user (uid/gid 1000). If your host user isn't also uid/gid
@@ -331,6 +333,7 @@ docker compose --profile ingest-syslog up -d       # after editing its `command:
 docker compose --profile ingest-watch up -d        # after bind-mounting the real log file to watch
 docker compose --profile ingest-poll up -d         # after bind-mounting your real poller config
 docker compose --profile ingest-crowdstrike up -d  # after bind-mounting your real CrowdStrike config
+docker compose --profile ingest-sentinel up -d     # after bind-mounting your real Sentinel/Azure AD config
 docker compose --profile backup up -d              # after bind-mounting a real SSH key and setting --remote
 ```
 
@@ -425,8 +428,9 @@ publicly-routable one, regardless of the API key.
 
 Four ways in, all already implemented — pick whichever matches your
 environment (see README's **["Adding an Ingestion Source"](README.md#adding-an-ingestion-source)** if you need a
-normalizer for a format that isn't Suricata/Zeek eve.json, Wazuh, CEF
-syslog, or generic JSON):
+normalizer for a format that isn't one of the nine already covered —
+see README's **["Continuous alert ingestion"](README.md#features)**
+feature bullet for the full current list):
 
 ### Tailing a log file
 
@@ -1119,7 +1123,8 @@ use `sqlite3 <file> ".backup <dest>"` per database if you need a
 guaranteed-consistent copy while the service is running.
 
 The JSONL logs above (`ingestion_log.jsonl`, `audit_chain_ledger.jsonl`,
-`remediation_log.jsonl`, `auth_failures.jsonl`) rotate automatically once they cross
+`remediation_log.jsonl`, `audit_export_log.jsonl`, `jira_sync_log.jsonl`,
+`auth_failures.jsonl`) rotate automatically once they cross
 `CAVENDEX_LOG_MAX_BYTES` (default 10MB), keeping up to
 `CAVENDEX_LOG_BACKUP_COUNT` (default 3) old copies as `.1`, `.2`, etc.
 — back those up too if you rely on historical ingestion/audit data
@@ -1330,14 +1335,19 @@ affect a live deployment decision, not just a feature-completeness one:
   same as before this was added; storage isolation (separate DB/vault/
   vector-store per tenant) is unconditional, but authorization isolation
   is opt-in.
-- **Correlation catches exact matches, IP subnets, domain families, and
-  (opt-in) an LLM-judged shared-technique case — not every real campaign
-  pattern.** The semantic tier can connect a shared-TTP/no-shared-IOC
-  pair, but live testing showed it's deliberately conservative: it
-  declined a real same-technique/different-host pair on the grounds that
-  "technique similarity alone is insufficient to confirm a shared
-  campaign." A renamed host with a wholly unrelated new name still won't
-  correlate at all. See README's **[Known Gaps](README.md#known-gaps--honest-limitations)** for the full picture,
+- **Correlation catches exact matches, IP subnets, domain families, an
+  identity-based match, and (opt-in) an LLM-judged shared-technique case
+  — not every real campaign pattern.** The semantic tier can connect a
+  shared-TTP/no-shared-IOC pair, but live testing showed it's
+  deliberately conservative: it declined a real
+  same-technique/different-host pair on the grounds that "technique
+  similarity alone is insufficient to confirm a shared campaign." The
+  identity tier catches a renamed host or a lexically-unrelated
+  second-stage domain — but only when there's an authoritative source to
+  consult (an operator-supplied asset inventory export for the former,
+  opt-in real passive DNS for the latter); without one configured, a
+  renamed host with a wholly unrelated new name still won't correlate at
+  all. See README's **[Known Gaps](README.md#known-gaps--honest-limitations)** for the full picture,
   including a string-similarity signal that was built, tested, and
   rejected for making things worse, not just noisier.
 - **No vendor-specific SIEM/EDR polling client for most vendors — but a

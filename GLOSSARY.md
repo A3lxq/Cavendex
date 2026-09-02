@@ -156,8 +156,8 @@ executed automatically, always waiting on human approve/deny.
 **Rate limiting** — Capping how many requests (API calls) or ingested
 alerts (per tenant) are processed per minute, to stop either a busy
 client, many source IPs collectively overrunning a tenant's budget, or a
-flood of injected/noisy alerts from burning unlimited LLM calls. Three
-checks across two locations: at the API layer, a per-`(tenant, client
+flood of injected/noisy alerts from burning unlimited LLM calls. Four
+checks across three locations: at the API layer, a per-`(tenant, client
 IP)` limit (`CAVENDEX_RATE_LIMIT_PER_MINUTE`) plus a *second*,
 tenant-wide ceiling on top of it (`CAVENDEX_TENANT_RATE_LIMIT_PER_MINUTE`
 — closes the gap where many individually-under-limit source IPs could
@@ -165,7 +165,12 @@ still collectively exceed what one tenant's LLM-pipeline budget should
 allow); separately, inside the shared ingestion gate itself
 (`CAVENDEX_INGEST_RATE_LIMIT_PER_MINUTE`) — this last one is what
 protects `syslog_listener.py` and `poll_connector.py`, which never touch
-the API layer at all.
+the API layer at all; and a fourth, distinctly-purposed check scoped to
+the login route itself (`CAVENDEX_LOGIN_RATE_LIMIT_PER_MINUTE`, keyed
+per `(tenant, client IP)` again but tracked separately from the general
+API limit) — this one isn't about protecting the LLM-pipeline budget at
+all, it's brute-force protection on the one endpoint whose entire job is
+validating a password against a stored hash.
 
 **Severity** — One of `low` / `medium` / `high` / `critical`. Set by
 Triage's reasoning (informed by real enrichment data where available),

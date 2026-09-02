@@ -151,9 +151,9 @@ useful once you have more than a handful of incidents.
 ## Step 5 (optional): Get notified instead of checking the dashboard
 
 By default, Cavendex doesn't tell anyone anything — you have to go
-look. If you want a Slack/Discord/Teams message (or your own webhook
-relay) whenever an incident needs your approval or hits high/critical
-severity, set one line in `.env`:
+look. If you want a Slack/Discord/Teams/PagerDuty message (or your own
+webhook relay) whenever an incident needs your approval or hits
+high/critical severity, set one line in `.env`:
 
 ```env
 CAVENDEX_ALERT_WEBHOOK_URL=https://hooks.slack.com/services/your/webhook/url
@@ -161,7 +161,8 @@ CAVENDEX_ALERT_WEBHOOK_URL=https://hooks.slack.com/services/your/webhook/url
 
 That's it. No code changes, no vendor-specific setup — it POSTs a plain
 JSON payload that Slack, Discord, and Microsoft Teams incoming webhooks
-all render natively.
+all render natively, and PagerDuty's Events API accepts the same POST
+directly too.
 
 ---
 
