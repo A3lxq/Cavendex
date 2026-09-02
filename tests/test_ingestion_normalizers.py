@@ -1,7 +1,11 @@
+import json
+
 from ingestion.normalizers import (
     normalize_crowdstrike,
     normalize_elastic,
     normalize_generic,
+    normalize_qradar,
+    normalize_sentinel,
     normalize_splunk,
     normalize_suricata_eve,
     normalize_syslog_cef,
@@ -355,3 +359,132 @@ def test_normalize_elastic_falls_back_to_kibana_alert_uuid_for_dedup_key():
         {"kibana": {"alert": {"rule": {"name": "x"}, "uuid": "real-uuid-1"}}}
     )
     assert alert.dedup_key == "elastic:real-uuid-1"
+
+
+# ---------- normalize_qradar ----------
+
+
+def test_normalize_qradar_rejects_payload_with_no_id():
+    assert normalize_qradar({}) is None
+    assert normalize_qradar({"description": "no id here"}) is None
+
+
+def test_normalize_qradar_maps_offense_fields():
+    alert = normalize_qradar(
+        {
+            "id": 4821,
+            "description": "Multiple Login Failures for Disabled/Expired Account",
+            "offense_source": "203.0.113.7",
+            "destination_networks": ["10.0.0.0/24"],
+            "severity": 6,
+            "magnitude": 8,
+            "status": "OPEN",
+            "categories": ["Authentication Failures"],
+        }
+    )
+    assert alert is not None
+    assert alert.severity == "high"  # magnitude 8, not the lower raw severity 6
+    assert alert.source == "qradar"
+    assert "203.0.113.7" in alert.iocs
+    assert "10.0.0.0/24" in alert.affected_assets
+    assert "Authentication Failures" in alert.description
+    assert alert.dedup_key == "qradar:4821"
+
+
+def test_normalize_qradar_does_not_treat_a_non_ip_offense_source_as_an_ioc():
+    """offense_source can be a username/hostname/MAC depending on
+    offense_type, with no separate field telling those apart -- only a
+    real dotted-quad IP is trusted as an IOC."""
+    alert = normalize_qradar({"id": 1, "offense_source": "jdoe"})
+    assert alert.iocs == []
+    assert "jdoe" in alert.description
+
+
+def test_normalize_qradar_magnitude_scale_mapping():
+    def sev(magnitude):
+        return normalize_qradar({"id": 1, "magnitude": magnitude}).severity
+
+    assert sev(0) == "low"
+    assert sev(4) == "medium"
+    assert sev(7) == "high"
+    assert sev(9) == "critical"
+    assert sev(10) == "critical"
+
+
+def test_normalize_qradar_handles_missing_optional_fields():
+    alert = normalize_qradar({"id": 99})
+    assert alert is not None
+    assert alert.severity == "low"  # magnitude defaults to 0
+    assert alert.iocs == []
+    assert alert.affected_assets == []
+    assert "Unnamed QRadar offense" in alert.description
+
+
+# ---------- normalize_sentinel ----------
+
+
+def test_normalize_sentinel_rejects_payload_with_no_alert_name():
+    assert normalize_sentinel({}) is None
+    assert normalize_sentinel({"AlertSeverity": "High"}) is None
+
+
+def test_normalize_sentinel_maps_a_security_alert_record():
+    alert = normalize_sentinel(
+        {
+            "AlertName": "Suspicious sign-in activity",
+            "AlertSeverity": "High",
+            "Description": "Sign-in from an unfamiliar location",
+            "CompromisedEntity": "jdoe@example.com",
+            "SystemAlertId": "alert-guid-1",
+            "Entities": [
+                {"Type": "ip", "Address": "198.51.100.9"},
+                {"Type": "host", "HostName": "FIN-SRV-02"},
+                {"Type": "file", "FileHash": [{"Algorithm": "SHA256", "Value": "deadbeef"}]},
+            ],
+            "ExtendedProperties": {"Techniques": ["T1078"]},
+        }
+    )
+    assert alert is not None
+    assert alert.severity == "high"
+    assert alert.source == "sentinel"
+    assert "198.51.100.9" in alert.iocs
+    assert "deadbeef" in alert.iocs
+    assert "FIN-SRV-02" in alert.affected_assets
+    assert "jdoe@example.com" in alert.affected_assets
+    assert "T1078" in alert.description
+    assert alert.dedup_key == "sentinel:alert-guid-1"
+
+
+def test_normalize_sentinel_accepts_entities_and_extended_properties_as_json_strings():
+    """Log Analytics dynamic columns can arrive already-parsed or as a
+    JSON string, depending on what round-tripped the record before it
+    reached the normalizer."""
+    alert = normalize_sentinel(
+        {
+            "AlertName": "x",
+            "Entities": json.dumps([{"Type": "ip", "Address": "203.0.113.1"}]),
+            "ExtendedProperties": json.dumps({"Techniques": ["T1110"]}),
+        }
+    )
+    assert "203.0.113.1" in alert.iocs
+    assert "T1110" in alert.description
+
+
+def test_normalize_sentinel_severity_scale_mapping():
+    def sev(value):
+        return normalize_sentinel({"AlertName": "x", "AlertSeverity": value}).severity
+
+    assert sev("Informational") == "low"
+    assert sev("Low") == "low"
+    assert sev("Medium") == "medium"
+    assert sev("High") == "high"
+    assert sev("not-a-real-value") == "medium"
+
+
+def test_normalize_sentinel_handles_missing_optional_fields():
+    alert = normalize_sentinel({"AlertName": "Minimal Alert"})
+    assert alert is not None
+    assert alert.severity == "medium"
+    assert alert.iocs == []
+    assert alert.affected_assets == []
+    assert alert.dedup_key == "sentinel:0"

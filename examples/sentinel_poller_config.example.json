@@ -1,0 +1,21 @@
+{
+  "_comment": "Annotated example for sentinel_connector.py --config. Microsoft Sentinel's real API needs an Azure AD OAuth2 client-credentials token exchange before any data call, and the data call itself is a KQL query against the Log Analytics workspace backing your Sentinel instance -- neither fits ingestion/polling.py's generic PollerConfig, so this uses the dedicated ingestion/sentinel_polling.py connector instead. Delete this _comment field (or leave it; it's ignored) before using.",
+
+  "name": "sentinel-security-alerts",
+
+  "_comment_workspace": "Sentinel -> Settings -> Workspace settings -> Workspace ID (a GUID, not a secret -- safe in this file).",
+  "workspace_id": "00000000-0000-0000-0000-000000000000",
+
+  "_comment_auth": "Register an app in Azure AD (Entra ID -> App registrations), grant it 'Log Analytics Reader' on the workspace (or the narrower 'Microsoft Sentinel Reader' role), and create a client secret. The three *_env fields name ENVIRONMENT VARIABLES holding the real Azure AD directory (tenant) ID and OAuth2 client credentials -- this file never contains a secret itself.",
+  "azure_ad_tenant_id_env": "AZURE_SENTINEL_TENANT_ID",
+  "client_id_env": "AZURE_SENTINEL_CLIENT_ID",
+  "client_secret_env": "AZURE_SENTINEL_CLIENT_SECRET",
+
+  "_comment_table": "SecurityAlert (individual detections) rather than SecurityIncident (Sentinel's higher-level grouped case object) -- SecurityIncident doesn't carry raw IOC entities at all, and every other connector in this project normalizes discrete alerts, not pre-aggregated cases. See ingestion/normalizers.py:normalize_sentinel()'s own docstring for the full reasoning.",
+  "table": "SecurityAlert",
+
+  "page_size": 100,
+  "poll_interval_seconds": 60,
+  "tenant": "default",
+  "source_name": "sentinel"
+}

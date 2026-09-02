@@ -16,6 +16,7 @@ Usage:
     cavendex ingest watch [ingest_watch.py's own flags]
     cavendex ingest poll [poll_connector.py's own flags]
     cavendex ingest crowdstrike [crowdstrike_connector.py's own flags]
+    cavendex ingest sentinel [sentinel_connector.py's own flags]
     cavendex demo
     cavendex new/show/approve/deny/hunt/verify-audit/create-user/list-playbooks/...
                                                         (falls through to cli.py)
@@ -29,6 +30,7 @@ _INGEST_MODULES = {
     "watch": "ingest_watch",
     "poll": "poll_connector",
     "crowdstrike": "crowdstrike_connector",
+    "sentinel": "sentinel_connector",
 }
 
 _USAGE = """\
@@ -38,7 +40,7 @@ Usage:
     cavendex serve [--host HOST] [--port PORT] [--reload] [--workers N]
         Run the FastAPI dashboard/API server (uvicorn).
 
-    cavendex ingest {syslog,watch,poll,crowdstrike} [options]
+    cavendex ingest {syslog,watch,poll,crowdstrike,sentinel} [options]
         Run an ingestion connector. See `cavendex ingest <name> --help`.
 
     cavendex backup [options]
@@ -91,7 +93,7 @@ def _cmd_serve(argv_tail: list) -> None:
 
 def _cmd_ingest(argv_tail: list) -> None:
     if not argv_tail or argv_tail[0] in ("-h", "--help"):
-        print("usage: cavendex ingest {syslog,watch,poll,crowdstrike} [options]")
+        print("usage: cavendex ingest {syslog,watch,poll,crowdstrike,sentinel} [options]")
         print("\nRun `cavendex ingest <name> --help` for that connector's own options.")
         return
 

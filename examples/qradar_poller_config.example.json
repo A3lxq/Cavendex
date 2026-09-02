@@ -1,0 +1,31 @@
+{
+  "_comment": "Annotated example for poll_connector.py --config, targeting IBM QRadar's own REST API Offense-listing endpoint -- a plain GET with a static 'SEC' header token, which fits PollerConfig directly with no OAuth2 or multi-step choreography needed. Point base_url at YOUR QRadar console's REST API and adjust the fields filter to your own QRadar version's schema. Delete this _comment field (or leave it; it's ignored) before using.",
+
+  "name": "qradar-offenses",
+  "base_url": "https://your-qradar-console/api/siem/offenses",
+  "method": "GET",
+
+  "_comment_auth": "Create an authorized service in the QRadar console (Admin -> Authorized Services) to get a SEC token -- QRadar's REST API expects it in a header literally named 'SEC', not 'Authorization: Bearer'. auth_token_env names an ENVIRONMENT VARIABLE holding the real token; never put the token itself in this file.",
+  "auth_header": "SEC",
+  "auth_token_env": "QRADAR_API_TOKEN",
+
+  "_comment_query": "fields narrows the response to what normalize_qradar() actually uses; filter restricts to open offenses only (adjust or drop for your own triage workflow). sort ascending by id keeps the cursor moving forward through a large backlog.",
+  "static_query_params": {
+    "fields": "id,description,offense_source,destination_networks,severity,magnitude,status,categories",
+    "filter": "status=OPEN",
+    "sort": "+id"
+  },
+
+  "_comment_records_path": "QRadar's /api/siem/offenses response body is already a bare JSON array of offense objects -- no wrapper key to unwrap, so records_path is left unset.",
+
+  "_comment_cursor": "QRadar's AQL-style filter is a single expression under one 'filter' query param -- PollerConfig's cursor_query_param would need to *merge* an 'id>N' clause into that same already-used 'filter' key rather than replace it wholesale, which the generic connector's model can't do. cursor_query_param/cursor_field are deliberately left unset here, same as the Elastic example config; Cavendex's own dedup (keyed on each offense's real id via normalize_qradar()'s dedup_key) absorbs the resulting re-fetch of already-seen offenses on every poll instead.",
+
+
+
+  "_comment_normalizer": "Uses the real QRadar Offense normalizer (ingestion/normalizers.py:normalize_qradar) instead of a generic field_map -- it understands magnitude's 0-10 composite scale and offense_source's ambiguous IP-or-username-or-hostname shape, neither of which a flat field_map alone can do.",
+  "normalizer": "qradar",
+
+  "poll_interval_seconds": 60,
+  "tenant": "default",
+  "source_name": "qradar"
+}

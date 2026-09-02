@@ -48,6 +48,7 @@ py-modules = [
     "ingest_watch",
     "poll_connector",
     "crowdstrike_connector",
+    "sentinel_connector",
     "vault_backup",
     "launcher",
 ]

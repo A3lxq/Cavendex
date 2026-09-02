@@ -32,7 +32,7 @@ def test_ingest_no_args_lists_connectors(capsys):
     sys.argv = ["cavendex", "ingest"]
     launcher.main()
     out = capsys.readouterr().out
-    for name in ("syslog", "watch", "poll", "crowdstrike"):
+    for name in ("syslog", "watch", "poll", "crowdstrike", "sentinel"):
         assert name in out
 
 
@@ -116,6 +116,7 @@ def test_serve_no_warning_with_single_worker(monkeypatch, capsys):
         ("watch", "ingest_watch"),
         ("poll", "poll_connector"),
         ("crowdstrike", "crowdstrike_connector"),
+        ("sentinel", "sentinel_connector"),
     ],
 )
 def test_ingest_delegates_to_correct_connector(monkeypatch, connector, module_name):

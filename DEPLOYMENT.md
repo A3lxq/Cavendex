@@ -780,6 +780,73 @@ pair yourself before putting it in `.env` (Elastic's own header shape is
 `Authorization: ApiKey <base64>`). Same `--once` cron alternative as
 `poll_connector.py`.
 
+### Polling IBM QRadar's Offense API
+
+Like Elastic above, QRadar fits `poll_connector.py` directly — a plain
+GET with a static `SEC` header token, no OAuth2 needed. See README's
+**["QRadar Integration"](README.md#qradar-integration)** for the full
+explanation and `examples/qradar_poller_config.example.json` for an
+annotated config.
+
+```ini
+[Unit]
+Description=Cavendex QRadar connector
+After=network.target
+
+[Service]
+Type=simple
+User=cavendex
+WorkingDirectory=/opt/cavendex
+EnvironmentFile=/opt/cavendex/.env
+ExecStart=/opt/cavendex/venv/bin/cavendex ingest poll \
+    --config /etc/cavendex/qradar.json
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+```
+
+`QRADAR_API_TOKEN` in `.env` holds the real `SEC` token — create one in
+the QRadar console under Admin → Authorized Services. Same `--once`
+cron alternative as `poll_connector.py`.
+
+### Polling Microsoft Sentinel's Log Analytics workspace
+
+Sentinel needs a fully separate connector, `sentinel_connector.py`,
+the same reason CrowdStrike does above: Azure AD's OAuth2
+client-credentials exchange plus a KQL query against the Log Analytics
+query API is more than `poll_connector.py`'s single-GET/POST-per-poll
+model can express. See README's
+**["Microsoft Sentinel Integration"](README.md#microsoft-sentinel-integration)**
+for the full explanation.
+
+```ini
+[Unit]
+Description=Cavendex Microsoft Sentinel connector
+After=network.target
+
+[Service]
+Type=simple
+User=cavendex
+WorkingDirectory=/opt/cavendex
+EnvironmentFile=/opt/cavendex/.env
+ExecStart=/opt/cavendex/venv/bin/cavendex ingest sentinel \
+    --config /etc/cavendex/sentinel.json
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+```
+
+`AZURE_SENTINEL_TENANT_ID`/`AZURE_SENTINEL_CLIENT_ID`/
+`AZURE_SENTINEL_CLIENT_SECRET` in `.env` hold the real Azure AD app
+registration's directory ID and OAuth2 client credentials — register
+the app in Entra ID → App registrations and grant it a Log Analytics
+reader role on the target workspace. Same `--once` cron alternative as
+every other connector here.
+
 ### Pushing from a webhook or forwarder
 
 Point it at `POST https://cavendex.internal.example.com/ingest/{source}`
@@ -1274,25 +1341,28 @@ affect a live deployment decision, not just a feature-completeness one:
   including a string-similarity signal that was built, tested, and
   rejected for making things worse, not just noisier.
 - **No vendor-specific SIEM/EDR polling client for most vendors — but a
-  real, generic one, and real ones for Wazuh, Splunk, CrowdStrike, and
-  Elastic Security specifically.** `poll_connector.py`/`ingestion/polling.py`
-  polls any JSON-returning REST API given a config describing that API's
-  shape (auth, pagination cursor, field-mapping, or a registered
-  normalizer for a materially different scheme) — see **[Section 6](#6-feed-it-real-alerts-continuously)** above.
-  There's still no ready-made config for most other vendors (Sentinel,
-  etc.); you write the field-mapping for your own instance's actual API
-  shape once, not code. Wazuh, Splunk, CrowdStrike, and Elastic Security
-  are the four exceptions with purpose-built normalizers (and, for
-  CrowdStrike, a fully dedicated connector for its OAuth2 + two-step
-  Detects API) — but none of the four is verified against a live vendor
-  instance, since this project has none of any of them (Elastic's case is
-  specifically notable: a real local Elasticsearch/Kibana container via
-  Docker was the intended stronger verification target, but Docker daemon
-  access itself was unavailable in the sandbox this integration was built
-  in); each is verified against a real local HTTP server matching that
-  vendor's *documented* API shape instead. Test each against your own
-  deployment before relying on it — a documented shape and a live one can
-  diverge.
+  real, generic one, and real ones for Wazuh, Splunk, CrowdStrike,
+  Elastic Security, QRadar, and Microsoft Sentinel specifically.**
+  `poll_connector.py`/`ingestion/polling.py` polls any JSON-returning
+  REST API given a config describing that API's shape (auth, pagination
+  cursor, field-mapping, or a registered normalizer for a materially
+  different scheme) — see **[Section 6](#6-feed-it-real-alerts-continuously)** above.
+  There's still no ready-made config for most other vendors; you write
+  the field-mapping for your own instance's actual API shape once, not
+  code. Wazuh, Splunk, CrowdStrike, Elastic Security, QRadar, and
+  Microsoft Sentinel are the six exceptions with purpose-built
+  normalizers (and, for CrowdStrike and Sentinel, a fully dedicated
+  connector for an OAuth2 exchange plus a multi-step or query-language
+  call the generic poller can't express) — but none of the six is
+  verified against a live vendor instance, since this project has none
+  of any of them (Elastic's case is specifically notable: a real local
+  Elasticsearch/Kibana container via Docker was the intended stronger
+  verification target, but Docker daemon access itself was unavailable
+  in the sandbox this integration was built in); each is verified
+  against a real local HTTP server (two, for Sentinel — one per real
+  Microsoft endpoint it calls) matching that vendor's *documented* API
+  shape instead. Test each against your own deployment before relying on
+  it — a documented shape and a live one can diverge.
 - **Real remediation execution exists ([Section 8](#8-enable-real-remediation-execution-opt-in-sandboxed)) but only reaches as
   far as your own webhook.** Cavendex still never calls a firewall/
   EDR/IAM API directly, or runs a local command — an approved, eligible

@@ -109,9 +109,9 @@ services:
       # - /path/on/host/alerts.log:/var/log/source/alerts.log:ro
     restart: unless-stopped
 
-  # Polls a SIEM (e.g. Splunk) on an interval per a poller config JSON.
-  # Bind-mount the real config file (with real API endpoint/credentials)
-  # at the path --config points to.
+  # Polls a SIEM (e.g. Splunk, Elastic, QRadar) on an interval per a
+  # poller config JSON. Bind-mount the real config file (with real API
+  # endpoint/credentials) at the path --config points to.
   ingest-poll:
     build: .
     user: "${CAVENDEX_UID:-1000}:${CAVENDEX_GID:-1000}"
@@ -141,6 +141,23 @@ services:
       - ./.chroma:/app/.chroma
       - ./obsidian_vault:/app/obsidian_vault
       # - ./config/crowdstrike.json:/app/config/crowdstrike.json:ro
+    restart: unless-stopped
+
+  # Polls Microsoft Sentinel's Log Analytics workspace per a connector
+  # config JSON. Bind-mount the real config file (workspace ID) and set
+  # AZURE_SENTINEL_TENANT_ID/CLIENT_ID/CLIENT_SECRET in .env.
+  ingest-sentinel:
+    build: .
+    user: "${CAVENDEX_UID:-1000}:${CAVENDEX_GID:-1000}"
+    profiles: ["ingest-sentinel"]
+    command: ["ingest", "sentinel", "--config", "/app/config/sentinel.json"]
+    env_file:
+      - .env
+    volumes:
+      - ./data:/app/data
+      - ./.chroma:/app/.chroma
+      - ./obsidian_vault:/app/obsidian_vault
+      # - ./config/sentinel.json:/app/config/sentinel.json:ro
     restart: unless-stopped
 
   # Commits+pushes the Obsidian vault to a git remote on an interval.

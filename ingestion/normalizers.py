@@ -6,7 +6,7 @@ raising — e.g. a non-alert event type"). Add a new source by writing one
 function here and registering it in NORMALIZERS — nothing else in the
 ingestion pipeline, the graph, or the vault needs to know it exists.
 
-Seven formats are covered as concrete, genuinely different examples of
+Nine formats are covered as concrete, genuinely different examples of
 "pluggable" rather than committing to one vendor:
   - generic: an already-roughly-shaped alert (custom scripts, simple
     webhooks, anything that can be bothered to match our own field names)
@@ -29,6 +29,16 @@ Seven formats are covered as concrete, genuinely different examples of
     context) — pulled via ingestion/polling.py's generic connector (see
     examples/elastic_poller_config.example.json), an API-key header and
     Elasticsearch's own URI Search endpoint
+  - qradar: IBM QRadar Offense records (JSON, flat-ish, a 0-10
+    magnitude score instead of a name) — pulled via
+    ingestion/polling.py's generic connector (see
+    examples/qradar_poller_config.example.json), a static `SEC` header
+    token and QRadar's own /api/siem/offenses endpoint
+  - sentinel: Microsoft Sentinel SecurityAlert records (JSON, dynamic
+    Entities/ExtendedProperties columns from a Log Analytics KQL query)
+    — pulled via the dedicated ingestion/sentinel_polling.py connector
+    (Azure AD OAuth2 plus a KQL query call the generic connector can't
+    express)
 """
 
 import hashlib
@@ -509,6 +519,224 @@ def normalize_crowdstrike(payload: dict) -> Optional[NormalizedAlert]:
     )
 
 
+# QRadar's magnitude is a documented 0-10 composite score (combining
+# severity/credibility/relevance) that IBM recommends using for triage
+# prioritization over the raw severity field alone -- the same "a
+# numeric scale needs its own threshold mapping" case as Suricata's and
+# CEF's own severity numbers above.
+_QRADAR_MAGNITUDE_THRESHOLDS = ((9, "critical"), (7, "high"), (4, "medium"))
+
+
+def _qradar_magnitude_to_severity(magnitude) -> str:
+    try:
+        n = int(magnitude)
+    except (TypeError, ValueError):
+        return "medium"
+    for threshold, severity in _QRADAR_MAGNITUDE_THRESHOLDS:
+        if n >= threshold:
+            return severity
+    return "low"
+
+
+_IP_RE = re.compile(r"^\d{1,3}(?:\.\d{1,3}){3}$")
+
+
+def normalize_qradar(payload: dict) -> Optional[NormalizedAlert]:
+    """One IBM QRadar Offense record — the JSON shape `GET
+    /api/siem/offenses` returns per offense (see
+    examples/qradar_poller_config.example.json, which fits
+    ingestion/polling.py's generic PollerConfig directly — a plain GET
+    with a static `SEC` header token, no OAuth2 or multi-step
+    choreography needed, the same tier as Splunk/Elastic). A record with
+    no `id` isn't a real offense and returns None.
+
+    Uses `magnitude` (a documented 0-10 composite of
+    severity/credibility/relevance IBM recommends for triage
+    prioritization) for severity, not the narrower raw `severity` field
+    alone — neither is expressible via the generic connector's
+    string-keyed severity_map, which is why this needs a real normalizer
+    rather than a flat field_map, the same reason Suricata/CEF's own
+    numeric scales above do.
+
+    `offense_source` is QRadar's own catch-all "source of the offense"
+    field — depending on `offense_type` it can be a source IP, a
+    username, a MAC address, or a hostname, and the offense JSON gives no
+    separate type tag to tell those apart. It's only treated as an IOC
+    when it actually looks like a dotted-quad IP; otherwise it's folded
+    into the description as context instead of risked as a
+    mis-typed indicator — the same "don't infer past what the shape
+    actually tells you" reasoning as this file's own `Process indicator`
+    handling.
+
+    QRadar has no MITRE ATT&CK mapping at this endpoint — `categories`
+    are QRadar's own rule-category names, not ATT&CK technique IDs, so
+    they're surfaced as plain context rather than misrepresented as a
+    `[ATT&CK: ...]` suffix the way Wazuh/Splunk/CrowdStrike's real
+    technique IDs are.
+
+    Field-parsing is built from IBM's documented QRadar REST API Offense
+    schema, not verified against a live QRadar deployment — this project
+    has none to honestly test against (the same caveat as any other
+    vendor-specific integration; see README's Known Gaps).
+    """
+    offense_id = payload.get("id")
+    if offense_id is None:
+        return None
+
+    magnitude = payload.get("magnitude", payload.get("severity", 0))
+    severity = _qradar_magnitude_to_severity(magnitude)
+
+    offense_description = payload.get("description") or "Unnamed QRadar offense"
+    offense_source = payload.get("offense_source")
+    categories = [str(c) for c in (payload.get("categories") or []) if c][:5]
+    category_suffix = f" [{', '.join(categories)}]" if categories else ""
+
+    destination_networks = [str(n) for n in (payload.get("destination_networks") or []) if n][:50]
+
+    iocs = [str(offense_source)] if offense_source and _IP_RE.match(str(offense_source)) else []
+
+    description = (
+        f"QRadar offense (magnitude {magnitude}): {offense_description}"
+        + (f" — source={offense_source}" if offense_source else "")
+        + category_suffix
+    )
+
+    return NormalizedAlert(
+        description=description[:4000],
+        severity=severity,
+        source="qradar",
+        affected_assets=destination_networks,
+        iocs=iocs,
+        dedup_key=f"qradar:{offense_id}",
+        raw_excerpt=json.dumps(payload, default=str)[:2000],
+    )
+
+
+# Sentinel's SecurityAlert.AlertSeverity is a documented four-value
+# scale, matching CrowdStrike's naming exactly (including the
+# below-our-floor "informational" case).
+_SENTINEL_SEVERITY_MAP = {
+    "high": "high",
+    "medium": "medium",
+    "low": "low",
+    "informational": "low",
+}
+
+
+def _sentinel_dynamic(value):
+    """Sentinel's Log Analytics `dynamic` columns (Entities,
+    ExtendedProperties) come back from the query API as JSON already
+    parsed into Python (list/dict) when the client parses the response
+    body as JSON — but a caller that's serialized/deserialized a record
+    in between (e.g. round-tripped through this project's own dedup/
+    audit-log JSON encoding) may see it as a JSON *string* instead.
+    Handles both rather than assuming one, the same defensive parsing
+    every other normalizer here does for untrusted, externally-served
+    data.
+    """
+    if isinstance(value, str):
+        try:
+            return json.loads(value)
+        except json.JSONDecodeError:
+            return None
+    return value
+
+
+def normalize_sentinel(payload: dict) -> Optional[NormalizedAlert]:
+    """One Microsoft Sentinel `SecurityAlert` record — one row of the
+    Log Analytics KQL query `SecurityAlert | order by TimeGenerated asc`
+    (see ingestion/sentinel_polling.py, the dedicated connector that
+    fetches these — Azure AD OAuth2 plus a KQL query call, which
+    ingestion/polling.py's generic PollerConfig can't express, the same
+    "materially different scheme" tier as CrowdStrike). A record with no
+    `AlertName` isn't a real alert and returns None.
+
+    `SecurityAlert` (individual detections) is used here rather than the
+    higher-level `SecurityIncident` table (Sentinel's own grouped case
+    object) specifically because `SecurityIncident` doesn't carry raw
+    IOC entities at all — every other connector in this project
+    normalizes discrete alerts/detections, not pre-aggregated cases, and
+    `SecurityAlert.Entities` is the one Sentinel table that actually has
+    IP/file-hash/URL/domain indicators to extract.
+
+    `Entities` is Sentinel's own dynamic JSON array of typed indicators
+    (`{"Type": "ip", "Address": "..."}`, `{"Type": "file", "FileHash":
+    [...]}`, `{"Type": "url", "Url": "..."}`, `{"Type": "dns",
+    "DomainName": "..."}`, `{"Type": "host", "HostName": "..."}` —
+    Microsoft's documented entity schema); `ExtendedProperties` may carry
+    a `Techniques` list of MITRE ATT&CK technique IDs when the
+    originating analytics rule tagged one.
+
+    Field-parsing is built from Microsoft's documented Log Analytics
+    `SecurityAlert` table schema, not verified against a live Sentinel
+    workspace — this project has none to honestly test against (the same
+    caveat as every other vendor-specific integration; see README's
+    Known Gaps).
+    """
+    alert_name = payload.get("AlertName")
+    if not alert_name:
+        return None
+
+    severity_raw = str(payload.get("AlertSeverity") or "").lower()
+    severity = _SENTINEL_SEVERITY_MAP.get(severity_raw, "medium")
+
+    entities = _sentinel_dynamic(payload.get("Entities")) or []
+    if not isinstance(entities, list):
+        entities = []
+
+    iocs: list = []
+    assets: list = []
+    for entity in entities:
+        if not isinstance(entity, dict):
+            continue
+        entity_type = str(entity.get("Type") or "").lower()
+        if entity_type == "ip" and entity.get("Address"):
+            iocs.append(str(entity["Address"]))
+        elif entity_type == "url" and entity.get("Url"):
+            iocs.append(str(entity["Url"]))
+        elif entity_type in ("dns", "domain") and entity.get("DomainName"):
+            iocs.append(str(entity["DomainName"]))
+        elif entity_type == "file":
+            for file_hash in entity.get("FileHash") or []:
+                value = file_hash.get("Value") if isinstance(file_hash, dict) else file_hash
+                if value:
+                    iocs.append(str(value))
+        elif entity_type == "host" and entity.get("HostName"):
+            assets.append(str(entity["HostName"]))
+
+    compromised_entity = payload.get("CompromisedEntity")
+    if compromised_entity:
+        assets.append(str(compromised_entity))
+
+    extended_properties = _sentinel_dynamic(payload.get("ExtendedProperties")) or {}
+    technique_ids = extended_properties.get("Techniques") if isinstance(extended_properties, dict) else None
+    if isinstance(technique_ids, str):
+        technique_ids = [t.strip() for t in technique_ids.split(",") if t.strip()]
+    mitre_suffix = (
+        f" [ATT&CK: {', '.join(str(t) for t in technique_ids)}]" if isinstance(technique_ids, list) and technique_ids else ""
+    )
+
+    alert_description = payload.get("Description")
+    description = (
+        f"Sentinel alert: {alert_name}"
+        + (f" — {alert_description}" if alert_description else "")
+        + (f" (host={compromised_entity})" if compromised_entity else "")
+        + mitre_suffix
+    )
+
+    system_alert_id = payload.get("SystemAlertId") or payload.get("TimeGenerated") or "0"
+
+    return NormalizedAlert(
+        description=description[:4000],
+        severity=severity,
+        source="sentinel",
+        affected_assets=[str(a) for a in dict.fromkeys(assets)][:50],
+        iocs=[str(i) for i in dict.fromkeys(iocs)][:50],
+        dedup_key=f"sentinel:{system_alert_id}",
+        raw_excerpt=json.dumps(payload, default=str)[:2000],
+    )
+
+
 NORMALIZERS = {
     "generic": normalize_generic,
     "suricata": normalize_suricata_eve,
@@ -517,4 +745,6 @@ NORMALIZERS = {
     "splunk": normalize_splunk,
     "crowdstrike": normalize_crowdstrike,
     "elastic": normalize_elastic,
+    "qradar": normalize_qradar,
+    "sentinel": normalize_sentinel,
 }
