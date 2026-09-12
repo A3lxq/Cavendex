@@ -2,11 +2,118 @@
 
 **A cybersecurity-focused agentic AI operating system for Security Operations Centers (SOCs).**
 
+[![License: Apache 2.0](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
+[![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue.svg)](pyproject.toml)
+[![Tests: 922 passing](https://img.shields.io/badge/tests-922%20passing-brightgreen.svg)](#testing)
+[![Threat-intel providers: 20](https://img.shields.io/badge/threat--intel%20providers-20-informational.svg)](#adding-a-threat-intel-provider)
+[![SIEM/EDR formats: 9](https://img.shields.io/badge/ingestion%20formats-9-informational.svg)](#architecture-overview)
+
 Cavendex is a central intelligence layer that orchestrates specialized AI agents to help SOC teams triage alerts, investigate incidents, hunt threats, and coordinate response — with persistent memory, durable Markdown audit trails in an Obsidian vault, full multi-tenant isolation, and a human-in-the-loop approval gate for anything that touches production systems.
 
 **New here?** **[GETTING_STARTED.md](GETTING_STARTED.md)** is a no-assumptions walkthrough — clone, run, click Approve on your first incident, in about ten minutes. This README is the full architecture/feature reference. Don't recognize a term? **[GLOSSARY.md](GLOSSARY.md)**. Running this as a real, always-on service — systemd units, TLS, backups, an honest checklist of what to know first — is **[DEPLOYMENT.md](DEPLOYMENT.md)**.
 
 Licensed under [Apache 2.0](LICENSE).
+
+<p align="center">
+  <img src="docs/screenshots/incident-detail.png" alt="Cavendex incident detail view — severity/status badges, ATT&CK mapping, proposed remediation action" width="850">
+</p>
+
+<p align="center"><em>The analyst dashboard's incident detail pane — see <a href="#screenshots">Screenshots</a> below for the full queue, Strand Map, and KPI views.</em></p>
+
+---
+
+## Table of Contents
+
+- [Screenshots](#screenshots)
+- [Features](#features)
+- [Installation](#installation)
+- [Quick Start](#quick-start)
+- [Architecture Overview](#architecture-overview)
+  - [Adding a New Agent](#adding-a-new-agent)
+  - [Adding an Ingestion Source](#adding-an-ingestion-source)
+  - [Syslog Listener and SIEM/EDR Polling Connectors](#syslog-listener-and-siemedr-polling-connectors)
+  - [Wazuh Integration](#wazuh-integration)
+  - [Splunk Integration](#splunk-integration)
+  - [CrowdStrike Integration](#crowdstrike-integration)
+  - [Elastic Security Integration](#elastic-security-integration)
+  - [QRadar Integration](#qradar-integration)
+  - [Microsoft Sentinel Integration](#microsoft-sentinel-integration)
+  - [Alert Correlation](#alert-correlation)
+  - [Distributed Rate Limiting and Dedup](#distributed-rate-limiting-and-dedup)
+  - [Fast-Path Mode for Time-Critical Incidents](#fast-path-mode-for-time-critical-incidents)
+  - [User Accounts and Sessions](#user-accounts-and-sessions)
+  - [Single Sign-On (SSO)](#single-sign-on-sso)
+  - [IP Ranges and Subnet Support](#ip-ranges-and-subnet-support)
+  - [Adding a Threat-Intel Provider](#adding-a-threat-intel-provider)
+  - [The Dashboard](#the-dashboard)
+  - [SOC KPI Reporting](#soc-kpi-reporting)
+  - [Alerting](#alerting)
+  - [Remediation](#remediation)
+  - [Advanced Playbooks](#advanced-playbooks)
+  - [Ticketing Integration](#ticketing-integration)
+  - [Vault Backup](#vault-backup)
+- [Testing](#testing)
+- [Security Notes](#security-notes)
+- [Design Lineage](#design-lineage)
+- [Known Gaps / Honest Limitations](#known-gaps--honest-limitations)
+- [Future Roadmap](#future-roadmap)
+- [Project Status](#project-status)
+
+---
+
+## Screenshots
+
+All screenshots below are real captures of the dashboard (`static/index.html`) running against this repo's own seeded test data — nothing staged or mocked up.
+
+<table>
+<tr>
+<td width="50%">
+
+**Incident queue** — severity/status badges, live summary stats, keyboard-driven triage.
+
+<img src="docs/screenshots/incident-list.png" alt="Cavendex incident queue with summary stats bar and severity/status badges">
+
+</td>
+<td width="50%">
+
+**Strand Map** — incidents linked by shared IOCs/assets on a hand-rolled force-directed canvas.
+
+<img src="docs/screenshots/strand-map.png" alt="Cavendex Strand Map graph view linking incidents through shared indicators">
+
+</td>
+</tr>
+<tr>
+<td width="50%">
+
+**SOC KPI Reporting** — MTTR, time-to-decision, escalation rate, and volume-by-day for a tenant.
+
+<img src="docs/screenshots/soc-kpis.png" alt="Cavendex SOC KPI reporting tab with MTTR, escalation rate, and incident volume chart">
+
+</td>
+<td width="50%">
+
+**ATT&CK Technique Overview** — every verified technique cited across a tenant's incidents, grouped by tactic.
+
+<img src="docs/screenshots/attack-overview.png" alt="Cavendex ATT&CK technique overview grouped by tactic in kill-chain order">
+
+</td>
+</tr>
+</table>
+
+<details>
+<summary>More views: New Incident form, full incident detail pane</summary>
+
+<br>
+
+**New Incident** — submit an alert straight into the live pipeline from the dashboard, no CLI/API call needed.
+
+<img src="docs/screenshots/new-incident.png" alt="Cavendex new incident submission form" width="700">
+
+**Incident detail** — description, assignment, affected assets, IOCs, agent findings, threat intelligence, ATT&CK mapping, and proposed actions in one pane.
+
+<img src="docs/screenshots/incident-detail.png" alt="Cavendex incident detail pane, full view" width="700">
+
+</details>
 
 ---
 
