@@ -333,8 +333,9 @@ langgraph==1.2.11 \
     --hash=sha256:8bab70de7b2d00b5300fb289bcf38d8b241400f3184c1e95e8ce706fb0e8686b
 langgraph-checkpoint==4.2.0 \
     --hash=sha256:0547fd228935a0b758865de3a3d6d7a2537c308895d0f9ab092ce9151b5da942
-langgraph-checkpoint-sqlite==3.1.1 \
-    --hash=sha256:8505c54c94a658080525d7e6780fdd4e0c078ff2566b30d399c02cc9f9af1c63
+langgraph-checkpoint-sqlite==3.1.2 \
+    --hash=sha256:249640b84efd4872585a9ce596a63c2593e543f748341791591aeaf4c878329c \
+    --hash=sha256:4e3f376fa6f192d6ad2a1a4643b039986f1593552ef870e9e45281575de6fbf2
 langgraph-prebuilt==1.1.0 \
     --hash=sha256:51e311747d755b751d5c6b39b0c1446124d3a7643d2515017e6714b323508fc9
 langgraph-sdk==0.4.11 \
