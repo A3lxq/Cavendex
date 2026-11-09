@@ -446,8 +446,9 @@ langchain-protocol==0.0.19 \
     --hash=sha256:4cdf879a492a35980fd859ae792d3c65458ccaae504e183c9a10d7eac1f0720f
 langchain-text-splitters==1.1.2 \
     --hash=sha256:a2de0d799ff31886429fd6e2e0032df275b60ec817c19059a7b46181cc1c2f10
-langgraph==1.2.11 \
-    --hash=sha256:8bab70de7b2d00b5300fb289bcf38d8b241400f3184c1e95e8ce706fb0e8686b
+langgraph==1.2.20 \
+    --hash=sha256:2b9fd01c3d5e0652e6c9b436dc0341413788010eb279ac8c46a733cf485d848b \
+    --hash=sha256:79f86df92f2dd17d5ec464cab68dbb685439ab102ca39f0b1b7b198025a2414c
 langgraph-checkpoint==4.2.0 \
     --hash=sha256:0547fd228935a0b758865de3a3d6d7a2537c308895d0f9ab092ce9151b5da942
 langgraph-checkpoint-sqlite==3.1.1 \
