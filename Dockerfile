@@ -19,7 +19,7 @@
 # see DEPLOYMENT.md's lock-file regeneration note if you ever need to
 # regenerate requirements.lock.txt against a different Python version.
 
-FROM python:3.14-slim AS builder
+FROM python:3.15-slim AS builder
 
 WORKDIR /build
 
@@ -30,7 +30,7 @@ COPY . .
 RUN pip install --no-cache-dir --no-deps .
 
 
-FROM python:3.14-slim AS runtime
+FROM python:3.15-slim AS runtime
 
 # git is only exercised by the opt-in `backup` compose service
 # (vault_backup.py shells out to it) — installed unconditionally here
